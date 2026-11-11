@@ -31,8 +31,5 @@ void format_x(char* buf, u32 size, f64 x, const char* x_unit);
 // buf and true; false (buf = "") for any other metric.
 bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f64 value);
 
-// Plain-text report of all results (sysinfo header + table, baseline deltas when one is loaded).
-// Returns length written (truncated to size).
-u32 results_format_text(char* buf, u32 size, const BenchParams* p);
 // Results file in TOON (see toon.h for the subset, results.cpp for the layout). Saved as *.toon.txt.
 bool results_write_toon(const wchar_t* path, const BenchParams* p);

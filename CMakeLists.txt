@@ -131,15 +131,31 @@ target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan:
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
     src/mem/mem_bench.cpp src/mem/mem_kernels.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
 
+# Run library: reference runs in library/*.toon.txt, packed + LZMS-compressed by a small host tool and
+# embedded in the GUI exe as RCDATA 103 (read by src/app/library.cpp).
+add_executable(ezb_pack tools/pack_library.cpp)
+target_include_directories(ezb_pack PRIVATE src)
+target_link_libraries(ezb_pack PRIVATE ezb_flags ezb_warnings cabinet)
+file(GLOB LIBRARY_RUNS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/library/*.toon.txt)
+set(LIBRARY_BIN ${CMAKE_BINARY_DIR}/library.bin)
+add_custom_command(OUTPUT ${LIBRARY_BIN}
+    COMMAND ezb_pack ${LIBRARY_BIN} ${LIBRARY_RUNS}
+    DEPENDS ezb_pack ${LIBRARY_RUNS} VERBATIM)
+file(WRITE ${CMAKE_BINARY_DIR}/library.rc "103 10 \"${LIBRARY_BIN}\"\n")     # 10 = RT_RCDATA
+set_source_files_properties(${CMAKE_BINARY_DIR}/library.rc PROPERTIES OBJECT_DEPENDS ${LIBRARY_BIN})
+
 # GUI
 add_executable(ez-pc-bench WIN32
     src/app/main_gui.cpp
     src/app/ui.cpp
     src/app/compare_ui.cpp
+    src/app/library.cpp
     src/app/settings.cpp
     src/app/theme.cpp
-    src/app/gui.rc)
-target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32 shell32)
+    src/app/gui.rc
+    ${CMAKE_BINARY_DIR}/library.rc)
+target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
+    shell32 cabinet)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

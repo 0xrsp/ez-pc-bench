@@ -430,39 +430,41 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
 - **Frame pacing stats**: 0.1% low needs enough frames — at least ~5000 frames per test; extend the
   duration automatically if FPS is low.
 
-## 10. Reference run (2026-11-11, AC + "Best performance", default settings, elevated)
+## 10. Reference run (2026-11-11 11:38, AC + "Best performance", default settings, elevated)
 
-Full default selection, 3 s phases, 53 tests, all done, run elevated (`cmd /c ... --out` via RunAs). Raw
-data (use as the GUI "Compare..." baseline):
-[docs/reference/2026-11-11_ac_best-performance_admin.toon.txt](reference/2026-11-11_ac_best-performance_admin.toon.txt).
-`cpu.work.sieve` in that file comes from a re-run after the loop-alignment fix below; the other 52 tests are
-the original run. The earlier non-elevated run is kept as
-[2026-11-11_ac_best-performance.toon.txt](reference/2026-11-11_ac_best-performance.toon.txt) (converted from
-JSON); elevated vs not differs only within noise except disk (file in the drive root vs a subfolder).
-Numbers are single thread → multi-thread unless noted.
+GUI run, all 55 tests (default selection + the two NVMe disk extras), 3 s phases, 5 disk passes, BitLocker
+**off** on C: from here on. Raw data: [library/2026-11-11_r7-250_rtx5060-laptop.toon.txt](../library/2026-11-11_r7-250_rtx5060-laptop.toon.txt),
+built into the GUI exe (compare window > Library). Earlier runs (BitLocker on, the sieve regression) are in
+git history (`docs/reference/`, removed in the library commit). Numbers are single thread → multi-thread
+unless noted.
 
 | Area | Result | Sanity check |
 |---|---|---|
-| Int ALU / imul | 17.7 → 140 / 4.8 → 39 Gops/s | 3.6 ops/clk @ ~4.9 GHz; 1 imul/clk |
-| FP32 FMA scalar / AVX2 / AVX-512 | 19.4 → 153 / 155 → 1213 / 155 → 1239 GFLOPS | 32 FLOP/clk @ 4.84 GHz ST, ~4.7 GHz all-core |
-| FP64 AVX2 / AVX-512 | 77 → 606 / 78 → 613 GFLOPS | half of FP32 |
-| SGEMM 1920² | 134 → 879 GFLOPS | 86 % / 72 % of FMA peak |
-| SHA-256 / AES-128 (VAES-512) | 2.4 → 35.5 / 29.1 → 220 GB/s | |
-| Sort 16M / sieve 1e9 | 16.8 → 107 Melem/s / 2892 → 19134 Mnum/s | |
-| Core-to-core | min 12.7 (SMT siblings) / avg 23.7 / max 31.3 ns | single CCX |
-| FMA scaling 1/2/4/8/16 T | 156 / 311 / 623 / 1206 / 1209 GFLOPS | linear per core, SMT ~0 |
-| DRAM read / write / NT write / copy / triad | 47 → 60 / 27 → 26 / 52 → 58 / 30 → 35 / 32 → 41 GB/s | read = 67 % of 89.6 peak |
-| Latency L1 / L2 / L3 / DRAM | 0.8 / 2.9 / 9.2–33 / 92–124 ns (4 KiB pages) | 4 / 14 clk |
-| Disk SEQ1M Q8T1 / Q1T1 | 7025 / 5889, 2811 / 2344 MB/s (read / write) | |
-| Disk RND4K Q32T1 / Q1T1 | 427 / 734 (104K / 179K IOPS), 60.5 / 121 MB/s (68 / 34 µs) | |
-| GPU FP32 / FP16 / INT32 | VK 14.7 / 16.0 / 9.2, D3D12 14.5 / 17.5 / 9.2 T(FL)OPS | |
-| GPU VRAM read / write / copy | VK 368 / 347 / 338, D3D12 369 / 368 / 338 GB/s | 96 % of ~384 GB/s |
-| GPU LDS / PCIe | 8.6 / 8.5 TB/s / 14.1–14.2 GB/s each way | Gen4 x8 |
-| GPU tri / fill / texfill | VK 2.65 Gtri/s / 107 Gpix/s / 180 Gtex/s, D3D12 2.56 / 104 / 174 | |
-| GPU draw calls | VK 31.6 M/s, D3D12 65.5 M/s | driver CPU cost per draw |
-| GPU scene / sprites | VK 7490 (1 % low 3674) / D3D12 6826 fps; 80.0 / 77.9 Msprites/s | |
-| GPU blit / clear | VK 720 / 2436, D3D12 668 / 3076 GB/s | L2-resident targets, fast clears |
+| Int ALU / imul | 17.5 → 137 / 4.8 → 38 Gops/s | 3.6 ops/clk @ ~4.8 GHz; 1 imul/clk |
+| FP32 FMA scalar / AVX2 / AVX-512 | 19.1 → 152 / 152 → 1197 / 153 → 1217 GFLOPS | 32 FLOP/clk @ 4.76 GHz ST, ~4.7 GHz all-core |
+| FP64 AVX2 / AVX-512 | 76 → 597 / 76 → 608 GFLOPS | half of FP32 |
+| SGEMM 1920² | 128 → 857 GFLOPS | 84 % / 72 % of FMA peak |
+| SHA-256 / AES-128 (VAES-512) | 2.4 → 34.9 / 28.3 → 217 GB/s | |
+| Sort 16M / sieve 1e9 | 16.0 → 103 Melem/s / 2877 → 19756 Mnum/s | |
+| Core-to-core | min 14.6 (SMT siblings) / avg 25.5 / max 70 ns | single CCX; one 70 ns outlier pair |
+| FMA scaling 1/2/4/8/16 T | 152 / 304 / 609 / 1197 / 1191 GFLOPS | linear per core, SMT ~0 |
+| DRAM read / write / NT write / copy / triad | 52 → 59 / 29 → 25 / 60 → 57 / 31 → 35 / 34 → 40 GB/s | read = 66 % of 89.6 peak |
+| Latency L1 / L2 / L3 / DRAM | 0.8 / 3.0 / 9.7–56 / 87–119 ns (4 KiB pages) | 4 / 14 clk |
+| Disk SEQ1M Q8T1 / Q1T1 | 7087 / 5984, 3669 / 5006 MB/s (read / write) | |
+| Disk SEQ128K Q32T1 | 6980 / 5895 MB/s | |
+| Disk RND4K Q32T1 / Q32T16 / Q1T1 | 571 / 430, 4054 / 3873 (990K / 946K IOPS), 70.7 / 209 MB/s | T16: the SSD, not one submit thread |
+| GPU FP32 / FP16 / INT32 | VK 14.8 / 16.1 / 9.3, D3D12 14.7 / 17.5 / 9.2 T(FL)OPS | |
+| GPU VRAM read / write / copy | VK 369 / 347 / 338, D3D12 369 / 368 / 338 GB/s | 96 % of ~384 GB/s |
+| GPU LDS / PCIe | 8.7 / 8.6 TB/s / 13.8–14.0 GB/s each way | Gen4 x8 |
+| GPU tri / fill / texfill | VK 2.66 Gtri/s / 108 Gpix/s / 181 Gtex/s, D3D12 2.60 / 107 / 182 | |
+| GPU draw calls | VK 31.4 M/s, D3D12 67.1 M/s | driver CPU cost per draw |
+| GPU scene (avg / p99 frame time) | VK 0.131 / 0.263 ms (7611 / 3798 fps), D3D12 0.140 / 0.274 ms (7165 / 3651 fps) | |
+| GPU sprites / blit / clear | VK 80.5 Msprites/s / 739 / 2468 GB/s, D3D12 79.6 / 675 / 3306 | L2-resident targets, fast clears |
 
+vs the earlier elevated run with BitLocker on: CPU / memory / GPU within ~2 % (CPU 1–2 % lower, warmer
+day / chassis), but the latency-bound disk tests moved a lot — SEQ1M Q1T1 read / write 2811 / 2344 →
+3669 / 5006 MB/s, RND4K Q1T1 60 / 121 → 71 / 209 MB/s, RND4K Q32T1 read 427 → 571 MB/s (write 734 → 430,
+within this SSD's run-to-run swing). Software BitLocker costs the most where each I/O waits on the CPU.
 **Sieve / code-placement finding:** after the TOON/multi-drive commit the sieve dropped to 1847 → 13407
 Mnum/s (−33 %) although `cpu_bench.cpp.obj` disassembled identically to the old build; only the hot
 loop's address in the linked exe changed. Compiling the CPU and memory kernel files with
@@ -476,15 +478,28 @@ gave L3-range latency of 43–106 ns and 2–16 MiB sweep reads of 24–77 GB/s,
 other apps (especially anything rendering) before memory runs.
 
 With the APIs run back-to-back after warm-up, Vulkan and D3D12 agree within ~2 % except FP16 (+9 % D3D12),
-draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). A full run writes ~130 GB to the
-SSD (5 write passes x 3 s per disk test: SEQ1M Q8 ~88 GB, Q1 ~31 GB, RND4K Q32 ~10 GB, Q1 ~2 GB, + file
-fill) — use 1–2 passes and a shorter duration for frequent runs.
-
+draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). With the default 3 disk passes a full
+run writes ~80 GB to the SSD (per pass x 3 s: SEQ1M Q8 ~18 GB, Q1 ~6 GB, RND4K Q32 ~2 GB, Q1 ~0.4 GB; 5 passes
+were ~130 GB) — use 1 pass and a shorter duration for frequent runs.
 ## 11. Open questions
 
 None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
+
+- 2026-11-11 (run library, save names, 3 disk passes):
+  - Reference runs live in `library/*.toon.txt`. At build time `tools/pack_library.cpp` (`ezb_pack`, a host
+    exe built in the same tree) concatenates them ("EZBL" v1: count, then name + text per run) and
+    compresses the whole blob with the Windows Compression API (LZMS, Cabinet.dll — part of Windows, no
+    new dependency); the GUI embeds it as RCDATA 103 via a generated `library.rc`. One run: 30.9 KB ->
+    6.7 KB; runs share most of their text, so the ratio improves as the library grows. `app/library.*`
+    decompresses on first use; the compare window's "Library..." lists the runs (name, CPU, GPU, RAM,
+    power, date via `compare_peek`) and adds the ticked ones (`compare_add_buffer`). The CLI has no library.
+  - "Save results..." opens a dialog for an optional run name; Enter keeps the default
+    `ezbench_<date>_<time>_<cpu>_<gpu>`, with short names from `cpu_short_name` / `gpu_short_name`
+    (sysinfo: "r7-250", "i7-13700h", "rtx5060-laptop", "radeon-780m", "rx7900-xtx"). The name is the
+    file name (sanitized, `_2`... if it exists). "Copy text" and `results_format_text` were removed.
+  - Default disk passes 5 -> 3 (best of 3): ~80 GB written per full run instead of ~130 GB.
 
 - 2026-11-11 (frame times + compare summary): GPU frame tests report frame times only (avg / p99 /
   p99.9 ms); the FPS rows were exact reciprocals. The GUI (tree, results, compare) shows the fps in

@@ -1,6 +1,7 @@
 // Compare window: toolbar, filters and one wide table. Columns: metric, unit, then one per run; each run
 // cell shows the raw value and its change vs the reference run (green = better, red = worse, > 1%).
 #include "app/compare_ui.h"
+#include "app/library.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/baseline.h"
@@ -23,6 +24,9 @@ struct CompareUi {
     bool show_change = true;
     bool show_system = true;
     bool show_summary = true;
+    bool library_request;       // "Library..." clicked: open the popup this frame
+    bool lib_selected[256];
+    ImGuiTextFilter lib_filter;
 };
 static CompareUi s_cu;
 
@@ -443,6 +447,105 @@ static void draw_table() {
     ImGui::EndTable();
 }
 
+// ---- library ------------------------------------------------------------------------------------
+
+// Built-in reference runs (library/*.toon.txt, compressed into the exe): pick some and add them as columns.
+static void draw_library() {
+    if (s_cu.library_request) {
+        s_cu.library_request = false;
+        memset(s_cu.lib_selected, 0, sizeof(s_cu.lib_selected));
+        ImGui::OpenPopup("Library");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.85f, vp->WorkSize.y * 0.75f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Library", nullptr, ImGuiWindowFlags_NoSavedSettings)) return;
+
+    const u32 n = library_load();
+    ImGui::TextDisabled("Reference runs by the developer, built into the app. Tick the ones to compare.");
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+    if (ImGui::InputTextWithHint("##lib_search", "Search CPU / GPU / name", s_cu.lib_filter.InputBuf,
+                                 IM_ARRAYSIZE(s_cu.lib_filter.InputBuf)))
+        s_cu.lib_filter.Build();
+
+    const f32 buttons_h = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_SizingStretchProp;
+    u32 picked = 0;
+    bool lib_add_now = false;
+    if (ImGui::BeginTable("lib", 7, flags, ImVec2(0.0f, -buttons_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, theme_checkbox_height());
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableSetupColumn("CPU", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("RAM", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("Power", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+        ImGui::TableHeadersRow();
+        for (u32 i = 0; i < n && i < ARRAY_COUNT(s_cu.lib_selected); ++i) {
+            const LibraryRun* r = library_run(i);
+            if (!s_cu.lib_filter.PassFilter(r->name) && !s_cu.lib_filter.PassFilter(r->info.info[CI_CPU]) &&
+                !s_cu.lib_filter.PassFilter(r->info.info[CI_GPU]))
+                continue;
+            const bool added = compare_has_label(r->name);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID((int)i);
+            bool on = added || s_cu.lib_selected[i];
+            ImGui::BeginDisabled(added);
+            if (theme_checkbox("##pick", &on) && !added) s_cu.lib_selected[i] = on;
+            ImGui::EndDisabled();
+            if (added && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Already in the comparison");
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            // The whole row is clickable: click toggles, double-click adds this run right away.
+            ImGui::BeginDisabled(added);
+            if (ImGui::Selectable(r->name, false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap |
+                                                  ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    memset(s_cu.lib_selected, 0, sizeof(s_cu.lib_selected));
+                    s_cu.lib_selected[i] = true;
+                    lib_add_now = true;
+                } else {
+                    s_cu.lib_selected[i] = !s_cu.lib_selected[i];
+                }
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(r->info.info[CI_CPU]);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(r->info.info[CI_GPU]);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(r->info.info[CI_RAM]);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(r->info.info[CI_POWER]);
+            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", r->info.info[CI_DATE]);
+        }
+        ImGui::EndTable();
+    }
+    for (u32 i = 0; i < n && i < ARRAY_COUNT(s_cu.lib_selected); ++i) picked += s_cu.lib_selected[i];
+    if (n == 0) ImGui::TextDisabled("This build has no built-in runs.");
+
+    char add_label[48];
+    snprintf(add_label, sizeof(add_label), picked ? "Add %u run%s" : "Add", picked, picked == 1 ? "" : "s");
+    ImGui::BeginDisabled(picked == 0);
+    const bool add = theme_button_primary(add_label) || (lib_add_now && picked);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    if (add) {
+        u32 ok = 0;
+        char err[200] = {};
+        for (u32 i = 0; i < n && i < ARRAY_COUNT(s_cu.lib_selected); ++i) {
+            if (!s_cu.lib_selected[i]) continue;
+            const LibraryRun* r = library_run(i);
+            if (compare_add_buffer(r->name, r->data, r->size, err, sizeof(err))) ++ok;
+        }
+        if (ok == picked) snprintf(s_cu.status, sizeof(s_cu.status), "Added %u run%s from the library", ok, ok == 1 ? "" : "s");
+        else snprintf(s_cu.status, sizeof(s_cu.status), "Added %u of %u runs: %s", ok, picked, err);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 // ---- frame --------------------------------------------------------------------------------------
 
 void compare_ui_draw() {
@@ -457,6 +560,8 @@ void compare_ui_draw() {
     if (theme_button("Add current run")) add_current();
     ImGui::EndDisabled();
     ImGui::SameLine();
+    if (theme_button("Library...")) s_cu.library_request = true;
+    ImGui::SameLine();
     ImGui::BeginDisabled(g_cmp.run_count == 0);
     if (theme_button("Copy table")) copy_table();
     ImGui::SameLine();
@@ -465,11 +570,12 @@ void compare_ui_draw() {
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%u / %u runs%s%s", g_cmp.run_count, CMP_MAX_RUNS, s_cu.status[0] ? "  |  " : "", s_cu.status);
+    draw_library();
 
     if (g_cmp.run_count == 0) {
         ImGui::Spacing();
         ImGui::TextDisabled("Add saved results (*.toon.txt) with \"Add files...\" or by dropping them on this window,");
-        ImGui::TextDisabled("or add the results of this session with \"Add current run\".");
+        ImGui::TextDisabled("add the results of this session with \"Add current run\", or pick reference runs from \"Library...\".");
         ImGui::End();
         return;
     }

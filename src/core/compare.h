@@ -61,6 +61,11 @@ bool compare_summary(u32 run, const char* suite, CmpSummary* out);
 
 // Adds a saved results file as the last column. False (with `err`) if it can't be read or the set is full.
 bool compare_add_file(const wchar_t* path, char* err, u32 err_size);
+// Same for results text already in memory (e.g. the built-in library), labelled `label`.
+bool compare_add_buffer(const char* label, const char* data, u32 size, char* err, u32 err_size);
+// Reads only the system info of a results text into `out` (info[]; label left empty). Nothing is added.
+bool compare_peek(const char* data, u32 size, CmpRun* out, char* err, u32 err_size);
+bool compare_has_label(const char* label);
 // Adds the finished tests of the last run in this process. False if there is nothing to add.
 bool compare_add_current(char* err, u32 err_size);
 void compare_remove(u32 run);

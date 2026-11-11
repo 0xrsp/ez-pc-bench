@@ -81,6 +81,11 @@ void sysinfo_refresh_power();
 const char* power_mode_name(PowerMode m);
 bool power_is_best_performance(const PowerInfo* p);
 u32 sysinfo_default_gpu();      // most powerful adapter index (DXGI high-performance order)
+// File-name friendly short names: "AMD Ryzen 7 250 w/ Radeon 780M Graphics" -> "r7-250",
+// "13th Gen Intel(R) Core(TM) i7-13700H" -> "i7-13700h", "NVIDIA GeForce RTX 5060 Laptop GPU" -> "rtx5060-laptop",
+// "AMD Radeon 780M Graphics" -> "radeon-780m".
+void cpu_short_name(const char* brand, char* out, u32 size);
+void gpu_short_name(const char* name, char* out, u32 size);
 
 // Device, bus, file system and sector sizes of one drive (no BitLocker). False if the drive doesn't exist.
 bool drive_query(wchar_t letter, DriveInfo* d);

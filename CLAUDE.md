@@ -43,3 +43,6 @@ keep it updated (decision log, open questions, measured facts).
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.
 - New tests: add the function in the suite's file and one row in `src/core/registry.cpp`.
+- Reference runs for the GUI library: drop a `*.toon.txt` into `library/` (name it
+  `<date>_<cpu-short>_<gpu-short>.toon.txt`) and build; the glob is CONFIGURE_DEPENDS, so the next build
+  repacks it into the GUI exe.

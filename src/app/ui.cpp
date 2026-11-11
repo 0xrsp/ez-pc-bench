@@ -187,19 +187,78 @@ void ui_results_dir(wchar_t* dir) {
     CreateDirectoryW(dir, nullptr);
 }
 
-static void save_results() {
-    wchar_t dir[MAX_PATH];
-    ui_results_dir(dir);
+// "Save results" asks for an optional run name; empty = the default name. The name is the file name.
+struct SaveDialog {
+    bool open_request;
+    char name[128];
+    char default_name[128];     // ezbench_20261111_113811_r7-250_rtx5060-laptop
+};
+static SaveDialog s_save;
+
+static void default_run_name(char* out, u32 size) {
     time_t now = time(nullptr);
     struct tm t;
     localtime_s(&t, &now);
-    wchar_t path[MAX_PATH];
-    swprintf(path, MAX_PATH, L"%s\\ezbench_%04d%02d%02d_%02d%02d%02d.toon.txt", dir, t.tm_year + 1900, t.tm_mon + 1,
-             t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    const BenchParams* p = &g_run.params;
+    char cpu[48], gpu[48];
+    cpu_short_name(g_sys.cpu.brand, cpu, sizeof(cpu));
+    gpu_short_name(p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "", gpu, sizeof(gpu));
+    snprintf(out, size, "ezbench_%04d%02d%02d_%02d%02d%02d_%s_%s", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+             t.tm_min, t.tm_sec, cpu, gpu);
+}
+
+static void save_results(const char* name) {
+    // File-name safe: no \ / : * ? " < > | or control characters, no leading / trailing spaces or dots.
+    char clean[128];
+    u32 n = 0;
+    for (const char* c = name; *c && n + 1 < sizeof(clean); ++c)
+        clean[n++] = ((u8)*c < 32 || strchr("\\/:*?\"<>|", *c)) ? '_' : *c;
+    clean[n] = 0;
+    while (n && (clean[n - 1] == ' ' || clean[n - 1] == '.')) clean[--n] = 0;
+    const char* start = clean;
+    while (*start == ' ' || *start == '.') ++start;
+    if (!*start) start = s_save.default_name;
+
+    wchar_t dir[MAX_PATH], wname[128], path[MAX_PATH];
+    ui_results_dir(dir);
+    MultiByteToWideChar(CP_UTF8, 0, start, -1, wname, 128);
+    swprintf(path, MAX_PATH, L"%s\\%s.toon.txt", dir, wname);
+    for (u32 k = 2; GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES && k < 1000; ++k)     // keep existing files
+        swprintf(path, MAX_PATH, L"%s\\%s_%u.toon.txt", dir, wname, k);
     char path8[MAX_PATH * 3];
     WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
     const bool ok = results_write_toon(path, &g_run.params);
     snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), ok ? "Saved %s" : "Failed to write %s", path8);
+}
+
+static void draw_save_dialog() {
+    if (s_save.open_request) {
+        s_save.open_request = false;
+        s_save.name[0] = 0;
+        default_run_name(s_save.default_name, sizeof(s_save.default_name));
+        ImGui::OpenPopup("Save results");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 34.0f, 0.0f));
+    if (!ImGui::BeginPopupModal("Save results", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextDisabled("Run name (optional)");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    bool save = ImGui::InputTextWithHint("##name", s_save.default_name, s_save.name, sizeof(s_save.name),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::TextDisabled("Enter saves with the name shown (results\\<name>.toon.txt next to the exe).");
+    ImGui::Spacing();
+    save |= theme_button_primary("Save");
+    ImGui::SameLine();
+    const bool cancel = theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (save) {
+        save_results(s_save.name[0] ? s_save.name : s_save.default_name);
+        ImGui::CloseCurrentPopup();
+    } else if (cancel) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 static bool s_open_compare;      // "Compare..." clicked; main_gui opens the compare window
@@ -208,13 +267,6 @@ bool ui_take_compare_request() {
     const bool r = s_open_compare;
     s_open_compare = false;
     return r;
-}
-
-static void copy_text() {
-    static char buf[256 * 1024];
-    results_format_text(buf, sizeof(buf), &g_run.params);
-    ImGui::SetClipboardText(buf);
-    snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Results copied to clipboard");
 }
 
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
@@ -286,9 +338,7 @@ static void draw_toolbar() {
     const bool have_results = g_run.total > 0 && !running;
     ImGui::SameLine();
     ImGui::BeginDisabled(!have_results);
-    if (theme_button("Save results")) save_results();
-    ImGui::SameLine();
-    if (theme_button("Copy text")) copy_text();
+    if (theme_button("Save results...")) s_save.open_request = true;
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (theme_button("Compare...")) s_open_compare = true;
@@ -744,6 +794,7 @@ void ui_draw() {
     draw_sysinfo();
     draw_targets();
     draw_toolbar();
+    draw_save_dialog();
     ImGui::Spacing();
 
     // Invisible but draggable column divider: tables cache border colors in BeginTable, so push around it only.

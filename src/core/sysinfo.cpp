@@ -216,6 +216,68 @@ static void gpu_query(SysInfo* s) {
 
 u32 sysinfo_default_gpu() { return 0; }    // first adapter in DXGI high-performance order
 
+// ---- short names ------------------------------------------------------------------------------------
+
+static bool word_is(const char* w, const char* s) { return _stricmp(w, s) == 0; }
+
+// Lowercase tokens of `name` joined by '-', dropping marketing words. `gpu` picks the GPU rules.
+static void short_name(const char* name, char* out, u32 size, bool gpu) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s", name ? name : "");
+    static const char* const cuts[] = { " w/ ", " with ", " @", "Processor", " CPU" };   // everything after goes
+    for (u32 i = 0; i < ARRAY_COUNT(cuts); ++i)
+        if (char* p = strstr(buf, cuts[i])) *p = 0;
+
+    char tokens[16][32];
+    u32 n = 0;
+    for (char* t = strtok(buf, " ,"); t && n < 16; t = strtok(nullptr, " ,")) {
+        char w[32];
+        u32 k = 0;
+        for (const char* c = t; *c && k + 1 < sizeof(w); ++c) {
+            if (*c == '(') { while (*c && *c != ')') ++c; if (!*c) break; continue; }     // (R) (TM)
+            if ((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-') w[k++] = *c;
+            else if (*c >= 'A' && *c <= 'Z') w[k++] = (char)(*c - 'A' + 'a');
+        }
+        w[k] = 0;
+        if (!k) continue;
+        const size_t len = strlen(w);
+        static const char* const drop_cpu[] = { "amd", "intel", "core", "gen", "mobile" };
+        static const char* const drop_gpu[] = { "nvidia", "amd", "intel", "geforce", "graphics", "gpu" };
+        bool drop = false;
+        const char* const* list = gpu ? drop_gpu : drop_cpu;
+        const u32 count = gpu ? ARRAY_COUNT(drop_gpu) : ARRAY_COUNT(drop_cpu);
+        for (u32 d = 0; d < count && !drop; ++d) drop = word_is(w, list[d]);
+        if (!gpu && len > 2 && w[0] >= '0' && w[0] <= '9' &&            // "13th", "16-core"
+            (!strcmp(w + len - 2, "th") || !strcmp(w + len - 2, "nd") || !strcmp(w + len - 2, "rd") ||
+             !strcmp(w + len - 2, "st") || strstr(w, "-core")))
+            drop = true;
+        if (!drop) snprintf(tokens[n++], sizeof(tokens[0]), "%s", w);
+    }
+
+    out[0] = 0;
+    u32 len = 0;
+    for (u32 i = 0; i < n; ++i) {
+        const char* t = tokens[i];
+        char merged[64];
+        if (!gpu && word_is(t, "ryzen") && i + 1 < n && tokens[i + 1][0] >= '0' && tokens[i + 1][0] <= '9') {
+            snprintf(merged, sizeof(merged), "r%s", tokens[++i]);           // "Ryzen 7" -> "r7"
+            t = merged;
+        } else if (gpu && (word_is(t, "rtx") || word_is(t, "gtx") || word_is(t, "rx") || word_is(t, "gt")) && i + 1 < n) {
+            snprintf(merged, sizeof(merged), "%s%s", t, tokens[++i]);       // "RTX 5060" -> "rtx5060"
+            t = merged;
+        } else if (gpu && word_is(t, "radeon") && i + 1 < n && word_is(tokens[i + 1], "rx")) {
+            continue;                                                       // "Radeon RX 7600" -> "rx7600"
+        }
+        const int w = snprintf(out + len, size - len, "%s%s", len ? "-" : "", t);
+        if (w < 0 || len + (u32)w >= size) break;
+        len += (u32)w;
+    }
+    if (!out[0]) snprintf(out, size, "%s", gpu ? "gpu" : "cpu");
+}
+
+void cpu_short_name(const char* brand, char* out, u32 size) { short_name(brand, out, size, false); }
+void gpu_short_name(const char* name, char* out, u32 size) { short_name(name, out, size, true); }
+
 // ---- Power -------------------------------------------------------------------
 
 // Windows 10/11 "power mode" overlays (Settings > Power > Power mode).

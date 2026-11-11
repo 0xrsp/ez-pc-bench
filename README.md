@@ -49,10 +49,11 @@ vcvars is needed.
 **GUI:**
 1. Pick the GPU and disk(s) at the top.
 2. Tick the tests you want and press **Run**.
-3. **Save results** writes a `.toon.txt` file.
-4. **Compare...** opens the compare window. Add saved results (or drop files onto the window) and the
-   current run to see them side by side: an overall / per-suite summary, system info, raw values and
-   the change vs a reference run.
+3. **Save results...** asks for an optional run name (Enter keeps the default, e.g.
+   `ezbench_20261111_113811_r7-250_rtx5060-laptop`) and writes `results\<name>.toon.txt` next to the exe.
+4. **Compare...** opens the compare window. Add saved results (or drop files onto the window), the
+   current run, or reference runs from the built-in **Library...** to see them side by side: an
+   overall / per-suite summary, system info, raw values and the change vs a reference run.
    **Copy table** puts it on the clipboard for spreadsheets.
 
 The app asks for admin rights at start. They are optional; without them a few tweaks are skipped.
@@ -72,14 +73,15 @@ Results are plain [TOON](https://github.com/toon-format/toon) text files.
 - For stable numbers: use AC power with Windows power mode *Best performance*, and close other apps
   (games especially).
 - The disk tests use one temporary file per drive (`<drive>:\ezbench.tmp`). It is deleted automatically,
-  even after a crash. A full default disk run writes about 130 GB, so use `--passes 1` for frequent
-  runs.
+  even after a crash. A full default disk run (best of 3 passes) writes about 80 GB, so use
+  `--passes 1` for frequent runs.
 
-## Reference run
+## Reference runs
 
-A complete run on a Ryzen 7 250 / RTX 5060 Laptop / Samsung NVMe laptop (AC, Best performance, admin) is
-in [docs/reference/2026-11-11_ac_best-performance_admin.toon.txt](docs/reference/2026-11-11_ac_best-performance_admin.toon.txt).
-Add it in the compare window to see how your machine differs.
+Runs I made on the PCs I've tested live in [library/](library/) and are built (compressed) into the GUI,
+so you can add them from **Library...** in the compare window. The main reference is a Ryzen 7 250 /
+RTX 5060 Laptop / Samsung NVMe laptop on AC, Best performance, as admin:
+[library/2026-11-11_r7-250_rtx5060-laptop.toon.txt](library/2026-11-11_r7-250_rtx5060-laptop.toon.txt).
 
 Design notes and measurements: [docs/PLAN.md](docs/PLAN.md).
 

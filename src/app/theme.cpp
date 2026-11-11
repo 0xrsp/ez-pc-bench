@@ -203,6 +203,9 @@ void theme_apply_style(f32 scale) {
     c[ImGuiCol_WindowBg] = p.page;
     c[ImGuiCol_ChildBg] = none;
     c[ImGuiCol_PopupBg] = p.card;
+    c[ImGuiCol_TitleBg] = p.container_high;            // modal dialogs (save, library)
+    c[ImGuiCol_TitleBgActive] = p.container_high;
+    c[ImGuiCol_TitleBgCollapsed] = p.container_high;
     c[ImGuiCol_Border] = p.outline_variant;
     c[ImGuiCol_BorderShadow] = none;
     c[ImGuiCol_FrameBg] = p.container_high;

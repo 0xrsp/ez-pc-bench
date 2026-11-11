@@ -203,7 +203,8 @@ static const char* cell(char cells[][TOON_CELL], i32 i) { return i >= 0 ? cells[
 
 static bool read_table(ToonReader* r, const ToonLine* l, const char* path, u32 run, char* err, u32 err_size) {
     static char cells[TOON_MAX_FIELDS][TOON_CELL];
-    const bool tests = !strcmp(path, "tests"), metrics = !strcmp(path, "metrics");
+    const bool info_only = run == UINT32_MAX;       // compare_peek: system info only
+    const bool tests = !info_only && !strcmp(path, "tests"), metrics = !info_only && !strcmp(path, "metrics");
     const bool modules = !strcmp(path, "system.ram.modules"), drives = !strcmp(path, "system.drives");
     const char *s, *e;
     u32 indent;
@@ -326,26 +327,7 @@ static u32 begin_run(char* err, u32 err_size) {
     return run;
 }
 
-bool compare_add_file(const wchar_t* path, char* err, u32 err_size) {
-    const u32 run = begin_run(err, err_size);
-    if (run == UINT32_MAX) return false;
-    ToonReader r;
-    char* buf = toon_read_file(path, &r, err, err_size);
-    memset(&s_file, 0, sizeof(s_file));
-    const bool ok = buf && parse_file(&r, run, err, err_size);
-    toon_free_file(buf);
-    if (!ok) {
-        if (!buf) g_cmp.run_count--;
-        else compare_remove(run);
-        return false;
-    }
-
-    CmpRun* c = &g_cmp.runs[run];
-    const wchar_t* name = path;
-    for (const wchar_t* p = path; *p; ++p)
-        if (*p == L'\\' || *p == L'/') name = p + 1;
-    WideCharToMultiByte(CP_UTF8, 0, name, -1, c->label, sizeof(c->label), nullptr, nullptr);
-    if (char* ext = strstr(c->label, ".toon.txt")) *ext = 0;
+static void fill_info(CmpRun* c) {
     copy_str(c->info[CI_DATE], sizeof(c->info[0]), s_file.timestamp);
     if (char* t = strchr(c->info[CI_DATE], 'T')) *t = ' ';
     copy_str(c->info[CI_CPU], sizeof(c->info[0]), s_file.cpu);
@@ -356,7 +338,53 @@ bool compare_add_file(const wchar_t* path, char* err, u32 err_size) {
     format_power(c->info[CI_POWER], sizeof(c->info[0]), s_file.on_ac, s_file.mode);
     copy_str(c->info[CI_ADMIN], sizeof(c->info[0]), s_file.elevated ? "yes" : "no");
     snprintf(c->info[CI_DURATION], sizeof(c->info[0]), "%g s", s_file.duration_ms / 1000.0);
+}
+
+bool compare_add_buffer(const char* label, const char* data, u32 size, char* err, u32 err_size) {
+    const u32 run = begin_run(err, err_size);
+    if (run == UINT32_MAX) return false;
+    ToonReader r = { data, data + size, 0 };
+    if (size >= 3 && !memcmp(data, "\xEF\xBB\xBF", 3)) r.p += 3;
+    memset(&s_file, 0, sizeof(s_file));
+    if (!parse_file(&r, run, err, err_size)) {
+        compare_remove(run);
+        return false;
+    }
+    CmpRun* c = &g_cmp.runs[run];
+    copy_str(c->label, sizeof(c->label), label);
+    fill_info(c);
     return true;
+}
+
+bool compare_add_file(const wchar_t* path, char* err, u32 err_size) {
+    ToonReader r;
+    char* buf = toon_read_file(path, &r, err, err_size);
+    if (!buf) return false;
+    const wchar_t* name = path;
+    for (const wchar_t* p = path; *p; ++p)
+        if (*p == L'\\' || *p == L'/') name = p + 1;
+    char label[96];
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, label, sizeof(label), nullptr, nullptr);
+    if (char* ext = strstr(label, ".toon.txt")) *ext = 0;
+    const bool ok = compare_add_buffer(label, r.p, (u32)(r.end - r.p), err, err_size);
+    toon_free_file(buf);
+    return ok;
+}
+
+bool compare_peek(const char* data, u32 size, CmpRun* out, char* err, u32 err_size) {
+    memset(out, 0, sizeof(*out));
+    ToonReader r = { data, data + size, 0 };
+    if (size >= 3 && !memcmp(data, "\xEF\xBB\xBF", 3)) r.p += 3;
+    memset(&s_file, 0, sizeof(s_file));
+    if (!parse_file(&r, UINT32_MAX, err, err_size)) return false;
+    fill_info(out);
+    return true;
+}
+
+bool compare_has_label(const char* label) {
+    for (u32 c = 0; c < g_cmp.run_count; ++c)
+        if (!strcmp(g_cmp.runs[c].label, label)) return true;
+    return false;
 }
 
 // ---- the current run ------------------------------------------------------------------------------

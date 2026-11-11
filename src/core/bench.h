@@ -34,7 +34,7 @@ struct BenchParams {
     u32 disk_drives = 1u << ('C' - 'A');    // bit n = drive letter 'A' + n; the disk suite runs on each
 
     u64 disk_file_bytes = 1 * 1024ull * 1024 * 1024;
-    u32 disk_passes = 5;
+    u32 disk_passes = 3;            // best of N (CrystalDiskMark uses 5; 3 is as stable here with ~40% less wear)
     bool disk_write_through = false;
 };
 
