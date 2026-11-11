@@ -71,6 +71,7 @@ struct SuiteDesc {
 
 enum BenchFlags : u32 {
     BENCH_DEFAULT_OFF = 1u << 0,    // not selected by default in the GUI
+    BENCH_PREVIEW     = 1u << 1,    // publishes a rendered preview (GPU 3D / 2D) shown in the live panel
 };
 
 struct BenchDesc {

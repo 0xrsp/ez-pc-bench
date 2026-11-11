@@ -1,6 +1,7 @@
 // The whole benchmark registry: one table of suites, one table of tests.
 // Order here is run order within a suite.
 #include "core/bench.h"
+#include "gpu/gpu_common.h"
 
 #define BENCH_FN(name) void name(void*, const BenchParams*, BenchLive*, BenchResult*, const std::atomic<bool>*)
 #define SUITE_FNS(prefix) \
@@ -49,12 +50,17 @@ BENCH_FN(disk_rnd4k_q1t1);
 BENCH_FN(disk_seq128k_q32t1);
 BENCH_FN(disk_rnd4k_q32t16);
 
+// gpu/gpu_entry.cpp: gpu_vk_<id> and gpu_d3d12_<id> for every test in GPU_TESTS (gpu_common.h)
+#define X(id, e, g, gid, name, flags) BENCH_FN(gpu_vk_##id); BENCH_FN(gpu_d3d12_##id);
+GPU_TESTS(X)
+#undef X
+
 const SuiteDesc g_suites[SUITE_COUNT] = {
     { SUITE_SMOKE,     "Smoke test",   "smoke",     smoke_init, smoke_shutdown },
     { SUITE_CPU,       "CPU",          "cpu",       cpu_init,   cpu_shutdown },
     { SUITE_MEM,       "Memory",       "mem",       mem_init,   mem_shutdown },
-    { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    nullptr, nullptr },
-    { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", nullptr, nullptr },
+    { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    gpu_vk_init,    gpu_vk_shutdown },
+    { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", gpu_d3d12_init, gpu_d3d12_shutdown },
     { SUITE_DISK,      "Disk",         "disk",      disk_init,  disk_shutdown },
 };
 
@@ -94,6 +100,14 @@ const BenchDesc g_benches[] = {
     { SUITE_DISK, "Random",     "RND4K Q32T1",          "disk.rnd4k_q32t1",   disk_rnd4k_q32t1,   0 },
     { SUITE_DISK, "Random",     "RND4K Q1T1",           "disk.rnd4k_q1t1",    disk_rnd4k_q1t1,    0 },
     { SUITE_DISK, "Random",     "RND4K Q32T16 (NVMe)",  "disk.rnd4k_q32t16",  disk_rnd4k_q32t16,  BENCH_DEFAULT_OFF },
+
+    // GPU: same tests for both APIs, ids like "gpu_vk.compute.fp32", "gpu_d3d12.3d.scene".
+#define X(id, e, g, gid, name, flags) { SUITE_GPU_VK, g, name, "gpu_vk." gid "." #id, gpu_vk_##id, flags },
+    GPU_TESTS(X)
+#undef X
+#define X(id, e, g, gid, name, flags) { SUITE_GPU_D3D12, g, name, "gpu_d3d12." gid "." #id, gpu_d3d12_##id, flags },
+    GPU_TESTS(X)
+#undef X
 };
 
 const u32 g_bench_count = ARRAY_COUNT(g_benches);

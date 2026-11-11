@@ -37,6 +37,61 @@ target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 target_compile_options(imgui PRIVATE /W0)
 target_link_libraries(imgui PRIVATE ezb_flags)
 
+# GPU: Vulkan SDK + shaders. One HLSL source -> DXIL (Windows SDK dxc, signed via its dxil.dll) and
+# SPIR-V (Vulkan SDK dxc). Binding rules in src/gpu/gpu_common.h. Output: build/<preset>/shaders/<entry>_{dxil,spv}.h
+if(NOT DEFINED ENV{VULKAN_SDK})
+    file(GLOB _vk_sdks "C:/VulkanSDK/*")
+    list(SORT _vk_sdks)
+    list(POP_BACK _vk_sdks _vk_sdk)
+    set(ENV{VULKAN_SDK} "${_vk_sdk}")
+endif()
+find_package(Vulkan REQUIRED)
+file(GLOB _winsdk_dxc "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64/dxc.exe")
+list(SORT _winsdk_dxc)
+list(POP_BACK _winsdk_dxc DXC_DXIL)
+find_program(DXC_SPIRV dxc HINTS "$ENV{VULKAN_SDK}/Bin" NO_DEFAULT_PATH)
+if(NOT DXC_DXIL OR NOT DXC_SPIRV)
+    message(FATAL_ERROR "dxc not found (Windows SDK: ${DXC_DXIL}, Vulkan SDK: ${DXC_SPIRV})")
+endif()
+
+set(SHADER_SRC ${CMAKE_SOURCE_DIR}/src/gpu/shaders)
+set(SHADER_OUT ${CMAKE_BINARY_DIR}/shaders)
+file(MAKE_DIRECTORY ${SHADER_OUT})
+set(SHADER_HEADERS "")
+function(ezb_shader file entry profile)
+    set(src ${SHADER_SRC}/${file})
+    set(dxil ${SHADER_OUT}/${entry}_dxil.h)
+    set(spv ${SHADER_OUT}/${entry}_spv.h)
+    add_custom_command(OUTPUT ${dxil}
+        COMMAND ${DXC_DXIL} -nologo -Wno-ignored-attributes -T ${profile} -E ${entry} -O3 ${ARGN} -Fh ${dxil} -Vn g_${entry}_dxil ${src}
+        DEPENDS ${src} ${SHADER_SRC}/common.hlsli VERBATIM)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND ${DXC_SPIRV} -nologo -spirv -fspv-target-env=vulkan1.3 -fvk-t-shift 8 0 -fvk-s-shift 16 0
+                -T ${profile} -E ${entry} -O3 ${ARGN} -Fh ${spv} -Vn g_${entry}_spv ${src}
+        DEPENDS ${src} ${SHADER_SRC}/common.hlsli VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${dxil} ${spv} PARENT_SCOPE)
+endfunction()
+
+ezb_shader(alu.hlsl       cs_fp32      cs_6_0)
+ezb_shader(alu.hlsl       cs_int32     cs_6_0)
+ezb_shader(alu_fp16.hlsl  cs_fp16      cs_6_2 -enable-16bit-types)
+ezb_shader(bandwidth.hlsl cs_bw_read   cs_6_0)
+ezb_shader(bandwidth.hlsl cs_bw_write  cs_6_0)
+ezb_shader(bandwidth.hlsl cs_bw_copy   cs_6_0)
+ezb_shader(lds.hlsl       cs_lds       cs_6_0)
+ezb_shader(downscale.hlsl cs_downscale cs_6_0)
+ezb_shader(raster.hlsl    vs_triangles  vs_6_0)
+ezb_shader(raster.hlsl    vs_drawcall   vs_6_0)
+ezb_shader(raster.hlsl    ps_color      ps_6_0)
+ezb_shader(raster.hlsl    vs_fullscreen vs_6_0)
+ezb_shader(raster.hlsl    ps_fill       ps_6_0)
+ezb_shader(raster.hlsl    ps_texfill    ps_6_0)
+ezb_shader(raster.hlsl    vs_scene      vs_6_0)
+ezb_shader(raster.hlsl    ps_scene      ps_6_0)
+ezb_shader(raster.hlsl    vs_sprite     vs_6_0)
+ezb_shader(raster.hlsl    ps_sprite     ps_6_0)
+add_custom_target(gpu_shaders DEPENDS ${SHADER_HEADERS})
+
 # Core: benchmarks, runner, sysinfo, results (shared by GUI and CLI)
 add_library(ezbench_core STATIC
     src/core/timer.cpp
@@ -56,10 +111,15 @@ add_library(ezbench_core STATIC
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
     src/cpu/cpu_gemm.cpp
-    src/disk/disk_bench.cpp)
-target_include_directories(ezbench_core PUBLIC src)
-target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings
-    dxgi powrprof winmm advapi32 shell32 ole32 propsys synchronization)
+    src/disk/disk_bench.cpp
+    src/gpu/gpu_common.cpp
+    src/gpu/gpu_entry.cpp
+    src/gpu/gpu_d3d12.cpp
+    src/gpu/gpu_vk.cpp)
+target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
+add_dependencies(ezbench_core gpu_shaders)
+target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
+    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization)
 
 # GUI
 add_executable(ez-pc-bench WIN32
