@@ -30,10 +30,20 @@ BENCH_FN(cpu_sieve);
 BENCH_FN(cpu_c2c);
 BENCH_FN(cpu_scaling);
 
+// mem/mem_bench.cpp
+SUITE_FNS(mem);
+BENCH_FN(mem_read);
+BENCH_FN(mem_write);
+BENCH_FN(mem_copy);
+BENCH_FN(mem_triad);
+BENCH_FN(mem_latency);
+BENCH_FN(mem_sweep_st);
+BENCH_FN(mem_sweep_mt);
+
 const SuiteDesc g_suites[SUITE_COUNT] = {
     { SUITE_SMOKE,     "Smoke test",   "smoke",     smoke_init, smoke_shutdown },
     { SUITE_CPU,       "CPU",          "cpu",       cpu_init,   cpu_shutdown },
-    { SUITE_MEM,       "Memory",       "mem",       nullptr, nullptr },
+    { SUITE_MEM,       "Memory",       "mem",       mem_init,   mem_shutdown },
     { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    nullptr, nullptr },
     { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", nullptr, nullptr },
     { SUITE_DISK,      "Disk",         "disk",      nullptr, nullptr },
@@ -58,6 +68,14 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Workloads",      "Prime sieve to 1e9",        "cpu.work.sieve",    cpu_sieve,          0 },
     { SUITE_CPU, "Topology",       "Core-to-core latency",      "cpu.topo.c2c",      cpu_c2c,            0 },
     { SUITE_CPU, "Topology",       "Thread scaling (AVX2 FMA)", "cpu.topo.scaling",  cpu_scaling,        0 },
+
+    { SUITE_MEM, "DRAM bandwidth", "Read",                      "mem.bw.read",       mem_read,           0 },
+    { SUITE_MEM, "DRAM bandwidth", "Write",                     "mem.bw.write",      mem_write,          0 },
+    { SUITE_MEM, "DRAM bandwidth", "Copy",                      "mem.bw.copy",       mem_copy,           0 },
+    { SUITE_MEM, "DRAM bandwidth", "Triad (a = b + s*c)",       "mem.bw.triad",      mem_triad,          0 },
+    { SUITE_MEM, "Latency",        "Random access latency",     "mem.lat.chase",     mem_latency,        0 },
+    { SUITE_MEM, "Cache sweep",    "Read sweep, one thread",    "mem.sweep.st",      mem_sweep_st,       0 },
+    { SUITE_MEM, "Cache sweep",    "Read sweep, all threads",   "mem.sweep.mt",      mem_sweep_mt,       0 },
 };
 
 const u32 g_bench_count = ARRAY_COUNT(g_benches);

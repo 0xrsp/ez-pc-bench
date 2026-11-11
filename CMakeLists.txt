@@ -49,6 +49,9 @@ add_library(ezbench_core STATIC
     src/core/smoke_bench.cpp
     src/core/threads.cpp
     src/core/mem_util.cpp
+    src/core/throughput.cpp
+    src/mem/mem_bench.cpp
+    src/mem/mem_kernels.cpp
     src/cpu/cpu_bench.cpp
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
