@@ -26,8 +26,6 @@
 #include "vs_sprite_spv.h"
 #include "ps_sprite_spv.h"
 
-static VkCtx s_vk;
-
 // ---- pipeline table ------------------------------------------------------------------------------
 
 enum PipeKind : u8 { PK_COMPUTE, PK_OPAQUE, PK_DEPTH, PK_BLEND };
@@ -214,6 +212,7 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &ef };
     ci.queueCreateInfoCount = v->xfer_family != v->gfx_family ? 2 : 1;
     ci.pQueueCreateInfos = qci;
+    vk_ext_enable_features(v, &ci);
     VkResult r = vkCreateDevice(v->phys, &ci, nullptr, &v->dev);
     if (r != VK_SUCCESS) return fail(error, error_size, "vkCreateDevice", r);
     vkGetDeviceQueue(v->dev, v->gfx_family, 0, &v->gfx_queue);
@@ -444,7 +443,7 @@ void gpu_vk_shutdown(void* state) {
         if (destroy) destroy(v->instance, v->messenger, nullptr);
     }
     if (v->instance) vkDestroyInstance(v->instance, nullptr);
-    *v = {};
+    free(v);    // heap-allocated: the suite may hold one context per adapter (gpu_multi.cpp)
 }
 
 bool gpu_vk_init(const BenchParams* p, void** state, char* error, u32 error_size) {
@@ -454,8 +453,11 @@ bool gpu_vk_init(const BenchParams* p, void** state, char* error, u32 error_size
         snprintf(error, error_size, "no GPU adapter found");
         return false;
     }
-    VkCtx* v = &s_vk;
-    *v = {};
+    VkCtx* v = (VkCtx*)calloc(1, sizeof(VkCtx));
+    if (!v) {
+        snprintf(error, error_size, "out of memory");
+        return false;
+    }
     bool ok = create_instance(v, error, error_size) && pick_device(v, gi, error, error_size) &&
               create_device(v, error, error_size);
     if (ok && !create_layouts(v)) ok = fail(error, error_size, "descriptor / pipeline layout creation", VK_ERROR_UNKNOWN);

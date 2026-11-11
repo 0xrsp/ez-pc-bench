@@ -1,0 +1,48 @@
+#version 460
+// Matrix multiply-add throughput via VK_KHR_cooperative_matrix (Vulkan only; GLSL because the HLSL helper
+// header isn't shipped with the Vulkan SDK's dxc). Built twice: FP16 x FP16 -> FP32 and, with -DINT8,
+// INT8 x INT8 -> INT32. One subgroup per workgroup (local size = subgroup size, constant 0); M / N / K come
+// from the driver's supported configurations (constants 1..3). Four independent accumulators per subgroup,
+// each with its own A matrix, pc.u.x iterations: 4 * 2*M*N*K ops per subgroup per iteration.
+// A / B are splats of push-constant values, so the compiler can't fold the products.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint M = 16;
+layout(constant_id = 2) const uint N = 16;
+layout(constant_id = 3) const uint K = 16;
+
+#ifdef INT8
+#define TA int8_t
+#define TC int32_t
+#define TA_OF(x) int8_t(int(float(x) * 8.0))
+#else
+#define TA float16_t
+#define TC float
+#define TA_OF(x) float16_t(float(x))
+#endif
+
+layout(set = 0, binding = 0) buffer Out { TC outv[]; };
+layout(push_constant) uniform Params { uvec4 u; vec4 f; } pc;
+
+void main() {
+    coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA> a0 = coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA>(TA_OF(pc.f.x));
+    coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA> a1 = coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA>(TA_OF(pc.f.y));
+    coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA> a2 = coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA>(TA_OF(pc.f.z));
+    coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA> a3 = coopmat<TA, gl_ScopeSubgroup, M, K, gl_MatrixUseA>(TA_OF(pc.f.w));
+    coopmat<TA, gl_ScopeSubgroup, K, N, gl_MatrixUseB> b = coopmat<TA, gl_ScopeSubgroup, K, N, gl_MatrixUseB>(TA_OF(pc.u.y & 3u));
+    coopmat<TC, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> c0 = coopmat<TC, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator>(TC(0));
+    coopmat<TC, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> c1 = c0, c2 = c0, c3 = c0;
+    for (uint i = 0; i < pc.u.x; ++i) {
+        c0 = coopMatMulAdd(a0, b, c0);
+        c1 = coopMatMulAdd(a1, b, c1);
+        c2 = coopMatMulAdd(a2, b, c2);
+        c3 = coopMatMulAdd(a3, b, c3);
+    }
+    if (pc.u.z == 0x12345678u) {
+        c0 = c0 + c1 + c2 + c3;
+        coopMatStore(c0, outv, 0, N, gl_CooperativeMatrixLayoutRowMajor);
+    }
+}

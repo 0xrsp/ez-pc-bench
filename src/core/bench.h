@@ -29,6 +29,7 @@ struct BenchParams {
     u32 duration_ms = 3000;         // per measured phase
     u32 thread_count = 0;           // 0 = all logical processors
     u32 gpu_adapter = 0;            // index into SysInfo::gpus
+    u32 gpu_adapters = 0;           // bit n = SysInfo::gpus[n]: the GPU suites run on each; 0 = gpu_adapter only
     u32 gpu_width = 1920, gpu_height = 1080;
     bool gpu_fullscreen = true;
     u32 disk_drives = 1u << ('C' - 'A');    // bit n = drive letter 'A' + n; the disk suite runs on each

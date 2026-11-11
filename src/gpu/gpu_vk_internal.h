@@ -46,7 +46,17 @@ struct VkImg {
 // tessellation / geometry / mesh / ray stages that some drivers then update on every vkCmdPushConstants.
 constexpr VkShaderStageFlags VK_PC_STAGES = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+// Optional device features of the extra tests (gpu_vk_ext*.cpp), filled by vk_ext_enable_features.
+struct VkExtCaps {
+    bool fp64, int_dot, int8, aniso, bc, coop_matrix, subgroup_size_control;
+    f32 max_aniso;
+    u32 subgroup_size;
+    VkPhysicalDeviceCooperativeMatrixFeaturesKHR coop_features;    // chained into device creation
+    const char* extensions[16];                                     // device extensions incl. ones already requested
+};
+
 struct VkCtx {
+    VkExtCaps ext;
     VkInstance instance;
     VkDebugUtilsMessengerEXT messenger;
     VkPhysicalDevice phys;
@@ -107,3 +117,7 @@ void image_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
                    VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access, VkImageLayout new_layout);
 void memory_barrier(VkCommandBuffer cb, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                     VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
+
+// gpu_vk_ext.cpp: called right before vkCreateDevice; enables the supported optional features / extensions of
+// the extra tests in ci's chain (keeping what is already requested) and records them in v->ext.
+void vk_ext_enable_features(VkCtx* v, VkDeviceCreateInfo* ci);
