@@ -606,3 +606,20 @@ metrics[506]{id,name,unit,value,x}:
   gpu_d3d12.2d.clear,p99 frame time,ms,0.210299999,0
   gpu_d3d12.2d.clear,p99.9 frame time,ms,0.680999994,0
   gpu_d3d12.2d.clear,Clear bandwidth,GB/s,3306.10868,0
+score:
+  version: 1
+  status: preliminary
+  reference: 2026-11-11_r7-250_rtx5060-laptop
+  overall: 1000
+  profiles[4]{id,value}:
+    overall,1000
+    gaming,1000
+    creator,1000
+    everyday,1000
+  components[5]{id,value,inputs,of}:
+    cpu_st,1000,9,9
+    cpu_mt,1000,9,9
+    memory,1000,4,4
+    gpu,1000,7,7
+    storage,1000,6,6
+  flags: no-conditions
