@@ -1,154 +1,228 @@
 #include "app/theme.h"
 #include <windows.h>
+#include <math.h>
 #include <wchar.h>
 
 ThemeFonts g_fonts;
-
-const ImVec4 TH_TEXT         = { 0.933f, 0.918f, 0.984f, 1.0f };   // #EEEAFB
-const ImVec4 TH_TEXT_DIM     = { 0.612f, 0.588f, 0.749f, 1.0f };   // #9C96BF
-const ImVec4 TH_ACCENT       = { 0.357f, 0.294f, 0.859f, 1.0f };   // #5B4BDB
-const ImVec4 TH_ACCENT_LIGHT = { 0.600f, 0.545f, 1.000f, 1.0f };   // #998BFF
-const ImVec4 TH_OK           = { 0.494f, 0.886f, 0.659f, 1.0f };   // #7EE2A8
-const ImVec4 TH_RUN          = { 0.690f, 0.640f, 1.000f, 1.0f };
-const ImVec4 TH_BAD          = { 1.000f, 0.478f, 0.541f, 1.0f };
-const ImVec4 TH_WARN         = { 1.000f, 0.765f, 0.529f, 1.0f };   // #FFC387
-
-static const ImVec4 PANEL    = { 0.165f, 0.145f, 0.314f, 0.62f };
-static const ImVec4 BANNER   = { 0.290f, 0.180f, 0.150f, 0.62f };
+Palette g_pal;
 
 static f32 s_scale = 1.0f;
+static bool s_dark = false;
+static bool s_changed = false;
 
-static ImFont* load(const wchar_t* file, ImFont* fallback) {
+static constexpr ImVec4 rgb(u32 hex, f32 a = 1.0f) {
+    return ImVec4(((hex >> 16) & 0xFF) / 255.0f, ((hex >> 8) & 0xFF) / 255.0f, (hex & 0xFF) / 255.0f, a);
+}
+
+static ImVec4 mix(ImVec4 a, ImVec4 b, f32 t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+}
+
+// Material 3 schemes from seed #0B57D0.
+static Palette light_palette() {
+    Palette p;
+    p.page = rgb(0xF3F5FA);
+    p.card = rgb(0xFFFFFF);
+    p.container = rgb(0xECEEF4);
+    p.container_high = rgb(0xE6E8EE);
+    p.container_highest = rgb(0xE1E2E9);
+    p.on_surface = rgb(0x191C20);
+    p.on_surface_variant = rgb(0x44474F);
+    p.outline = rgb(0x74777F);
+    p.outline_variant = rgb(0xC4C6D0);
+    p.primary = rgb(0x0B57D0);
+    p.on_primary = rgb(0xFFFFFF);
+    p.primary_container = rgb(0xD8E2FF);
+    p.on_primary_container = rgb(0x001A41);
+    p.secondary_container = rgb(0xDCE2F9);
+    p.on_secondary_container = rgb(0x151B2C);
+    p.ok = rgb(0x1E6B35);
+    p.error = rgb(0xBA1A1A);
+    p.warn = rgb(0x8A5100);
+    p.warn_container = rgb(0xFFDDB5);
+    p.on_warn_container = rgb(0x2C1600);
+    p.heat_lo = rgb(0xC8F0D2);
+    p.heat_hi = rgb(0xFFDAD6);
+    return p;
+}
+
+static Palette dark_palette() {
+    Palette p;
+    p.page = rgb(0x111318);
+    p.card = rgb(0x191C20);
+    p.container = rgb(0x1D2024);
+    p.container_high = rgb(0x282A2F);
+    p.container_highest = rgb(0x33353A);
+    p.on_surface = rgb(0xE2E2E9);
+    p.on_surface_variant = rgb(0xC4C6D0);
+    p.outline = rgb(0x8E9099);
+    p.outline_variant = rgb(0x44474E);
+    p.primary = rgb(0xAEC6FF);
+    p.on_primary = rgb(0x002E6B);
+    p.primary_container = rgb(0x0B4AAE);
+    p.on_primary_container = rgb(0xD8E2FF);
+    p.secondary_container = rgb(0x3C4758);
+    p.on_secondary_container = rgb(0xD8E2F9);
+    p.ok = rgb(0x7DDA8F);
+    p.error = rgb(0xFFB4AB);
+    p.warn = rgb(0xFFB95C);
+    p.warn_container = rgb(0x4F2D00);
+    p.on_warn_container = rgb(0xFFDDB5);
+    p.heat_lo = rgb(0x1B4D2A);
+    p.heat_hi = rgb(0x6B1D1A);
+    return p;
+}
+
+bool theme_is_dark() { return s_dark; }
+void theme_request_dark(bool dark) {
+    if (dark != s_dark) { s_dark = dark; s_changed = true; }
+}
+bool theme_take_change() {
+    const bool c = s_changed;
+    s_changed = false;
+    return c;
+}
+
+void theme_bg_rgb(f32 out[3]) {
+    const ImVec4 c = (s_dark ? dark_palette() : light_palette()).page;
+    out[0] = c.x; out[1] = c.y; out[2] = c.z;
+}
+
+// ---- fonts -----------------------------------------------------------------------------
+
+// Sharp text: rasterize at the exact pixel size, no horizontal oversampling, glyphs snapped to pixels.
+static ImFontConfig sharp_config() {
+    ImFontConfig cfg;
+    cfg.FontDataOwnedByAtlas = false;   // resource memory, not ours to free
+    cfg.OversampleH = 1;
+    cfg.OversampleV = 1;
+    cfg.PixelSnapH = true;
+    return cfg;
+}
+
+static ImFont* load_resource_font(int id) {
+    HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10));     // 10 = RT_RCDATA
+    if (!res) return nullptr;
+    HGLOBAL mem = LoadResource(nullptr, res);
+    void* data = mem ? LockResource(mem) : nullptr;
+    const DWORD size = SizeofResource(nullptr, res);
+    if (!data || !size) return nullptr;
+    ImFontConfig cfg = sharp_config();
+    return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, (int)size, 0.0f, &cfg);
+}
+
+static ImFont* load_system_font(const wchar_t* file) {
     wchar_t path[MAX_PATH];
     GetWindowsDirectoryW(path, MAX_PATH);
     wcscat_s(path, L"\\Fonts\\");
     wcscat_s(path, file);
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return fallback;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return nullptr;
     char path8[MAX_PATH * 3];
     WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
-    ImFont* f = ImGui::GetIO().Fonts->AddFontFromFileTTF(path8);
-    return f ? f : fallback;
+    ImFontConfig cfg = sharp_config();
+    cfg.FontDataOwnedByAtlas = true;
+    return ImGui::GetIO().Fonts->AddFontFromFileTTF(path8, 0.0f, &cfg);
 }
 
 void theme_load_fonts() {
-    g_fonts.regular = load(L"segoeui.ttf", nullptr);       // first font added = default font
-    g_fonts.semibold = load(L"seguisb.ttf", g_fonts.regular);
-    g_fonts.mono = load(L"CascadiaMono.ttf", nullptr);
-    if (!g_fonts.mono) g_fonts.mono = load(L"consola.ttf", g_fonts.regular);
+    g_fonts.regular = load_resource_font(101);     // gui.rc: Inter-Regular.ttf
+    g_fonts.medium = load_resource_font(102);      // gui.rc: Inter-Medium.ttf
+    if (!g_fonts.regular) g_fonts.regular = load_system_font(L"segoeui.ttf");
+    if (!g_fonts.medium) g_fonts.medium = load_system_font(L"seguisb.ttf");
+    if (!g_fonts.medium) g_fonts.medium = g_fonts.regular;
 }
+
+f32 theme_font_size(f32 mult) {
+    // FontSizeBase is pre-DPI; the rendered size is base * FontScaleDpi. Snap that product to whole pixels.
+    const f32 px = roundf(ImGui::GetStyle().FontSizeBase * mult * s_scale);
+    return px / s_scale;
+}
+
+// ---- style -----------------------------------------------------------------------------
 
 void theme_apply_style(f32 scale) {
     s_scale = scale;
+    g_pal = s_dark ? dark_palette() : light_palette();
+    const Palette& p = g_pal;
+
     ImGuiStyle& s = ImGui::GetStyle();
     s = ImGuiStyle();
-    s.FontSizeBase = 16.0f;
-    s.WindowPadding = ImVec2(16, 14);
-    s.FramePadding = ImVec2(10, 6);
-    s.ItemSpacing = ImVec2(10, 8);
-    s.ItemInnerSpacing = ImVec2(8, 6);
-    s.CellPadding = ImVec2(8, 5);
-    s.IndentSpacing = 18;
-    s.ScrollbarSize = 10;
-    s.GrabMinSize = 10;
+    s.WindowPadding = ImVec2(20, 16);
+    s.FramePadding = ImVec2(14, 7);
+    s.ItemSpacing = ImVec2(10, 10);
+    s.ItemInnerSpacing = ImVec2(10, 6);
+    s.CellPadding = ImVec2(10, 7);
+    s.IndentSpacing = 20;
+    s.ScrollbarSize = 8;
+    s.GrabMinSize = 12;
     s.WindowRounding = 0;
-    s.ChildRounding = 14;
-    s.FrameRounding = 8;
-    s.PopupRounding = 10;
+    s.ChildRounding = 12;
+    s.FrameRounding = 6;
+    s.PopupRounding = 8;
     s.ScrollbarRounding = 8;
-    s.GrabRounding = 8;
-    s.TabRounding = 9;
+    s.GrabRounding = 6;
     s.WindowBorderSize = 0;
     s.ChildBorderSize = 1;
     s.PopupBorderSize = 1;
     s.FrameBorderSize = 0;
-    s.TabBorderSize = 0;
-    s.TabBarBorderSize = 0;
-    s.TabBarOverlineSize = 0;
     s.SeparatorTextBorderSize = 1;
+    s.DisabledAlpha = 0.38f;
     s.ScaleAllSizes(scale);
     s.FontScaleDpi = scale;
+    s.FontSizeBase = roundf(15.0f * scale) / scale;    // whole-pixel body text
 
     ImVec4* c = s.Colors;
     const ImVec4 none = { 0, 0, 0, 0 };
-    const ImVec4 hover = { 0.290f, 0.260f, 0.520f, 0.90f };
-    const ImVec4 active = { 0.330f, 0.290f, 0.600f, 1.00f };
-    c[ImGuiCol_Text] = TH_TEXT;
-    c[ImGuiCol_TextDisabled] = TH_TEXT_DIM;
-    c[ImGuiCol_WindowBg] = none;
+    const ImVec4 hover = mix(p.container_high, p.on_surface, 0.06f);
+    c[ImGuiCol_Text] = p.on_surface;
+    c[ImGuiCol_TextDisabled] = p.on_surface_variant;
+    c[ImGuiCol_WindowBg] = p.page;
     c[ImGuiCol_ChildBg] = none;
-    c[ImGuiCol_PopupBg] = { 0.110f, 0.100f, 0.210f, 0.97f };
-    c[ImGuiCol_Border] = { 1, 1, 1, 0.07f };
+    c[ImGuiCol_PopupBg] = p.card;
+    c[ImGuiCol_Border] = p.outline_variant;
     c[ImGuiCol_BorderShadow] = none;
-    c[ImGuiCol_FrameBg] = { 0.200f, 0.180f, 0.370f, 0.85f };
-    c[ImGuiCol_FrameBgHovered] = { 0.260f, 0.230f, 0.460f, 0.90f };
-    c[ImGuiCol_FrameBgActive] = active;
+    c[ImGuiCol_FrameBg] = p.container_high;
+    c[ImGuiCol_FrameBgHovered] = p.container_highest;
+    c[ImGuiCol_FrameBgActive] = p.container_highest;
     c[ImGuiCol_ScrollbarBg] = none;
-    c[ImGuiCol_ScrollbarGrab] = { 1, 1, 1, 0.10f };
-    c[ImGuiCol_ScrollbarGrabHovered] = { 1, 1, 1, 0.18f };
-    c[ImGuiCol_ScrollbarGrabActive] = { 1, 1, 1, 0.25f };
-    c[ImGuiCol_CheckMark] = TH_ACCENT_LIGHT;
-    c[ImGuiCol_SliderGrab] = TH_ACCENT;
-    c[ImGuiCol_SliderGrabActive] = TH_ACCENT_LIGHT;
-    c[ImGuiCol_Button] = { 0.220f, 0.200f, 0.400f, 0.85f };
-    c[ImGuiCol_ButtonHovered] = hover;
-    c[ImGuiCol_ButtonActive] = active;
-    c[ImGuiCol_Header] = { 0.240f, 0.210f, 0.440f, 0.70f };
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.35f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.55f);
+    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.75f);
+    c[ImGuiCol_CheckMark] = p.primary;
+    c[ImGuiCol_CheckboxSelectedBg] = p.primary;
+    c[ImGuiCol_SliderGrab] = p.primary;
+    c[ImGuiCol_SliderGrabActive] = p.primary;
+    c[ImGuiCol_Button] = p.secondary_container;
+    c[ImGuiCol_ButtonHovered] = mix(p.secondary_container, p.on_secondary_container, 0.08f);
+    c[ImGuiCol_ButtonActive] = mix(p.secondary_container, p.on_secondary_container, 0.12f);
+    c[ImGuiCol_Header] = p.container;
     c[ImGuiCol_HeaderHovered] = hover;
-    c[ImGuiCol_HeaderActive] = active;
-    c[ImGuiCol_Separator] = { 1, 1, 1, 0.07f };
-    c[ImGuiCol_SeparatorHovered] = { TH_ACCENT.x, TH_ACCENT.y, TH_ACCENT.z, 0.6f };
-    c[ImGuiCol_SeparatorActive] = TH_ACCENT;
+    c[ImGuiCol_HeaderActive] = p.container_highest;
+    c[ImGuiCol_Separator] = p.outline_variant;
+    c[ImGuiCol_SeparatorHovered] = p.primary;
+    c[ImGuiCol_SeparatorActive] = p.primary;
     c[ImGuiCol_ResizeGrip] = none;
     c[ImGuiCol_ResizeGripHovered] = none;
     c[ImGuiCol_ResizeGripActive] = none;
-    c[ImGuiCol_Tab] = none;
-    c[ImGuiCol_TabHovered] = { 0.290f, 0.260f, 0.520f, 0.70f };
-    c[ImGuiCol_TabSelected] = { 0.300f, 0.265f, 0.560f, 0.95f };
-    c[ImGuiCol_TabSelectedOverline] = none;
-    c[ImGuiCol_TabDimmed] = none;
-    c[ImGuiCol_TabDimmedSelected] = c[ImGuiCol_TabSelected];
-    c[ImGuiCol_TabDimmedSelectedOverline] = none;
-    c[ImGuiCol_PlotLines] = TH_ACCENT_LIGHT;
-    c[ImGuiCol_PlotLinesHovered] = TH_WARN;
-    c[ImGuiCol_PlotHistogram] = { 0.486f, 0.424f, 0.961f, 1.0f };    // progress fill #7C6CF5
-    c[ImGuiCol_PlotHistogramHovered] = TH_ACCENT_LIGHT;
-    c[ImGuiCol_TableHeaderBg] = { 0.200f, 0.180f, 0.370f, 0.90f };
-    c[ImGuiCol_TableBorderStrong] = { 1, 1, 1, 0.06f };
-    c[ImGuiCol_TableBorderLight] = { 1, 1, 1, 0.05f };
+    c[ImGuiCol_PlotLines] = p.primary;
+    c[ImGuiCol_PlotLinesHovered] = p.error;
+    c[ImGuiCol_PlotHistogram] = p.primary;
+    c[ImGuiCol_PlotHistogramHovered] = p.primary;
+    c[ImGuiCol_TableHeaderBg] = none;
+    c[ImGuiCol_TableBorderStrong] = p.outline_variant;
+    c[ImGuiCol_TableBorderLight] = p.outline_variant;
     c[ImGuiCol_TableRowBg] = none;
-    c[ImGuiCol_TableRowBgAlt] = { 1, 1, 1, 0.025f };
-    c[ImGuiCol_TextSelectedBg] = { TH_ACCENT.x, TH_ACCENT.y, TH_ACCENT.z, 0.35f };
-    c[ImGuiCol_NavCursor] = TH_ACCENT_LIGHT;
-    c[ImGuiCol_ModalWindowDimBg] = { 0, 0, 0, 0.5f };
+    c[ImGuiCol_TableRowBgAlt] = none;
+    c[ImGuiCol_TextSelectedBg] = ImVec4(p.primary.x, p.primary.y, p.primary.z, 0.25f);
+    c[ImGuiCol_NavCursor] = p.primary;
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.4f);
 }
 
-void theme_draw_background() {
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const ImVec2 a = vp->Pos, b = ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y);
-    const ImU32 top = IM_COL32(0x14, 0x12, 0x2A, 255), bottom = IM_COL32(0x2E, 0x1C, 0x4C, 255);
-    dl->AddRectFilledMultiColor(a, b, top, top, bottom, bottom);
-
-    // Warm horizon glow over the bottom third.
-    const f32 gy = a.y + vp->Size.y * 0.62f;
-    const ImU32 clear = IM_COL32(0xC2, 0x4E, 0x8A, 0), warm = IM_COL32(0xC2, 0x4E, 0x8A, 52);
-    dl->AddRectFilledMultiColor(ImVec2(a.x, gy), b, clear, clear, warm, warm);
-
-    // Sparse stars in the upper part, positions fixed relative to the window size.
-    u32 h = 0x9E3779B9u;
-    for (u32 i = 0; i < 90; ++i) {
-        h ^= h << 13; h ^= h >> 17; h ^= h << 5;
-        const f32 x = (h & 0xFFFF) / 65535.0f;
-        const f32 y = ((h >> 16) & 0xFFFF) / 65535.0f * 0.7f;
-        const u32 alpha = 30 + (h >> 24) % 110;
-        const f32 r = (0.6f + (f32)((h >> 8) % 8) / 10.0f) * s_scale;
-        dl->AddCircleFilled(ImVec2(a.x + x * vp->Size.x, a.y + y * vp->Size.y), r, IM_COL32(255, 255, 255, alpha), 6);
-    }
-}
+// ---- components ---------------------------------------------------------------------------
 
 void theme_begin_panel(const char* id, ImVec2 size, bool scroll) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, PANEL);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * s_scale, 12 * s_scale));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.card);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_scale, 14 * s_scale));
     ImGui::BeginChild(id, size, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                       scroll ? 0 : ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -157,68 +231,114 @@ void theme_begin_panel(const char* id, ImVec2 size, bool scroll) {
 
 void theme_end_panel() { ImGui::EndChild(); }
 
-bool theme_button_primary(const char* label) {
-    ImGui::PushStyleColor(ImGuiCol_Button, TH_ACCENT);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.427f, 0.369f, 0.922f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.298f, 0.239f, 0.784f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(22 * s_scale, 6 * s_scale));
-    ImGui::PushFont(g_fonts.semibold, 0.0f);
+static bool pill_button(const char* label, ImVec4 bg, ImVec4 fg) {
+    ImGui::PushStyleColor(ImGuiCol_Button, bg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, mix(bg, fg, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, mix(bg, fg, 0.12f));
+    ImGui::PushStyleColor(ImGuiCol_Text, fg);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);   // clamped to half the height
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18 * s_scale, 7 * s_scale));
+    ImGui::PushFont(g_fonts.medium, 0.0f);
     const bool pressed = ImGui::Button(label);
     ImGui::PopFont();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(4);
     return pressed;
 }
 
-void theme_progress(f32 fraction, f32 height) {
+bool theme_button_primary(const char* label) { return pill_button(label, g_pal.primary, g_pal.on_primary); }
+bool theme_button(const char* label) { return pill_button(label, g_pal.secondary_container, g_pal.on_secondary_container); }
+
+bool theme_tab(const char* label, bool selected) {
+    const ImVec4 bg = selected ? g_pal.secondary_container : ImVec4(0, 0, 0, 0);
+    const ImVec4 fg = selected ? g_pal.on_secondary_container : g_pal.on_surface_variant;
+    ImGui::PushStyleColor(ImGuiCol_Button, bg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? bg : ImVec4(fg.x, fg.y, fg.z, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, selected ? bg : ImVec4(fg.x, fg.y, fg.z, 0.12f));
+    ImGui::PushStyleColor(ImGuiCol_Text, fg);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16 * s_scale, 6 * s_scale));
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    const bool pressed = ImGui::Button(label);
+    ImGui::PopFont();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(4);
+    return pressed;
+}
+
+// Material checkbox: outlined box when off, filled primary box with a contrasting tick when on.
+bool theme_checkbox(const char* label, bool* v) {
+    const bool on = *v;
+    const ImVec4 fill = on ? g_pal.primary : ImVec4(0, 0, 0, 0);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, fill);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, on ? mix(g_pal.primary, g_pal.on_primary, 0.08f)
+                                                      : ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, on ? mix(g_pal.primary, g_pal.on_primary, 0.12f)
+                                                     : ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.12f));
+    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, g_pal.primary);
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, g_pal.on_primary);
+    ImGui::PushStyleColor(ImGuiCol_Border, g_pal.on_surface_variant);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, on ? 0.0f : 2.0f * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * s_scale, 3.0f * s_scale));
+    const bool changed = ImGui::Checkbox(label, v);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(6);
+    return changed;
+}
+
+void theme_progress(f32 fraction, f32 height, f32 width) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, height * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(1, 1, 1, 0.08f));
-    ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, height), "");
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, s_dark ? g_pal.container_highest : g_pal.primary_container);
+    ImGui::ProgressBar(fraction, ImVec2(width, height), "");
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
 }
 
 bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const char* button_label) {
     if (count == 0) return false;
-    const f32 pad = 6 * s_scale;
+    const f32 pad = 10 * s_scale;
     const f32 line_h = ImGui::GetTextLineHeight() + 4 * s_scale;
-    const f32 h = count * line_h + pad * 2 + (button_line >= 0 ? ImGui::GetFrameHeight() - line_h : 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, BANNER);
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(TH_WARN.x, TH_WARN.y, TH_WARN.z, 0.18f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_scale, pad));
+    const f32 button_h = ImGui::GetTextLineHeight() + 8 * s_scale;
+    const f32 h = count * line_h + pad * 2 + (button_line >= 0 ? button_h - line_h : 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.warn_container);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * s_scale, pad));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * s_scale, 4 * s_scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10 * s_scale);
-    ImGui::BeginChild("##warnings", ImVec2(0, h), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::BeginChild("##warnings", ImVec2(0, h), ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetWindowPos();
-    dl->AddRectFilled(p, ImVec2(p.x + 3 * s_scale, p.y + h), ImGui::GetColorU32(TH_WARN), 10 * s_scale,
-                      ImDrawFlags_RoundTopLeft | ImDrawFlags_RoundBottomLeft);
     bool clicked = false;
     for (u32 i = 0; i < count; ++i) {
         const bool has_button = (i32)i == button_line;
-        if (has_button) ImGui::AlignTextToFramePadding();
-        // Small amber dot as a bullet.
         const ImVec2 c = ImGui::GetCursorScreenPos();
-        const f32 mid = c.y + (has_button ? ImGui::GetFrameHeight() : ImGui::GetTextLineHeight()) * 0.5f;
-        dl->AddCircleFilled(ImVec2(c.x + 3 * s_scale, mid), 2.5f * s_scale, ImGui::GetColorU32(TH_WARN), 8);
+        const f32 row_h = has_button ? button_h : ImGui::GetTextLineHeight();
+        if (has_button) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (button_h - ImGui::GetTextLineHeight()) * 0.5f);
+        dl->AddCircleFilled(ImVec2(c.x + 3 * s_scale, c.y + row_h * 0.5f), 2.5f * s_scale,
+                            ImGui::GetColorU32(g_pal.on_warn_container), 8);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14 * s_scale);
-        ImGui::TextColored(TH_WARN, "%s", lines[i]);
+        ImGui::TextColored(g_pal.on_warn_container, "%s", lines[i]);
         if (has_button) {
             ImGui::SameLine();
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10 * s_scale, 3 * s_scale));
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - (button_h - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12 * s_scale, 4 * s_scale));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(g_pal.warn.x, g_pal.warn.y, g_pal.warn.z, 0.12f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(g_pal.warn.x, g_pal.warn.y, g_pal.warn.z, 0.20f));
+            ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_warn_container);
+            ImGui::PushStyleColor(ImGuiCol_Border, g_pal.on_warn_container);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f * s_scale);
+            ImGui::PushFont(g_fonts.medium, 0.0f);
             clicked = ImGui::Button(button_label);
-            ImGui::PopStyleVar();
+            ImGui::PopFont();
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(5);
         }
     }
     ImGui::EndChild();
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
     return clicked;
 }
 
-ImU32 theme_heat(f32 t) {
-    const ImVec4 lo = TH_OK, hi = TH_BAD;
-    return ImGui::GetColorU32(ImVec4(lo.x + (hi.x - lo.x) * t, lo.y + (hi.y - lo.y) * t, lo.z + (hi.z - lo.z) * t, 0.30f));
-}
+ImU32 theme_heat(f32 t) { return ImGui::GetColorU32(mix(g_pal.heat_lo, g_pal.heat_hi, t)); }

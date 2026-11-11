@@ -22,11 +22,11 @@ struct UiState {
 };
 static UiState s_ui;
 
-#define COL_DIM  TH_TEXT_DIM
-#define COL_OK   TH_OK
-#define COL_RUN  TH_RUN
-#define COL_BAD  TH_BAD
-#define COL_WARN TH_WARN
+#define COL_DIM  g_pal.on_surface_variant
+#define COL_OK   g_pal.ok
+#define COL_RUN  g_pal.primary
+#define COL_BAD  g_pal.error
+#define COL_WARN g_pal.warn
 
 void ui_init() {
     for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
@@ -117,7 +117,7 @@ static void sys_line(const char* label, const char* fmt, ...) {
 
 static void draw_sysinfo() {
     const SysInfo* s = &g_sys;
-    ImGui::PushFont(g_fonts.semibold, 0.0f);
+    ImGui::PushFont(g_fonts.medium, 0.0f);
     const bool open = ImGui::CollapsingHeader("System");
     ImGui::PopFont();
     if (!open) return;
@@ -185,22 +185,22 @@ static void draw_toolbar() {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!running);
-    if (ImGui::Button("Cancel")) runner_cancel();
+    if (theme_button("Cancel")) runner_cancel();
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
-    if (ImGui::Button("All")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = true;
+    if (theme_button("All")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = true;
     ImGui::SameLine();
-    if (ImGui::Button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
+    if (theme_button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
     ImGui::EndDisabled();
 
     const bool have_results = g_run.total > 0 && !running;
     ImGui::SameLine();
     ImGui::BeginDisabled(!have_results);
-    if (ImGui::Button("Save JSON")) save_json();
+    if (theme_button("Save JSON")) save_json();
     ImGui::SameLine();
-    if (ImGui::Button("Copy text")) copy_text();
+    if (theme_button("Copy text")) copy_text();
     ImGui::EndDisabled();
 
     ImGui::SameLine();
@@ -226,20 +226,30 @@ static void draw_test_row(u32 id, bool running) {
     const BenchDesc* b = &g_benches[id];
     const BenchStatus st = status_of(id);
     ImGui::PushID((int)id);
-    ImGui::BeginDisabled(running);
-    ImGui::Checkbox(b->name, &s_ui.selected[id]);
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", b->cli_id);
+    // Selection is frozen during a run, but the tree stays at full contrast (clicks are ignored).
+    bool sel = s_ui.selected[id];
+    if (theme_checkbox(b->name, &sel) && !running) s_ui.selected[id] = sel;
+    const f32 row_h = ImGui::GetItemRectSize().y, row_top = ImGui::GetItemRectMin().y;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", b->cli_id);
 
     ImGui::SameLine(s_status_x);
     if (st == ST_RUNNING) {
-        char overlay[48];
-        snprintf(overlay, sizeof(overlay), "%.0f%%", g_live.progress.load() * 100.0f);
-        ImGui::ProgressBar(g_live.progress.load(), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight()), overlay);
+        // Thin bar with the percentage beside it, both centered on the row.
+        const f32 p = g_live.progress.load();
+        const f32 y = ImGui::GetCursorPosY(), h = ImGui::GetFontSize() * 0.3f;
+        const f32 text_w = ImGui::CalcTextSize("100%").x;
+        ImGui::SetCursorPosY(y + (row_h - h) * 0.5f);
+        theme_progress(p, h, ImGui::GetContentRegionAvail().x - text_w - ImGui::GetStyle().ItemSpacing.x);
+        ImGui::SameLine();
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%.0f%%", p * 100.0f);
+        const ImVec2 at(ImGui::GetCursorScreenPos().x, row_top + (row_h - ImGui::GetTextLineHeight()) * 0.5f);
+        ImGui::GetWindowDrawList()->AddText(at, ImGui::GetColorU32(ImGuiCol_TextDisabled), pct);
+        ImGui::Dummy(ImVec2(text_w, h));
     } else if (st == ST_DONE) {
         char summary[64];
         result_summary(id, summary, sizeof(summary));
-        theme_push_mono();
+        theme_push_numbers();
         ImGui::TextColored(COL_OK, "%s", summary);
         ImGui::PopFont();
     } else if (st != ST_NOT_RUN) {
@@ -267,18 +277,16 @@ static void draw_tree() {
         if (total == 0) continue;
 
         ImGui::PushID((int)s);
-        ImGui::PushFont(g_fonts.semibold, 0.0f);
+        ImGui::PushFont(g_fonts.medium, 0.0f);
         const bool open = ImGui::TreeNodeEx("##suite", (sel ? ImGuiTreeNodeFlags_DefaultOpen : 0) | ImGuiTreeNodeFlags_Framed |
                                                            ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
                                             "%s", g_suites[s].name);
         ImGui::PopFont();
         ImGui::SameLine(s_status_x);
         bool all = sel == total;
-        ImGui::BeginDisabled(running);
-        if (ImGui::Checkbox("##all", &all))
+        if (theme_checkbox("##all", &all) && !running)
             for (u32 i = 0; i < g_bench_count; ++i)
                 if (g_benches[i].suite == s) s_ui.selected[i] = all;
-        ImGui::EndDisabled();
         ImGui::SameLine();
         if (running && in_run) ImGui::TextDisabled("%u/%u done", done, in_run);
         else ImGui::TextDisabled("%u/%u selected", sel, total);
@@ -305,7 +313,12 @@ static void draw_tree() {
 // ---- settings -------------------------------------------------------------------
 
 static void draw_settings() {
-    if (!ImGui::CollapsingHeader("Settings")) return;
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    const bool open = ImGui::CollapsingHeader("Settings");
+    ImGui::PopFont();
+    if (!open) return;
+    bool dark = theme_is_dark();
+    if (theme_checkbox("Dark theme", &dark)) theme_request_dark(dark);
     BenchParams* p = &s_ui.params;
     ImGui::BeginDisabled(runner_is_running());
     ImGui::PushItemWidth(ImGui::GetFontSize() * 12.0f);
@@ -328,7 +341,7 @@ static void draw_settings() {
         p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0]);
         p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1]);
     }
-    ImGui::Checkbox("GPU fullscreen (borderless)", &p->gpu_fullscreen);
+    theme_checkbox("GPU fullscreen (borderless)", &p->gpu_fullscreen);
 
     char drive_label[8];
     snprintf(drive_label, sizeof(drive_label), "%c:", (char)p->disk_drive);
@@ -356,7 +369,7 @@ static void draw_settings() {
     }
     int passes = (int)p->disk_passes;
     if (ImGui::SliderInt("Disk passes", &passes, 1, 9)) p->disk_passes = (u32)passes;
-    ImGui::Checkbox("Disk write-through (FUA)", &p->disk_write_through);
+    theme_checkbox("Disk write-through (FUA)", &p->disk_write_through);
 
     ImGui::PopItemWidth();
     ImGui::EndDisabled();
@@ -373,7 +386,7 @@ static void draw_live() {
     }
     const BenchDesc* b = &g_benches[cur];
     ImGui::TextDisabled("%s  \xC2\xB7  %s", g_suites[b->suite].name, b->group);
-    ImGui::PushFont(g_fonts.semibold, ImGui::GetStyle().FontSizeBase * 1.25f);
+    ImGui::PushFont(g_fonts.medium, theme_font_size(1.25f));
     ImGui::TextUnformatted(b->name);
     ImGui::PopFont();
 
@@ -381,7 +394,7 @@ static void draw_live() {
     format_value(v, sizeof(v), g_live.current.load(std::memory_order_relaxed));
     // Big value with the unit sitting on its baseline.
     const f32 y0 = ImGui::GetCursorPosY();
-    ImGui::PushFont(g_fonts.semibold, ImGui::GetStyle().FontSizeBase * 2.6f);
+    ImGui::PushFont(g_fonts.medium, theme_font_size(2.6f));
     ImGui::TextUnformatted(v);
     const f32 big_h = ImGui::GetTextLineHeight();
     ImGui::PopFont();
@@ -404,7 +417,7 @@ static void draw_live() {
         if (hist[i] > max_v) max_v = hist[i];
     }
     if (n > 0) {
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0.18f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
         ImGui::PlotLines("##hist", hist, (int)n, 0, nullptr, 0.0f, max_v * 1.1f, ImVec2(-FLT_MIN, -FLT_MIN));
         ImGui::PopStyleColor();
     }
@@ -413,15 +426,20 @@ static void draw_live() {
 // ---- results ----------------------------------------------------------------------
 
 static void draw_results() {
-    const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY |
-                                  ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+    // Material data table: horizontal dividers only, quiet header.
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
+                                  ImGuiTableFlags_SizingStretchProp;
     if (!ImGui::BeginTable("results", 4, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 3.0f);
     ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 2.5f);
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.2f);
     ImGui::TableSetupColumn("Unit", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
+    ImGui::PushFont(g_fonts.medium, 0.0f);
     ImGui::TableHeadersRow();
+    ImGui::PopFont();
+    ImGui::PopStyleColor();
 
     char v[32], x[32], label[96];
     for (u32 i = 0; i < g_bench_count; ++i) {
@@ -458,7 +476,7 @@ static void draw_results() {
             ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
             ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
             ImGui::TableNextColumn();
-            theme_push_mono();
+            theme_push_numbers();
             ImGui::Text("%s / %s / %s", vmin, vavg, vmax);
             ImGui::PopFont();
             ImGui::TableNextColumn(); ImGui::TextDisabled("%s", m[0].unit);
@@ -478,7 +496,7 @@ static void draw_results() {
             ImGui::TextUnformatted(label);
             ImGui::TableNextColumn();
             format_value(v, sizeof(v), m[k].value);
-            theme_push_mono();
+            theme_push_numbers();
             ImGui::TextUnformatted(v);
             ImGui::PopFont();
             ImGui::TableNextColumn();
@@ -505,7 +523,7 @@ static void draw_series(const BenchResult* r) {
     char overlay[96];
     snprintf(overlay, sizeof(overlay), "%s [%s] vs %s (%s .. %s)", m[0].name, m[0].unit, r->x_name ? r->x_name : "x",
              first, last);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0.18f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
     ImGui::PlotLines("##series", ys, (int)n, 0, overlay, 0.0f, hi * 1.15f, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 8.0f));
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) {
@@ -533,7 +551,7 @@ static void draw_matrix(const BenchResult* r) {
     ImGui::TextDisabled("%s [%s], green = low, red = high", m[0].name, m[0].unit);
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInner | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX;
     const bool whole = lo >= 10.0;      // e.g. 16x16 latencies in ns: integers keep the grid narrow
-    theme_push_mono();
+    theme_push_numbers();
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetFontSize() * 0.3f, ImGui::GetFontSize() * 0.15f));
     if (!ImGui::BeginTable("matrix", r->cols + 1, flags)) { ImGui::PopStyleVar(); ImGui::PopFont(); return; }
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
@@ -587,7 +605,6 @@ void ui_draw() {
         s_ui.last_power_refresh = timer_now();
     }
 
-    theme_draw_background();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
@@ -621,21 +638,17 @@ void ui_draw() {
         theme_end_panel();
         ImGui::Spacing();
         theme_begin_panel("output", ImVec2(0, 0), false);
-        if (ImGui::BeginTabBar("out")) {
-            ImGui::PushFont(g_fonts.semibold, 0.0f);
-            const bool results = ImGui::BeginTabItem("Results");
-            ImGui::PopFont();
-            if (results) { draw_results(); ImGui::EndTabItem(); }
-            ImGui::PushFont(g_fonts.semibold, 0.0f);
-            const bool charts = ImGui::BeginTabItem("Charts");
-            ImGui::PopFont();
-            if (charts) {
-                ImGui::BeginChild("charts", ImVec2(0, 0));
-                draw_charts();
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
+        // Segmented tabs.
+        static int tab = 0;
+        if (theme_tab("Results", tab == 0)) tab = 0;
+        ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab("Charts", tab == 1)) tab = 1;
+        if (tab == 0) {
+            draw_results();
+        } else {
+            ImGui::BeginChild("charts", ImVec2(0, 0));
+            draw_charts();
+            ImGui::EndChild();
         }
         theme_end_panel();
         ImGui::EndTable();

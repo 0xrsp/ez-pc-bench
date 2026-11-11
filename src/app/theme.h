@@ -1,35 +1,47 @@
 #pragma once
-// Visual theme: dark navy/violet palette, rounded translucent panels, starfield background.
+// Material 3 style theme (light / dark) with Inter. Flat surfaces, outlined cards, pill buttons.
 #include "core/types.h"
 #include "imgui.h"
 
 struct ThemeFonts {
-    ImFont* regular;
-    ImFont* semibold;   // headings, primary buttons, big numbers
-    ImFont* mono;       // numeric values
+    ImFont* regular;    // Inter Regular (body)
+    ImFont* medium;     // Inter Medium (titles, labels, buttons, numbers)
 };
 extern ThemeFonts g_fonts;
 
-// Cascadia Mono looks larger than Segoe UI at the same size; numbers use it slightly smaller.
-inline void theme_push_mono() { ImGui::PushFont(g_fonts.mono, ImGui::GetStyle().FontSizeBase * 0.88f); }
+// Material color roles for the current mode.
+struct Palette {
+    ImVec4 page;                    // window background
+    ImVec4 card;                    // cards / panels
+    ImVec4 container, container_high, container_highest;
+    ImVec4 on_surface, on_surface_variant;
+    ImVec4 outline, outline_variant;
+    ImVec4 primary, on_primary, primary_container, on_primary_container;
+    ImVec4 secondary_container, on_secondary_container;
+    ImVec4 ok, error, warn, warn_container, on_warn_container;
+    ImVec4 heat_lo, heat_hi;        // matrix cell colors
+};
+extern Palette g_pal;
 
-// Palette
-extern const ImVec4 TH_TEXT, TH_TEXT_DIM, TH_ACCENT, TH_ACCENT_LIGHT;
-extern const ImVec4 TH_OK, TH_RUN, TH_BAD, TH_WARN;
-constexpr f32 TH_BG_RGB[3] = { 0x14 / 255.0f, 0x12 / 255.0f, 0x2A / 255.0f };   // also the window clear / caption color
+void theme_load_fonts();                    // Inter from the exe's resources (Segoe UI fallback)
+void theme_apply_style(f32 dpi_scale);      // uses the current mode
+bool theme_is_dark();
+void theme_request_dark(bool dark);         // takes effect between frames
+bool theme_take_change();                   // true once after a mode change was requested
+void theme_bg_rgb(f32 out[3]);              // page color (window clear / title bar)
 
-void theme_load_fonts();                // after ImGui::CreateContext
-void theme_apply_style(f32 dpi_scale);
-void theme_draw_background();           // gradient + stars + horizon glow behind everything
+f32 theme_font_size(f32 mult);              // base font size * mult, snapped to whole pixels
+inline void theme_push_numbers() { ImGui::PushFont(g_fonts.medium, 0.0f); }
 
-// Rounded translucent card. Always pair with theme_end_panel().
+// Outlined card. Always pair with theme_end_panel().
 void theme_begin_panel(const char* id, ImVec2 size, bool scroll = true);
 void theme_end_panel();
 
-bool theme_button_primary(const char* label);      // violet call-to-action button
-void theme_progress(f32 fraction, f32 height);     // thin rounded bar, full available width
-// One compact warning card (amber edge), one line per warning. Line `button_line` (or -1) gets a
-// button on the right; returns true when it was clicked.
+bool theme_button_primary(const char* label);   // filled pill
+bool theme_button(const char* label);           // tonal pill
+bool theme_checkbox(const char* label, bool* v);
+bool theme_tab(const char* label, bool selected);  // segmented tab, returns true when clicked
+void theme_progress(f32 fraction, f32 height, f32 width = -FLT_MIN);  // linear indicator (default: full width)
+// One warning banner, one line per warning; line `button_line` (or -1) gets a button. True when clicked.
 bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const char* button_label);
-// Heat color for a 0..1 value: mint (low) .. rose (high), translucent.
-ImU32 theme_heat(f32 t);
+ImU32 theme_heat(f32 t);                        // 0 = low (green) .. 1 = high (red)

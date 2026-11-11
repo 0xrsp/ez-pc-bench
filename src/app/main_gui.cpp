@@ -92,14 +92,16 @@ static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 static COLORREF bg_colorref() {
-    return RGB((int)(TH_BG_RGB[0] * 255 + 0.5f), (int)(TH_BG_RGB[1] * 255 + 0.5f), (int)(TH_BG_RGB[2] * 255 + 0.5f));
+    f32 c[3];
+    theme_bg_rgb(c);
+    return RGB((int)(c[0] * 255 + 0.5f), (int)(c[1] * 255 + 0.5f), (int)(c[2] * 255 + 0.5f));
 }
 
-// Dark title bar matching the app background (Windows 11; silently ignored elsewhere).
+// Title bar matching the app background and mode (Windows 11; silently ignored elsewhere).
 static void style_title_bar(HWND hwnd) {
-    const BOOL dark = TRUE;
+    const BOOL dark = theme_is_dark();
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    const COLORREF caption = bg_colorref(), text = RGB(0xEE, 0xEA, 0xFB);
+    const COLORREF caption = bg_colorref(), text = dark ? RGB(0xE2, 0xE2, 0xE9) : RGB(0x19, 0x1C, 0x20);
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
 }
@@ -147,6 +149,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     theme_load_fonts();
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (wcsstr(cmdline, L"--dark")) { theme_request_dark(true); theme_take_change(); ui_apply_style(s_dpi_scale); style_title_bar(hwnd); }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
     }
 
@@ -182,8 +185,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             s_gfx.resize_w = s_gfx.resize_h = 0;
             create_rtv();
         }
-        if (s_dpi_changed) {
+        if (s_dpi_changed || theme_take_change()) {
             ui_apply_style(s_dpi_scale);
+            style_title_bar(hwnd);
             s_dpi_changed = false;
         }
 
@@ -193,7 +197,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         ui_draw();
         ImGui::Render();
 
-        const f32 clear[4] = { TH_BG_RGB[0], TH_BG_RGB[1], TH_BG_RGB[2], 1.0f };
+        f32 clear[4] = { 0, 0, 0, 1 };
+        theme_bg_rgb(clear);
         s_gfx.ctx->OMSetRenderTargets(1, &s_gfx.rtv, nullptr);
         s_gfx.ctx->ClearRenderTargetView(s_gfx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

@@ -454,6 +454,12 @@ None currently. (All earlier ones resolved — see decision log.)
   - Explicit GPU selection for GPU suites, default = most powerful adapter.
   - High-DPI aware UI. BitLocker status shown.
   - D3D12 chosen as the DirectX API; one adapter per run; results compare in M6.
+- 2026-11-11 (UI theme, trial): Material 3 look in `app/theme.*` — light (default) + dark palettes from
+  seed #0B57D0, flat page + white outlined cards, pill buttons, Material checkboxes (`ImGuiCol_CheckboxSelectedBg`
+  is the checked fill in 1.93), segmented Results/Charts tabs, data table with horizontal dividers only.
+  Font: Inter 4.1 Regular/Medium embedded as RCDATA (exe 846 KB → 1.7 MB), rasterized sharp: OversampleH/V 1,
+  PixelSnapH, font sizes snapped to whole pixels after DPI scaling. Dark mode toggle in Settings
+  (`--dark` flag for screenshots). Replaced the earlier violet/starfield theme at the user's request.
 - 2026-11-11 (M0):
   - Disk target is a drive letter (`BenchParams::disk_drive`); the file path is derived per §6.4.
   - `BenchLive` carries `phase`/`unit` as static-string atomics instead of a phase index table.

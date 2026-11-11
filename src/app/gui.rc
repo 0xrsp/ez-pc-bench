@@ -1,0 +1,4 @@
+// 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST, 10 = RT_RCDATA
+1 24 "app.manifest"
+101 10 "../../third_party/inter/Inter-Regular.ttf"
+102 10 "../../third_party/inter/Inter-Medium.ttf"
