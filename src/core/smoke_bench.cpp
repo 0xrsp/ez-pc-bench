@@ -2,7 +2,9 @@
 #include "core/bench.h"
 #include "core/results.h"
 #include "core/timer.h"
+#include "gpu/gpu_common.h"
 #include <windows.h>
+#include <math.h>
 #include <string.h>
 
 struct SmokeState {
@@ -112,4 +114,40 @@ void smoke_matrix(void* state, const BenchParams* p, BenchLive* live, BenchResul
         }
     }
     res_matrix(out, (u16)n, (u16)n);
+}
+
+// Exercises the GPU preview hand-off without a GPU backend: an animated CPU-drawn pattern at 15 FPS.
+void smoke_preview(void*, const BenchParams* p, BenchLive* live, BenchResult* out, const std::atomic<bool>* cancel) {
+    live_phase(live, "Synthetic preview frames", "fps");
+    u32 w, h;
+    gpu_preview_size(1920, 1080, &w, &h);
+    static u8 frame[GPU_PREVIEW_MAX_W * GPU_PREVIEW_MAX_H * 4];
+    const f64 duration = p->duration_ms / 1000.0;
+    const f64 t0 = timer_now();
+    u32 frames = 0;
+    f64 now = t0;
+    while (now - t0 < duration && !cancel->load(std::memory_order_relaxed)) {
+        const f32 t = (f32)(now - t0);
+        const f32 cx = w * (0.5f + 0.35f * sinf(t * 1.7f)), cy = h * (0.5f + 0.3f * cosf(t * 1.3f));
+        for (u32 y = 0; y < h; ++y) {
+            for (u32 x = 0; x < w; ++x) {
+                u8* px = frame + ((u64)y * w + x) * 4;
+                const f32 dx = x - cx, dy = y - cy;
+                const bool disc = dx * dx + dy * dy < (h * 0.12f) * (h * 0.12f);
+                px[0] = disc ? 255 : (u8)(x * 255 / w);
+                px[1] = disc ? 255 : (u8)(y * 255 / h);
+                px[2] = disc ? 255 : (u8)(128 + 127 * sinf(t + x * 0.02f));
+                px[3] = 255;
+            }
+        }
+        gpu_preview_publish(frame, w, h, w * 4);
+        ++frames;
+        Sleep(66);
+        now = timer_now();
+        live_sample(live, frames / (now - t0));
+        live_progress(live, (f32)((now - t0) / duration));
+    }
+    gpu_preview_clear();
+    res_begin(out, RESULT_VALUES);
+    res_add(out, "Frames published", "frames", frames);
 }

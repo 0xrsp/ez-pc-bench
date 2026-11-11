@@ -39,6 +39,20 @@ void ui_set_duration(u32 ms) {
     if (ms >= 100) s_ui.params.duration_ms = ms;
 }
 
+void ui_select_only(const char* ids) {
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const char* id = g_benches[i].cli_id;
+        bool match = false;
+        for (const char* p = ids; *p && !match;) {
+            const char* end = strchr(p, ',');
+            const size_t n = end ? (size_t)(end - p) : strlen(p);
+            match = n && strncmp(id, p, n) == 0 && (id[n] == 0 || id[n] == '.');
+            p += n + (end ? 1 : 0);
+        }
+        s_ui.selected[i] = match;
+    }
+}
+
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
     runner_start(s_ui.selected, &s_ui.params);
@@ -383,6 +397,15 @@ static void draw_settings() {
 
 // ---- live panel -----------------------------------------------------------------
 
+// Latest GPU 3D/2D frame (texture owned by main_gui.cpp), shown next to the live stats.
+struct PreviewState {
+    void* texture;
+    u32 w, h;
+};
+static PreviewState s_preview;
+
+void ui_set_preview(void* texture, u32 w, u32 h) { s_preview = { texture, w, h }; }
+
 static void draw_live() {
     const i32 cur = g_run.current.load(std::memory_order_relaxed);
     if (!runner_is_running() || cur < 0) {
@@ -391,6 +414,22 @@ static void draw_live() {
         return;
     }
     const BenchDesc* b = &g_benches[cur];
+
+    // With a preview: stats on the left, the rendered frame on the right (full panel height, aspect kept).
+    const bool preview = s_preview.texture && s_preview.w && (b->flags & BENCH_PREVIEW);
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    f32 img_w = 0.0f, img_h = 0.0f;
+    if (preview) {
+        img_h = avail.y;
+        img_w = img_h * s_preview.w / s_preview.h;
+        if (img_w > avail.x * 0.6f) {
+            img_w = avail.x * 0.6f;
+            img_h = img_w * s_preview.h / s_preview.w;
+        }
+        ImGui::BeginChild("##stats", ImVec2(avail.x - img_w - ImGui::GetStyle().ItemSpacing.x * 2.0f, avail.y),
+                          ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    }
+
     ImGui::TextDisabled("%s  \xC2\xB7  %s", g_suites[b->suite].name, b->group);
     ImGui::PushFont(g_fonts.medium, theme_font_size(1.25f));
     ImGui::TextUnformatted(b->name);
@@ -426,6 +465,17 @@ static void draw_live() {
         ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
         ImGui::PlotLines("##hist", hist, (int)n, 0, nullptr, 0.0f, max_v * 1.1f, ImVec2(-FLT_MIN, -FLT_MIN));
         ImGui::PopStyleColor();
+    }
+
+    if (preview) {
+        ImGui::EndChild();
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        p.y += (avail.y - img_h) * 0.5f;
+        ImGui::GetWindowDrawList()->AddImageRounded((ImTextureID)(intptr_t)s_preview.texture, p,
+                                                    ImVec2(p.x + img_w, p.y + img_h), ImVec2(0, 0), ImVec2(1, 1),
+                                                    IM_COL32_WHITE, ImGui::GetStyle().FrameRounding);
+        ImGui::Dummy(ImVec2(img_w, avail.y));
     }
 }
 

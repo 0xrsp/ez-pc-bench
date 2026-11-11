@@ -13,6 +13,7 @@ SUITE_FNS(smoke);
 BENCH_FN(smoke_spin);
 BENCH_FN(smoke_sweep);
 BENCH_FN(smoke_matrix);
+BENCH_FN(smoke_preview);
 
 // cpu/cpu_bench.cpp
 SUITE_FNS(cpu);
@@ -68,6 +69,7 @@ const BenchDesc g_benches[] = {
     { SUITE_SMOKE, "Runner", "Spin (values)",            "smoke.spin",   smoke_spin,   BENCH_DEFAULT_OFF },
     { SUITE_SMOKE, "Runner", "Memset sweep (series)",    "smoke.sweep",  smoke_sweep,  BENCH_DEFAULT_OFF },
     { SUITE_SMOKE, "Runner", "Misaligned copy (matrix)", "smoke.matrix", smoke_matrix, BENCH_DEFAULT_OFF },
+    { SUITE_SMOKE, "Runner", "Preview (synthetic)",      "smoke.preview", smoke_preview, BENCH_DEFAULT_OFF | BENCH_PREVIEW },
 
     { SUITE_CPU, "Integer",        "ALU add/xor",               "cpu.int.alu",       cpu_int_alu,        0 },
     { SUITE_CPU, "Integer",        "Multiply (imul)",           "cpu.int.mul",       cpu_int_mul,        0 },

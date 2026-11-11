@@ -275,12 +275,15 @@ Never export `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` (wou
 - *2D / 3D*: CPU wall clock (QPC) between consecutive presents, like PresentMon's MsBetweenPresents.
 - *Transfers*: wall clock for the whole submit→fence round trip, GPU timestamps as a cross-check.
 
-**2D and 3D tests render on screen** in a separate benchmark window (not the UI window):
-- Borderless fullscreen at the panel's native resolution by default (1920×1080), or windowed at a
-  configurable size. Created by the GPU suite on the worker thread, with its own message pump.
-- Uncapped: DXGI flip-discard + `DXGI_PRESENT_ALLOW_TEARING`; Vulkan `IMMEDIATE` (fallback `MAILBOX`).
-- On this laptop dGPU frames are copied to the iGPU for display — inherent, same as games; note in results.
-- Each test: ~2 s warm-up (discarded), then fixed duration (default 15 s) of frame times.
+**2D and 3D tests render offscreen with an in-window preview** (changed 2026-11-11, was a separate window):
+- Render target RGBA8 at `gpu_width × gpu_height` (default 1920×1080), no swapchain / vsync / compositor.
+  ≤ 2 frames in flight; frame time = QPC delta between consecutive submissions (present-to-present
+  without a swapchain).
+- Preview: every ~66 ms the backend downscales the target (`cs_downscale`, ≤ 640×400), reads it back and
+  calls `gpu_preview_publish()`; the UI uploads the newest frame into a D3D11 texture and shows it next to
+  the live stats. A CPU hand-off is used because UI (iGPU) and test (dGPU) are different adapters.
+- Each test: warm-up min(1 s, duration / 3) (discarded), then `duration_ms` of frames.
+- The full contract (bindings, workloads, timing, preview) lives in `src/gpu/gpu_common.h`.
 - Reported: **avg FPS**, **1% low**, **0.1% low**, avg / p99 / p99.9 frame time (ms), plus the derived
   throughput (Mtri/s, Gpix/s, ...). Definition used: *1% low = 1000 / (99th-percentile frame time in ms)*,
   *0.1% low = 1000 / (99.9th-percentile)*. Frame-time history is plotted live.
@@ -393,9 +396,10 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   drive. Drive info (model, bus, FS, sectors, VHD/Dev Drive, BitLocker) in sysinfo, GUI, CLI and exports.
   **Deviation:** groups are "Sequential"/"Random" and every sequential test runs before any random one
   (random 4K writes slowed later sequential reads, see §13).
-- **M4 GPU infra + Compute**: shader build (DXIL + SPIR-V), adapter selection, D3D12 + Vulkan devices,
-  timestamps, compute tests.
-- **M5 GPU 3D + 2D**: benchmark window, swapchains (tearing), frame-time stats, 3D and 2D tests.
+- **M4 GPU infra + Compute** and **M5 GPU 3D + 2D** — in progress 2026-11-11, split by API: groundwork
+  (contract `gpu_common.*`, 18 HLSL entry points → DXIL + SPIR-V build step, registry rows generated from
+  `GPU_TESTS`, preview hand-off + UI preview, `smoke.preview` self-test) done on main; the D3D12 and Vulkan
+  backends are written by two parallel subagents in worktrees against that contract.
 - **M6 Polish**: CSV, copy to clipboard, settings persistence (ini), compare against a saved JSON.
 
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).

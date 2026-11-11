@@ -5,6 +5,7 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
+#include "gpu/gpu_common.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -60,7 +61,54 @@ static bool create_device(HWND hwnd) {
     return true;
 }
 
+// GPU test preview: the benchmark backend publishes small RGBA frames (gpu_preview_publish); the UI device
+// copies the newest one into a texture. A CPU hand-off works across adapters (UI on the iGPU, test on the dGPU).
+struct PreviewTex {
+    ID3D11Texture2D* tex;
+    ID3D11ShaderResourceView* srv;
+    u32 w, h, seq;
+};
+static PreviewTex s_prev;
+static u8 s_prev_pixels[GPU_PREVIEW_MAX_W * GPU_PREVIEW_MAX_H * 4];
+
+static void release_preview() {
+    if (s_prev.srv) s_prev.srv->Release();
+    if (s_prev.tex) s_prev.tex->Release();
+    s_prev.srv = nullptr;
+    s_prev.tex = nullptr;
+    s_prev.w = s_prev.h = 0;
+}
+
+static void update_preview() {
+    u32 w = 0, h = 0;
+    if (!gpu_preview_acquire(&s_prev.seq, s_prev_pixels, &w, &h)) return;
+    if (w == 0 || h == 0) { ui_set_preview(nullptr, 0, 0); return; }
+    if (w != s_prev.w || h != s_prev.h) {
+        release_preview();
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = w;
+        td.Height = h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(s_gfx.device->CreateTexture2D(&td, nullptr, &s_prev.tex)) ||
+            FAILED(s_gfx.device->CreateShaderResourceView(s_prev.tex, nullptr, &s_prev.srv))) {
+            release_preview();
+            ui_set_preview(nullptr, 0, 0);
+            return;
+        }
+        s_prev.w = w;
+        s_prev.h = h;
+    }
+    s_gfx.ctx->UpdateSubresource(s_prev.tex, 0, nullptr, s_prev_pixels, w * 4, 0);
+    ui_set_preview(s_prev.srv, w, h);
+}
+
 static void destroy_device() {
+    release_preview();
     release_rtv();
     if (s_gfx.swapchain) s_gfx.swapchain->Release();
     if (s_gfx.ctx) s_gfx.ctx->Release();
@@ -157,6 +205,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     theme_load_fonts();
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (const wchar_t* o = wcsstr(cmdline, L"--only ")) {      // dev: select only these test ids
+            char ids[512] = {};
+            u32 n = 0;
+            for (o += 7; *o && *o != L' ' && n + 1 < sizeof(ids); ++o) ids[n++] = (char)*o;
+            ui_select_only(ids);
+        }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
     }
 
@@ -201,6 +255,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+        update_preview();
         ui_draw();
         ImGui::Render();
 
