@@ -11,15 +11,20 @@
 #include <time.h>
 
 Metric g_metrics[MAX_METRICS];
+MetricSpread g_spread[MAX_METRICS];
 BenchResult g_results[MAX_BENCHES];
 std::atomic<u8> g_status[MAX_BENCHES];
 static u32 s_metric_count;
 
 void results_reset() {
+    memset(g_spread, 0, s_metric_count * sizeof(g_spread[0]));
     s_metric_count = 0;
     memset(g_results, 0, sizeof(g_results));
     monitor_reset();
 }
+
+u32 res_mark() { return s_metric_count; }
+void res_rewind(u32 mark) { if (mark <= s_metric_count) s_metric_count = mark; }
 
 void res_begin(BenchResult* r, ResultKind kind) {
     r->first = s_metric_count;
@@ -232,6 +237,36 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "disk_file_bytes", (f64)p->disk_file_bytes);
     toon_num(f, 1, "disk_passes", p->disk_passes);
     toon_bool(f, 1, "disk_write_through", p->disk_write_through);
+    toon_num(f, 1, "repeat", p->repeat);
+}
+
+// Repeated runs: spread[N]{id,name,x,runs,min,max,cv} for every metric whose value is a median.
+static void write_spread(FILE* f) {
+    u32 n = 0;
+    for (u32 i = 0; i < g_bench_count; ++i)
+        if ((BenchStatus)g_status[i].load(std::memory_order_acquire) == ST_DONE && g_results[i].count &&
+            res_spread(&g_results[i])->runs >= 2)
+            n += g_results[i].count;
+    if (!n) return;
+    toon_table(f, 0, "spread", n, "id,name,x,runs,min,max,cv");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const BenchResult* r = &g_results[i];
+        if ((BenchStatus)g_status[i].load(std::memory_order_acquire) != ST_DONE || !r->count || res_spread(r)->runs < 2)
+            continue;
+        const Metric* m = res_metrics(r);
+        const MetricSpread* sp = res_spread(r);
+        for (u32 k = 0; k < r->count; ++k) {
+            ToonRow row = toon_row(f, 1);
+            toon_cell_str(&row, g_benches[i].cli_id);
+            toon_cell_str(&row, m[k].name);
+            toon_cell_num(&row, baseline_key_x(r, k));
+            toon_cell_num(&row, sp[k].runs);
+            toon_cell_num(&row, sp[k].min);
+            toon_cell_num(&row, sp[k].max);
+            toon_cell_num(&row, round(sp[k].cv * 100.0) / 100.0);
+            toon_row_end(&row);
+        }
+    }
 }
 
 // Conditions each test ran under (monitor.h): env[N]{id,samples,cpu_mhz,...,flags}. NaN = not reported.
@@ -317,6 +352,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
             toon_row_end(&row);
         }
     }
+    write_spread(f);
     write_env(f);
     const bool ok = ferror(f) == 0;
     fclose(f);

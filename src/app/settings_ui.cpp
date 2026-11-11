@@ -114,6 +114,14 @@ void settings_ui_draw() {
         int threads = (int)p->thread_count;
         if (ImGui::SliderInt("##threads", &threads, 0, (int)g_sys.cpu.threads, threads ? "%d" : "all"))
             p->thread_count = (u32)threads;
+
+        const char* repeat_help = "Runs every test this many times in a row and reports the median, with the spread "
+                                  "(min, max, coefficient of variation) on hover. Values whose runs differ by more than "
+                                  "3 % are marked as noisy. 1 = a single run (default).";
+        row("Repeat each test", repeat_help);
+        int repeat = (int)p->repeat;
+        if (ImGui::SliderInt("##repeat", &repeat, 1, (int)MAX_REPEAT, repeat > 1 ? "%dx (median)" : "once"))
+            p->repeat = (u32)repeat;
         end_group();
     }
 
@@ -172,6 +180,7 @@ void settings_ui_draw() {
         p->disk_file_bytes = d.disk_file_bytes;
         p->disk_passes = d.disk_passes;
         p->disk_write_through = d.disk_write_through;
+        p->repeat = d.repeat;
     }
     theme_help("Restores the benchmark, GPU and disk settings above to their defaults. The theme and the GPU / disks "
                "picked in the main window stay as they are.");

@@ -98,6 +98,7 @@ void settings_load(BenchParams* p, bool* selected) {
         p->disk_file_bytes = read_u32(L"disk_file_mib", (u32)(p->disk_file_bytes / MiB), 16, 1024 * 1024) * MiB;
         p->disk_passes = read_u32(L"disk_passes", p->disk_passes, 1, 99);
         p->disk_write_through = read_u32(L"disk_write_through", p->disk_write_through, 0, 1) != 0;
+        p->repeat = read_u32(L"repeat", p->repeat, 1, MAX_REPEAT);
 
         // [tests] id=0|1; ids this build doesn't know are ignored, missing ids keep the registry default.
         static wchar_t buf[32768];
@@ -128,7 +129,7 @@ static bool same(const Snapshot* a, const Snapshot* b) {
            x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
-           x->disk_write_through == y->disk_write_through && !memcmp(a->selected, b->selected, g_bench_count);
+           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && !memcmp(a->selected, b->selected, g_bench_count);
 }
 
 // Appends "key=value\0" to a profile section buffer (double-null terminated by the caller).
@@ -175,6 +176,7 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"disk_file_mib=%llu", p->disk_file_bytes / MiB);
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);
+    sec_add(&s, L"repeat=%u", p->repeat);
     buf[s.len] = 0;
     WritePrivateProfileSectionW(L"settings", buf, s_path);
 

@@ -7,9 +7,11 @@ struct RunState {
     std::atomic<bool> cancel;
     std::atomic<i32>  current;        // bench id being run, -1 if none
     std::atomic<u32>  done_count;     // finished tests in this run
+    std::atomic<u32>  rep;            // repetition of the current test (0-based); reps = params.repeat clamped
     u32 total;                        // tests in this run
     u32 list[MAX_BENCHES];            // bench ids in run order
     BenchParams params;               // snapshot taken at start
+    u32 reps;                         // repetitions per test (1..MAX_REPEAT)
     f64 start_time, end_time;
 };
 

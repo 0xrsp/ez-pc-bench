@@ -106,6 +106,7 @@ add_library(ezbench_core STATIC
     src/core/physdisk.cpp
     src/core/sensors.cpp
     src/core/monitor.cpp
+    src/core/presets.cpp
     src/core/disk_health.cpp
     src/core/perf.cpp
     src/core/elevation.cpp

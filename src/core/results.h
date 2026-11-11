@@ -10,6 +10,20 @@ extern std::atomic<u8> g_status[MAX_BENCHES];  // BenchStatus; DONE is stored wi
 
 void results_reset();   // only while no run is active
 
+// Spread over repeated runs (BenchParams::repeat >= 2), parallel to g_metrics: the metric's value is the
+// median, these are min / max and the coefficient of variation (stddev / mean, %). runs = 0 for single runs.
+struct MetricSpread {
+    f32 min, max, cv;
+    u32 runs;
+};
+extern MetricSpread g_spread[MAX_METRICS];
+constexpr f32 NOISY_CV_PCT = 3.0f;      // spread above this is flagged as noisy
+inline const MetricSpread* res_spread(const BenchResult* r) { return &g_spread[r->first]; }
+
+// Arena position, for the runner's repeats: run again, read the values, rewind.
+u32 res_mark();
+void res_rewind(u32 mark);
+
 // Called by benchmark functions to fill their result.
 void res_begin(BenchResult* r, ResultKind kind);
 void res_add(BenchResult* r, const char* name, const char* unit, f64 value, f64 x = 0.0);

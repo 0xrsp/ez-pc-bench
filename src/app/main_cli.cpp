@@ -3,6 +3,7 @@
 #include "core/bench.h"
 #include "core/elevation.h"
 #include "core/monitor.h"
+#include "core/presets.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -24,7 +25,10 @@ static void print_usage() {
         "  --gpu <index>          GPU adapter index (default 0 = most powerful)\n"
         "  --disk-drives <list>   Disk test target drive(s), e.g. C or C,D (default C)\n"
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
-        "  --passes <n>           Disk passes (default 5)\n"
+        "  --passes <n>           Disk passes (default 3)\n"
+        "  --repeat <n>           Run each test n times (max 10) and report the median and spread\n"
+        "  --preset <name>        quick, standard or extended: selection + duration / repeat / disk settings;\n"
+        "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --pause                Wait for Enter before exiting\n");
@@ -107,6 +111,7 @@ static void print_result(u32 id) {
         return;
     }
     const int uw = g_baseline.loaded ? 8 : 0;   // pad the unit only when baseline columns follow
+    const MetricSpread* sp = res_spread(r);
     for (u32 k = 0; k < r->count; ++k) {
         format_value(v, sizeof(v), m[k].value);
         if (r->kind == RESULT_SERIES) {
@@ -122,6 +127,8 @@ static void print_result(u32 id) {
             format_delta(d, sizeof(d), delta_pct(m[k].value, base));
             printf(" base %10s %8s", bv, d);
         }
+        if (sp[k].runs >= 2)
+            printf("  median of %u, spread %.1f%%%s", sp[k].runs, sp[k].cv, sp[k].cv >= NOISY_CV_PCT ? " NOISY" : "");
         printf("\n");
     }
 }
@@ -132,8 +139,10 @@ static void print_live() {
     char v[32];
     format_value(v, sizeof(v), g_live.current.load(std::memory_order_relaxed));
     char line[160];
-    snprintf(line, sizeof(line), "[%u/%u] %s %3.0f%%  %s %s  %s", g_run.done_count.load() + 1, g_run.total,
-             g_benches[cur].cli_id, g_live.progress.load() * 100.0f, v, g_live.unit.load(), g_live.phase.load());
+    char rep[24] = "";
+    if (g_run.reps > 1) snprintf(rep, sizeof(rep), " run %u/%u", g_run.rep.load() + 1, g_run.reps);
+    snprintf(line, sizeof(line), "[%u/%u] %s%s %3.0f%%  %s %s  %s", g_run.done_count.load() + 1, g_run.total,
+             g_benches[cur].cli_id, rep, g_live.progress.load() * 100.0f, v, g_live.unit.load(), g_live.phase.load());
     printf("\r%-79.79s", line);
     fflush(stdout);
 }
@@ -188,7 +197,7 @@ int wmain(int argc, wchar_t** argv) {
     runner_init();
 
     bool selected[MAX_BENCHES] = {};
-    bool any_run = false, list = false, pause = false, elevate = false;
+    bool any_run = false, from_preset = false, list = false, pause = false, elevate = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     BenchParams params;
@@ -204,7 +213,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
-        else if (!wcscmp(a, L"--run") && has_val) { any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
+        else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
@@ -218,6 +227,15 @@ int wmain(int argc, wchar_t** argv) {
         }
         else if (!wcscmp(a, L"--disk-size") && has_val) { params.disk_file_bytes = (u64)atoi(val) * MiB; ++i; }
         else if (!wcscmp(a, L"--passes") && has_val) { params.disk_passes = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--repeat") && has_val) { params.repeat = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--preset") && has_val) {
+            const RunPreset* pr = preset_find(val);
+            if (!pr) { fprintf(stderr, "unknown preset '%s' (quick, standard, extended)\n", val); return 3; }
+            bool preset_sel[MAX_BENCHES] = {};
+            preset_apply(pr, &params, preset_sel);
+            if (!any_run) { memcpy(selected, preset_sel, sizeof(selected)); any_run = from_preset = true; }
+            ++i;
+        }
         else { print_usage(); return a[0] == L'-' && a[1] == L'h' ? 0 : 3; }
     }
 

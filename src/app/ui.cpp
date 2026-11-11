@@ -4,6 +4,7 @@
 #include "app/theme.h"
 #include "core/elevation.h"
 #include "core/monitor.h"
+#include "core/presets.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -327,9 +328,29 @@ u32 ui_take_tool_requests() {
 BenchParams* ui_params() { return &s_ui.params; }
 
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
+// Preset combo: shows the preset the current selection + settings match, "Custom" otherwise.
+static void draw_preset() {
+    const RunPreset* cur = preset_match(&s_ui.params, s_ui.selected);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Preset");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Standard").x + ImGui::GetFrameHeight() * 2.0f);
+    if (ImGui::BeginCombo("##preset", cur ? cur->name : "Custom")) {
+        for (u32 i = 0; i < g_preset_count; ++i) {
+            if (ImGui::Selectable(g_presets[i].name, cur == &g_presets[i])) preset_apply(&g_presets[i], &s_ui.params, s_ui.selected);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_presets[i].desc);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##preset"))
+        ImGui::SetTooltip("%s", cur ? cur->desc : "Your own selection and settings. Pick a preset to replace both.");
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+}
+
 static void draw_targets() {
     BenchParams* p = &s_ui.params;
     ImGui::BeginDisabled(runner_is_running());
+    draw_preset();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("GPU");
     ImGui::SameLine();
@@ -589,7 +610,11 @@ static void draw_live() {
 
     const f32 p = g_live.progress.load();
     theme_progress(p, ImGui::GetFontSize() * 0.35f);
-    ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%", g_live.phase.load(), p * 100.0f);
+    if (g_run.reps > 1)
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%  \xC2\xB7  run %u of %u", g_live.phase.load(), p * 100.0f,
+                            g_run.rep.load() + 1, g_run.reps);
+    else
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%", g_live.phase.load(), p * 100.0f);
 
     // Sparkline: last LIVE_HISTORY samples, oldest first.
     static f32 hist[LIVE_HISTORY];
@@ -648,6 +673,17 @@ static void test_name_cell(u32 id) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Measured while the test ran (%u samples, every 250 ms). Clocks are averages while busy, "
                           "temperatures the maximum.", e->samples);
+}
+
+// Hover text for a value that is the median of repeated runs.
+static void spread_tooltip(const MetricSpread* sp, const char* unit) {
+    if (sp->runs < 2 || !ImGui::IsItemHovered()) return;
+    char lo[32], hi[32];
+    format_value(lo, sizeof(lo), sp->min);
+    format_value(hi, sizeof(hi), sp->max);
+    ImGui::SetTooltip("Median of %u runs: min %s, max %s %s, spread (CV) %.1f%%%s", sp->runs, lo, hi, unit, sp->cv,
+                      sp->cv >= NOISY_CV_PCT ? "\nNoisy: the runs differ by more than 3 %. Close other apps, check "
+                                               "power and temperature, or use longer phases." : "");
 }
 
 static void draw_results() {
@@ -730,10 +766,14 @@ static void draw_results() {
                 ImGui::TextUnformatted(v);
                 ImGui::SameLine(0.0f, 0.0f);
                 ImGui::TextDisabled("%s", fps);
+            } else if (res_spread(r)[k].runs >= 2 && res_spread(r)[k].cv >= NOISY_CV_PCT) {
+                align_right(ImGui::CalcTextSize(v).x);
+                ImGui::TextColored(COL_WARN, "%s", v);
             } else {
                 text_right(v);
             }
             ImGui::PopFont();
+            spread_tooltip(&res_spread(r)[k], m[k].unit);
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", m[k].unit);
         }

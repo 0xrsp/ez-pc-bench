@@ -4,6 +4,7 @@
 #include "core/perf.h"
 #include "core/timer.h"
 #include <windows.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -31,6 +32,61 @@ static void finish(u32 id, BenchStatus st) {
     monitor_test_end((i32)id);      // conditions are ready before the result shows as finished
     g_status[id].store(st, std::memory_order_release);
     g_run.done_count.fetch_add(1, std::memory_order_release);
+}
+
+// Repeats: the test runs g_run.reps times in a row. The first run's result stays in place (names, units, x)
+// with each value replaced by the median over the runs; g_spread gets min / max / CV. Later runs append to the
+// metric arena, their values are copied out and the arena is rewound.
+constexpr u32 REP_MAX_METRICS = 4096;
+static f64 s_rep_values[MAX_REPEAT][REP_MAX_METRICS];
+
+static void reduce_repeats(BenchResult* r, u32 runs) {
+    Metric* m = &g_metrics[r->first];
+    MetricSpread* sp = &g_spread[r->first];
+    const u32 n = r->count < REP_MAX_METRICS ? r->count : REP_MAX_METRICS;
+    for (u32 k = 0; k < n; ++k) {
+        f64 v[MAX_REPEAT];
+        f64 sum = 0.0;
+        for (u32 i = 0; i < runs; ++i) {        // insertion sort, runs <= 10
+            const f64 x = s_rep_values[i][k];
+            u32 j = i;
+            for (; j > 0 && v[j - 1] > x; --j) v[j] = v[j - 1];
+            v[j] = x;
+            sum += x;
+        }
+        const f64 mean = sum / runs;
+        f64 var = 0.0;
+        for (u32 i = 0; i < runs; ++i) var += (v[i] - mean) * (v[i] - mean);
+        const f64 sd = sqrt(var / (runs - 1));
+        m[k].value = runs & 1 ? v[runs / 2] : 0.5 * (v[runs / 2 - 1] + v[runs / 2]);
+        sp[k] = { (f32)v[0], (f32)v[runs - 1], mean != 0.0 ? (f32)(fabs(sd / mean) * 100.0) : 0.0f, runs };
+    }
+}
+
+static void run_test(const BenchDesc* b, void* state, const BenchParams* params, BenchResult* r) {
+    u32 runs = 0;
+    for (u32 rep = 0; rep < g_run.reps; ++rep) {
+        g_run.rep.store(rep, std::memory_order_relaxed);
+        if (rep) live_progress(&g_live, 0.0f);
+        BenchResult extra = {};
+        BenchResult* dst = rep == 0 ? r : &extra;
+        const u32 mark = res_mark();
+        b->fn(state, params, &g_live, dst, &g_run.cancel);
+        const bool ok = !g_run.cancel.load(std::memory_order_relaxed) && !dst->error[0] && !dst->skipped;
+        if (ok && rep && (extra.count != r->count || extra.kind != r->kind))
+            res_fail(r, "run %u returned %u metrics instead of %u", rep + 1, extra.count, r->count);
+        else if (ok) {
+            const Metric* m = res_metrics(dst);
+            for (u32 k = 0; k < dst->count && k < REP_MAX_METRICS; ++k) s_rep_values[rep][k] = m[k].value;
+            ++runs;
+        } else if (rep) {
+            memcpy(r->error, extra.error, sizeof(r->error));     // a later run failing fails the test
+            r->skipped = extra.skipped;
+        }
+        if (rep) res_rewind(mark);
+        if (!ok || r->error[0]) break;
+    }
+    if (runs >= 2 && !r->error[0]) reduce_repeats(r, runs);
 }
 
 static DWORD WINAPI worker_main(void*) {
@@ -73,7 +129,7 @@ static DWORD WINAPI worker_main(void*) {
         g_status[id].store(ST_RUNNING, std::memory_order_release);
 
         const f64 t0 = timer_now();
-        b->fn(suite_state, params, &g_live, r, &g_run.cancel);
+        run_test(b, suite_state, params, r);
         r->seconds = timer_now() - t0;
 
         BenchStatus st = ST_DONE;
@@ -112,6 +168,8 @@ bool runner_start(const bool* selected, const BenchParams* params) {
 
     g_run.total = n;
     g_run.params = *params;
+    g_run.reps = params->repeat < 1 ? 1 : params->repeat > MAX_REPEAT ? MAX_REPEAT : params->repeat;
+    g_run.rep.store(0);
     g_run.cancel.store(false);
     g_run.done_count.store(0);
     g_run.current.store(-1);
@@ -140,7 +198,7 @@ f32 runner_overall_progress() {
     if (g_run.total == 0) return 0.0f;
     f32 done = (f32)g_run.done_count.load(std::memory_order_acquire);
     if (g_run.current.load(std::memory_order_relaxed) >= 0 && done < g_run.total)
-        done += g_live.progress.load(std::memory_order_relaxed);
+        done += (g_run.rep.load(std::memory_order_relaxed) + g_live.progress.load(std::memory_order_relaxed)) / g_run.reps;
     f32 p = done / (f32)g_run.total;
     return p > 1.0f ? 1.0f : p;
 }
