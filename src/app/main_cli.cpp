@@ -1,4 +1,5 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
+#include "app/stability_cli.h"
 #include "core/baseline.h"
 #include "core/bench.h"
 #include "core/elevation.h"
@@ -31,7 +32,9 @@ static void print_usage() {
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --elevate              Relaunch as administrator in a new console\n"
-        "  --pause                Wait for Enter before exiting\n");
+        "  --pause                Wait for Enter before exiting\n"
+        "  --stress <tests> ...   Stability tester mode (options below)\n\n");
+    stability_cli_usage();
 }
 
 // '*' wildcard match.
@@ -194,6 +197,8 @@ static void to_utf8(const wchar_t* w, char* out, int size) {
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     sysinfo_init();
+    for (int i = 1; i < argc; ++i)      // stability tester: its own mode and options
+        if (!wcscmp(argv[i], L"--stress") || !wcscmp(argv[i], L"--whea-history")) return stability_cli(argc, argv);
     runner_init();
 
     bool selected[MAX_BENCHES] = {};

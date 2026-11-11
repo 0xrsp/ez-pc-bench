@@ -133,7 +133,7 @@ static const char* kind_name(ResultKind k) {
     return k == RESULT_SERIES ? "series" : k == RESULT_MATRIX ? "matrix" : "values";
 }
 
-static void write_system(FILE* f) {
+void results_write_system(FILE* f) {
     const SysInfo* s = &g_sys;
     toon_key(f, 0, "system");
     toon_key(f, 1, "cpu");
@@ -304,7 +304,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     toon_str(f, 0, "app", "ez-pc-bench");
     toon_num(f, 0, "format", 1);
     toon_str(f, 0, "timestamp", stamp);
-    write_system(f);
+    results_write_system(f);
     write_params(f, p);
 
     u32 tests = 0, metrics = 0;

@@ -1,6 +1,7 @@
 #pragma once
 // Metric arena, per-bench result/status arrays, text + JSON export.
 #include "core/bench.h"
+#include <stdio.h>
 
 constexpr u32 MAX_METRICS = 64 * 1024;
 
@@ -47,3 +48,5 @@ bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f
 
 // Results file in TOON (see toon.h for the subset, results.cpp for the layout). Saved as *.toon.txt.
 bool results_write_toon(const wchar_t* path, const BenchParams* p);
+// The `system:` block alone (also written by the stability report).
+void results_write_system(FILE* f);

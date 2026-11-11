@@ -294,6 +294,10 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
                 if (*p >= 'A' && *p <= 'Z') s_file.disk_mask |= 1u << (*p - 'A');
         }
         else if (!strcmp(path, "app")) s_file.have_app = !strcmp(v, "ez-pc-bench");
+        else if (!strcmp(path, "kind") && strcmp(v, "benchmark") != 0) {     // e.g. a stability report
+            snprintf(err, err_size, "a %s report, not benchmark results", v);
+            return false;
+        }
         else if (!strcmp(path, "timestamp")) copy_str(s_file.timestamp, sizeof(s_file.timestamp), v);
         else if (!strcmp(path, "system.cpu.brand")) copy_str(s_file.cpu, sizeof(s_file.cpu), v);
         else if (!strcmp(path, "system.ram.installed_bytes")) s_file.ram_installed = atof(v);

@@ -90,6 +90,14 @@ ezb_shader(raster.hlsl    vs_scene      vs_6_0)
 ezb_shader(raster.hlsl    ps_scene      ps_6_0)
 ezb_shader(raster.hlsl    vs_sprite     vs_6_0)
 ezb_shader(raster.hlsl    ps_sprite     ps_6_0)
+# Stability tester (src/stability/stab_gpu.cpp, D3D12 only; the SPIR-V output is unused)
+ezb_shader(../../stability/stab.hlsl cs_stab_fill         cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_check        cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_compute      cs_6_0)
+ezb_shader(../../stability/stab.hlsl vs_stab_full         vs_6_0)
+ezb_shader(../../stability/stab.hlsl ps_stab_render       ps_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_render_check cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_power        cs_6_0)
 add_custom_target(gpu_shaders DEPENDS ${SHADER_HEADERS})
 
 # Core: benchmarks, runner, sysinfo, results (shared by GUI and CLI)
@@ -128,11 +136,17 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_d3d12_compute.cpp
     src/gpu/gpu_d3d12_raster.cpp
     src/gpu/gpu_vk.cpp
-    src/gpu/gpu_vk_tests.cpp)
+    src/gpu/gpu_vk_tests.cpp
+    src/core/whea.cpp
+    src/stability/stability.cpp
+    src/stability/stab_cpu.cpp
+    src/stability/stab_mem.cpp
+    src/stability/stab_disk.cpp
+    src/stability/stab_gpu.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
-    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi)
+    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi wevtapi)
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
@@ -175,6 +189,7 @@ target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 # CLI
 add_executable(ez-pc-bench-cli
     src/app/main_cli.cpp
+    src/app/stability_cli.cpp
     src/app/app.rc)
 target_link_libraries(ez-pc-bench-cli PRIVATE ezbench_core ezb_flags ezb_warnings)
 target_link_options(ez-pc-bench-cli PRIVATE /MANIFEST:NO)
