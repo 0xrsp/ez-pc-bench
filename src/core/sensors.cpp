@@ -1,6 +1,9 @@
 // Sensor sampling thread (see sensors.h). Each sample first reads every source into a Reading without any
-// lock (PDH thermal zones can take 5-20 s under full load), then publishes under s_lock, which the UI only
-// holds for a copy. Log rows are written after publishing, under s_log_lock.
+// lock, then publishes under s_lock, which the UI only holds for a copy. Log rows are written after
+// publishing, under s_log_lock. Thermal zones are read by a second thread: under full load their PDH query
+// waits 5-20 s for OS worker threads (PLAN.md section 13) and the other sources must not wait with it; the
+// sampler uses the latest zone values. While a log is active the sampler runs at HIGHEST priority so rows
+// keep their interval during benchmarks (a sample costs a few ms).
 #include "core/sensors.h"
 #include "core/bench.h"
 #include "core/emi.h"
@@ -35,7 +38,7 @@ static f32 s_hist[CH_MAX][CH_HISTORY];      // ring, shared head: every channel 
 static u32 s_hist_head, s_hist_count;
 static f64 s_hist_t;
 
-static HANDLE s_thread, s_stop;
+static HANDLE s_thread, s_zone_thread, s_stop, s_wake;     // s_wake: sample now (a log started)
 static u32 s_refs;                          // sensors_start / sensors_stop references (callers' threads)
 static SRWLOCK s_ref_lock = SRWLOCK_INIT;
 static std::atomic<u32> s_period_ms{ 1000 };
@@ -44,9 +47,6 @@ static std::atomic<u32> s_period_ms{ 1000 };
 
 struct DiskSource { HANDLE h; u32 sensor; u32 number; };
 struct Sources {
-    PDH_HQUERY query;
-    PDH_HCOUNTER zones;
-    bool zones_precise;         // "High Precision Temperature" (0.1 K) vs "Temperature" (K)
     CpuReader cpu;
     GpuReader gpu;
     u32 gpu_sensor[8];          // temperature sensor per GPU (UINT32_MAX = none)
@@ -56,13 +56,20 @@ struct Sources {
     EmiReader emi;
 };
 
-// One sample, read without the lock.
+// Thermal zones, written by the zone thread (s_zone_lock).
 constexpr u32 ZONE_MAX = 16;
+struct ZoneValues {
+    u32 count;
+    char inst[ZONE_MAX][64];
+    f32 c[ZONE_MAX];
+    bool ok[ZONE_MAX];
+};
+static ZoneValues s_zones;
+static SRWLOCK s_zone_lock = SRWLOCK_INIT;
+
+// One sample, read without the lock.
 struct Reading {
-    u32 zone_count;
-    char zone_inst[ZONE_MAX][64];
-    f32 zone_c[ZONE_MAX];
-    bool zone_ok[ZONE_MAX];
+    ZoneValues zones;
     u32 lps;
     f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
     GpuReading gpu[8];
@@ -107,11 +114,17 @@ static void no_value(u32 i, const char* why) {
 
 // ---- discovery ----------------------------------------------------------------------------------------
 
-static void open_zones(Sources* src) {
+struct ZoneSource {
+    PDH_HQUERY query;
+    PDH_HCOUNTER zones;
+    bool precise;               // "High Precision Temperature" (0.1 K) vs "Temperature" (K)
+};
+
+static void open_zones(ZoneSource* src) {
     if (PdhOpenQueryW(nullptr, 0, &src->query) != ERROR_SUCCESS) { src->query = nullptr; return; }
-    src->zones_precise = PdhAddEnglishCounterW(src->query, L"\\Thermal Zone Information(*)\\High Precision Temperature", 0,
-                                               &src->zones) == ERROR_SUCCESS;
-    if (!src->zones_precise &&
+    src->precise = PdhAddEnglishCounterW(src->query, L"\\Thermal Zone Information(*)\\High Precision Temperature", 0,
+                                         &src->zones) == ERROR_SUCCESS;
+    if (!src->precise &&
         PdhAddEnglishCounterW(src->query, L"\\Thermal Zone Information(*)\\Temperature", 0, &src->zones) != ERROR_SUCCESS) {
         PdhCloseQuery(src->query);
         src->query = nullptr;
@@ -150,8 +163,8 @@ static void open_disks(Sources* src) {          // s_lock held
 
 // ---- reading (no lock) --------------------------------------------------------------------------------
 
-static void read_zones(Sources* src, Reading* rd) {
-    rd->zone_count = 0;
+static void read_zones(ZoneSource* src, ZoneValues* out) {
+    out->count = 0;
     if (!src->query || PdhCollectQueryData(src->query) != ERROR_SUCCESS) return;
     DWORD size = 0, count = 0;
     if (PdhGetFormattedCounterArrayW(src->zones, PDH_FMT_DOUBLE, &size, &count, nullptr) != (PDH_STATUS)PDH_MORE_DATA || !size) return;
@@ -159,13 +172,27 @@ static void read_zones(Sources* src, Reading* rd) {
     if (size > sizeof(buf)) return;
     PDH_FMT_COUNTERVALUE_ITEM_W* items = (PDH_FMT_COUNTERVALUE_ITEM_W*)buf;
     if (PdhGetFormattedCounterArrayW(src->zones, PDH_FMT_DOUBLE, &size, &count, items) != ERROR_SUCCESS) return;
-    for (DWORD i = 0; i < count && rd->zone_count < ZONE_MAX; ++i) {
-        const u32 z = rd->zone_count++;
-        WideCharToMultiByte(CP_UTF8, 0, items[i].szName, -1, rd->zone_inst[z], sizeof(rd->zone_inst[z]), nullptr, nullptr);
+    for (DWORD i = 0; i < count && out->count < ZONE_MAX; ++i) {
+        const u32 z = out->count++;
+        WideCharToMultiByte(CP_UTF8, 0, items[i].szName, -1, out->inst[z], sizeof(out->inst[z]), nullptr, nullptr);
         const f64 v = items[i].FmtValue.doubleValue;
-        rd->zone_c[z] = (f32)(src->zones_precise ? v / 10.0 - 273.15 : v - 273.15);
-        rd->zone_ok[z] = items[i].FmtValue.CStatus == ERROR_SUCCESS && rd->zone_c[z] > -40.0f && rd->zone_c[z] < 150.0f;
+        out->c[z] = (f32)(src->precise ? v / 10.0 - 273.15 : v - 273.15);
+        out->ok[z] = items[i].FmtValue.CStatus == ERROR_SUCCESS && out->c[z] > -40.0f && out->c[z] < 150.0f;
     }
+}
+
+static DWORD WINAPI zone_thread(void*) {
+    ZoneSource src = {};
+    open_zones(&src);
+    static ZoneValues v;
+    do {
+        read_zones(&src, &v);
+        AcquireSRWLockExclusive(&s_zone_lock);
+        s_zones = v;
+        ReleaseSRWLockExclusive(&s_zone_lock);
+    } while (WaitForSingleObject(s_stop, 1000) == WAIT_TIMEOUT);
+    if (src.query) PdhCloseQuery(src.query);
+    return 0;
 }
 
 static bool disk_test_running() {
@@ -174,7 +201,9 @@ static bool disk_test_running() {
 }
 
 static void read_all(Sources* src, Reading* rd) {
-    read_zones(src, rd);
+    AcquireSRWLockShared(&s_zone_lock);
+    rd->zones = s_zones;
+    ReleaseSRWLockShared(&s_zone_lock);
     rd->lps = cpu_reader_sample(&src->cpu, rd->util, rd->mhz);
     gpu_reader_collect(&src->gpu);
     for (u32 i = 0; i < src->gpu.count; ++i) gpu_reader_read(&src->gpu, i, &rd->gpu[i], true);
@@ -337,9 +366,9 @@ static void power_channels(const Sources* src) {
 
 static void publish_zones(const Reading* rd) {
     char id[40];
-    for (u32 z = 0; z < rd->zone_count; ++z) {
+    for (u32 z = 0; z < rd->zones.count; ++z) {
         // Instance names look like "\_TZ.TZ01"; show "Thermal zone TZ01".
-        const char* inst = rd->zone_inst[z];
+        const char* inst = rd->zones.inst[z];
         const char* shortname = strrchr(inst, '.') ? strrchr(inst, '.') + 1 : inst;
         char name[96];
         snprintf(name, sizeof(name), "Thermal zone %s", shortname);
@@ -351,7 +380,7 @@ static void publish_zones(const Reading* rd) {
             if (s == UINT32_MAX) continue;
             snprintf(s_sensors[s].detail, sizeof(s_sensors[s].detail), "ACPI %s", inst);
         }
-        if (rd->zone_ok[z]) push(s, rd->zone_c[z]);
+        if (rd->zones.ok[z]) push(s, rd->zones.c[z]);
         else no_value(s, "No reading from this zone.");
         u32 n = snprintf(id, sizeof(id), "temp.");
         for (const char* p = shortname; *p && n + 1 < sizeof(id); ++p)
@@ -640,6 +669,10 @@ bool sensors_log_start(const wchar_t* path, SensorLogFormat format, u32 interval
     s_log = l;
     ReleaseSRWLockExclusive(&s_log_lock);
     s_period_ms.store(l.interval_ms < 1000 ? l.interval_ms : 1000, std::memory_order_relaxed);
+    AcquireSRWLockExclusive(&s_ref_lock);
+    if (s_thread) SetThreadPriority(s_thread, THREAD_PRIORITY_HIGHEST);    // keep the row interval under load
+    if (s_wake) SetEvent(s_wake);
+    ReleaseSRWLockExclusive(&s_ref_lock);
     if (err_size) err[0] = 0;
     return true;
 }
@@ -656,6 +689,9 @@ void sensors_log_stop() {
     ReleaseSRWLockExclusive(&s_log_lock);
     if (!was) return;
     s_period_ms.store(1000, std::memory_order_relaxed);
+    AcquireSRWLockExclusive(&s_ref_lock);
+    if (s_thread) SetThreadPriority(s_thread, THREAD_PRIORITY_BELOW_NORMAL);
+    ReleaseSRWLockExclusive(&s_ref_lock);
     sensors_stop();
 }
 
@@ -698,9 +734,13 @@ static DWORD WINAPI sensor_thread(void*) {
     open_gpu_sensors(&src);
     open_disks(&src);
     ReleaseSRWLockExclusive(&s_lock);
-    open_zones(&src);
-    DWORD wait;
-    do {
+    AcquireSRWLockExclusive(&s_zone_lock);
+    s_zones.count = 0;
+    ReleaseSRWLockExclusive(&s_zone_lock);
+    s_zone_thread = CreateThread(nullptr, 0, zone_thread, nullptr, 0, nullptr);
+    Sleep(50);      // the zone query answers in < 1 ms when idle: let the first sample include the zones
+    const HANDLE events[2] = { s_stop, s_wake };
+    for (;;) {
         const f64 t = timer_now();
         read_all(&src, &rd);
         AcquireSRWLockExclusive(&s_lock);
@@ -709,14 +749,19 @@ static DWORD WINAPI sensor_thread(void*) {
         log_tick();
         const f64 spent_ms = (timer_now() - t) * 1000.0;
         const u32 period = s_period_ms.load(std::memory_order_relaxed);
-        wait = spent_ms >= period ? 10 : (DWORD)(period - spent_ms);
-    } while (WaitForSingleObject(s_stop, wait) == WAIT_TIMEOUT);
+        const DWORD wait = spent_ms >= period ? 10 : (DWORD)(period - spent_ms);
+        if (WaitForMultipleObjects(2, events, FALSE, wait) == WAIT_OBJECT_0) break;
+    }
 
     cpu_reader_close(&src.cpu);
     gpu_reader_close(&src.gpu);
     battery_close(&src.bat);
     emi_close(&src.emi);
-    if (src.query) PdhCloseQuery(src.query);
+    if (s_zone_thread) {
+        WaitForSingleObject(s_zone_thread, INFINITE);
+        CloseHandle(s_zone_thread);
+        s_zone_thread = nullptr;
+    }
     for (u32 i = 0; i < src.disk_count; ++i)
         if (src.disks[i].h != INVALID_HANDLE_VALUE) CloseHandle(src.disks[i].h);
     return 0;
@@ -726,6 +771,7 @@ void sensors_start() {
     AcquireSRWLockExclusive(&s_ref_lock);
     if (s_refs++ == 0) {
         s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        s_wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         s_thread = CreateThread(nullptr, 0, sensor_thread, nullptr, 0, nullptr);
         if (s_thread) SetThreadPriority(s_thread, THREAD_PRIORITY_BELOW_NORMAL);
     }
@@ -739,7 +785,8 @@ void sensors_stop() {
         WaitForSingleObject(s_thread, INFINITE);
         CloseHandle(s_thread);
         CloseHandle(s_stop);
-        s_thread = s_stop = nullptr;
+        CloseHandle(s_wake);
+        s_thread = s_stop = s_wake = nullptr;
     }
     ReleaseSRWLockExclusive(&s_ref_lock);
 }
