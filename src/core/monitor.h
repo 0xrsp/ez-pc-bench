@@ -22,7 +22,7 @@ struct TestEnv {
     f32 cpu_mhz;            // clock of a busy core, average over the samples where a core was busy
     f32 cpu_mhz_max;        // highest of those samples
     f32 cpu_util;           // % of all logical processors, average
-    f32 cpu_temp_max;       // C; NaN until a CPU temperature source exists (PawnIO, FUTURE.md section 8)
+    f32 cpu_temp_max;       // C; from PawnIO (adv_sensors.h) when installed, else NaN
     f32 gpu_mhz, gpu_mhz_max;   // test GPU core clock (where the driver reports it)
     f32 gpu_mem_mhz;        // memory clock, average
     f32 gpu_util;           // % of the busiest engine, average

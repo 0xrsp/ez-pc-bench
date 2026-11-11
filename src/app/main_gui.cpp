@@ -7,6 +7,7 @@
 #include "app/temps_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
+#include "core/adv_sensors.h"
 #include "core/elevation.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -401,6 +402,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     sysinfo_init();
     runner_init();
     ui_init();
+    adv_init();     // PawnIO advanced sensors, after the settings (their on / off switch) are loaded
 
     s_dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),

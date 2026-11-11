@@ -8,6 +8,7 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_spd.h"
 #include "core/timer.h"
 #include "imgui.h"
 #include <windows.h>
@@ -209,6 +210,8 @@ static void draw_sysinfo() {
         sys_line("", "%s: %llu GiB %s @ %u MT/s (rated %u)  %s %s", m->locator, m->size_bytes / GiB, m->type,
                  m->configured_mts, m->speed_mts, m->manufacturer, m->part);
     }
+    char timings[192];      // PawnIO only (core/sysinfo_spd.h)
+    if (memdetail_timings_line(timings, sizeof(timings))) sys_line("", "Timings: %s", timings);
     for (u32 i = 0; i < s->gpu_count; ++i) {
         const GpuInfo* g = &s->gpus[i];
         sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)  \xC2\xB7  driver %s%s", i, g->name, g->dedicated_vram / MiB,
