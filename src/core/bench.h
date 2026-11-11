@@ -37,8 +37,11 @@ struct BenchParams {
     u32 disk_passes = 3;            // best of N (CrystalDiskMark uses 5; 3 is as stable here with ~40% less wear)
     bool disk_write_through = false;
     u32 repeat = 1;                 // each test runs this many times in a row; results are the median (runner.cpp)
+    u32 sustain_s = 0;              // sustained mode: each test loops for this long (>= 2 passes), median + per-pass
+                                    // series; 0 = off. Overrides `repeat` (runner.cpp)
 };
 constexpr u32 MAX_REPEAT = 10;
+constexpr u32 MAX_SUSTAIN_S = 60 * 60;
 
 // Live state of the running test. Single writer (worker), single reader (UI / CLI).
 constexpr u32 LIVE_HISTORY = 256;

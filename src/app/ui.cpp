@@ -53,6 +53,11 @@ void ui_set_duration(u32 ms) {
     if (ms >= 100) s_ui.params.duration_ms = ms;
 }
 
+void ui_set_sustain(u32 seconds) { s_ui.params.sustain_s = seconds < MAX_SUSTAIN_S ? seconds : MAX_SUSTAIN_S; }
+
+static int s_output_tab;        // 0 = Results, 1 = Charts
+void ui_show_charts() { s_output_tab = 1; }
+
 void ui_select_only(const char* ids) {
     for (u32 i = 0; i < g_bench_count; ++i) {
         const char* id = g_benches[i].cli_id;
@@ -335,7 +340,7 @@ static void draw_preset() {
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Preset");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Standard").x + ImGui::GetFrameHeight() * 2.0f);
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Sustained").x + ImGui::GetFrameHeight() * 2.0f);
     if (ImGui::BeginCombo("##preset", cur ? cur->name : "Custom")) {
         for (u32 i = 0; i < g_preset_count; ++i) {
             if (ImGui::Selectable(g_presets[i].name, cur == &g_presets[i])) preset_apply(&g_presets[i], &s_ui.params, s_ui.selected);
@@ -614,6 +619,9 @@ static void draw_live() {
     if (g_run.reps > 1)
         ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%  \xC2\xB7  run %u of %u", g_live.phase.load(), p * 100.0f,
                             g_run.rep.load() + 1, g_run.reps);
+    else if (g_run.sustain_s)
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%  \xC2\xB7  sustained pass %u, %.0f of %u s", g_live.phase.load(),
+                            p * 100.0f, g_run.rep.load() + 1, timer_now() - g_run.test_start.load(), g_run.sustain_s);
     else
         ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%", g_live.phase.load(), p * 100.0f);
 
@@ -787,10 +795,24 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
+// One plot per run of consecutive points with the same metric name (e.g. per-core ALU rate, then clock).
+static void draw_series_group(const BenchResult* r, const Metric* m, u32 n);
+
 static void draw_series(const BenchResult* r) {
-    static f32 ys[1024];
     const Metric* m = res_metrics(r);
-    const u32 n = r->count < 1024 ? r->count : 1024;
+    for (u32 start = 0, g = 0; start < r->count; ++g) {
+        u32 end = start + 1;
+        while (end < r->count && !strcmp(m[end].name, m[start].name)) ++end;
+        ImGui::PushID((int)g);
+        draw_series_group(r, m + start, end - start);
+        ImGui::PopID();
+        start = end;
+    }
+}
+
+static void draw_series_group(const BenchResult* r, const Metric* m, u32 count) {
+    static f32 ys[1024];
+    const u32 n = count < 1024 ? count : 1024;
     f32 hi = 0.0f;
     for (u32 k = 0; k < n; ++k) {
         ys[k] = (f32)m[k].value;
@@ -857,18 +879,52 @@ static void draw_matrix(const BenchResult* r) {
     ImGui::PopFont();
 }
 
+// Sustained mode: one small plot per tracked metric, value per pass, with the first / last / drop summary.
+static void draw_sustain(u32 id) {
+    const SustainRecord* s = &g_sustain[id];
+    static f32 ys[MAX_SUSTAIN_PASSES];
+    ImGui::TextDisabled("Sustained: %u passes in %.0f s", s->passes, s->seconds);
+    for (u32 k = 0; k < s->tracked; ++k) {
+        const Metric* m = sustain_metric(id, k);
+        if (!strcmp(m->unit, "x")) continue;
+        SustainStats st;
+        sustain_stats(s, k, m->unit, &st);
+        for (u32 i = 0; i < s->passes; ++i) ys[i] = sustain_value(s, i, k);
+        char a[32], b[32], overlay[160];
+        format_value(a, sizeof(a), st.first);
+        format_value(b, sizeof(b), st.last);
+        snprintf(overlay, sizeof(overlay), "%s%s [%s] per pass: first %s, last %s, drop %.1f%%", m->name,
+                 s->averaged ? " (average)" : "", m->unit, a, b, st.drop_pct);
+        ImGui::PushID((int)k);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
+        ImGui::PlotLines("##sustain", ys, (int)s->passes, 0, overlay, (f32)st.min * 0.9f, (f32)st.max * 1.1f,
+                         ImVec2(-FLT_MIN, ImGui::GetFontSize() * 5.0f));
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) {
+            const f32 t = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x) / ImGui::GetItemRectSize().x;
+            u32 i = (u32)(t * (s->passes - 1) + 0.5f);
+            if (i >= s->passes) i = s->passes - 1;
+            format_value(a, sizeof(a), ys[i]);
+            ImGui::SetTooltip("Pass %u (ended at %.0f s): %s %s", i + 1, sustain_time(s, i), a, m->unit);
+        }
+        ImGui::PopID();
+    }
+}
+
 static void draw_charts() {
     bool any = false;
     for (u32 i = 0; i < g_bench_count; ++i) {
         if (status_of(i) != ST_DONE) continue;
         const BenchResult* r = &g_results[i];
-        if (r->count == 0 || r->kind == RESULT_VALUES) continue;
+        const bool sustained = g_sustain[i].passes >= 2;
+        if (r->count == 0 || (r->kind == RESULT_VALUES && !sustained)) continue;
         any = true;
         const BenchDesc* b = &g_benches[i];
         ImGui::PushID((int)i);
         if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
             if (r->kind == RESULT_SERIES) draw_series(r);
-            else draw_matrix(r);
+            else if (r->kind == RESULT_MATRIX) draw_matrix(r);
+            if (sustained) draw_sustain(i);
             ImGui::TreePop();
         }
         ImGui::PopID();
@@ -918,7 +974,7 @@ void ui_draw() {
         ImGui::Spacing();
         theme_begin_panel("output", ImVec2(0, 0), false);
         // Segmented tabs.
-        static int tab = 0;
+        int& tab = s_output_tab;
         if (theme_tab("Results", tab == 0)) tab = 0;
         ImGui::SameLine(0.0f, 4.0f);
         if (theme_tab("Charts", tab == 1)) tab = 1;

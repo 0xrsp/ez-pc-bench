@@ -21,9 +21,9 @@ static Snapshot s_file;                         // what the ini holds (defaults 
 static Snapshot s_last;                         // state at the previous tick
 static bool s_started, s_dirty;
 static f64 s_dirty_since;
-// Command-line overrides (--duration, --light/--dark, --only): the ini keeps its value until the user changes it.
-static bool s_keep_duration, s_keep_theme, s_keep_selection;
-static u32 s_start_duration;
+// Command-line overrides (--duration, --sustain, --light/--dark, --only): the ini keeps its value until the user changes it.
+static bool s_keep_duration, s_keep_theme, s_keep_selection, s_keep_sustain;
+static u32 s_start_duration, s_start_sustain;
 static ThemeMode s_start_theme;
 static bool s_start_selected[MAX_BENCHES];
 
@@ -99,6 +99,7 @@ void settings_load(BenchParams* p, bool* selected) {
         p->disk_passes = read_u32(L"disk_passes", p->disk_passes, 1, 99);
         p->disk_write_through = read_u32(L"disk_write_through", p->disk_write_through, 0, 1) != 0;
         p->repeat = read_u32(L"repeat", p->repeat, 1, MAX_REPEAT);
+        p->sustain_s = read_u32(L"sustain_s", p->sustain_s, 0, MAX_SUSTAIN_S);
 
         // [tests] id=0|1; ids this build doesn't know are ignored, missing ids keep the registry default.
         static wchar_t buf[32768];
@@ -129,7 +130,8 @@ static bool same(const Snapshot* a, const Snapshot* b) {
            x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
-           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && !memcmp(a->selected, b->selected, g_bench_count);
+           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat &&
+           x->sustain_s == y->sustain_s && !memcmp(a->selected, b->selected, g_bench_count);
 }
 
 // Appends "key=value\0" to a profile section buffer (double-null terminated by the caller).
@@ -149,6 +151,7 @@ static void write_all(const Snapshot* cur) {
     if (!ensure_file()) return;
     Snapshot out = *cur;
     if (s_keep_duration) out.params.duration_ms = s_file.params.duration_ms;
+    if (s_keep_sustain) out.params.sustain_s = s_file.params.sustain_s;
     if (s_keep_theme) out.theme = s_file.theme;
     if (s_keep_selection) memcpy(out.selected, s_file.selected, sizeof(out.selected));
     const BenchParams* p = &out.params;
@@ -177,6 +180,7 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);
     sec_add(&s, L"repeat=%u", p->repeat);
+    sec_add(&s, L"sustain_s=%u", p->sustain_s);
     buf[s.len] = 0;
     WritePrivateProfileSectionW(L"settings", buf, s_path);
 
@@ -210,14 +214,17 @@ void settings_tick(const BenchParams* p, const bool* selected) {
         s_started = true;
         s_last = cur;
         s_start_duration = cur.params.duration_ms;
+        s_start_sustain = cur.params.sustain_s;
         s_start_theme = cur.theme;
         memcpy(s_start_selected, cur.selected, sizeof(s_start_selected));
         s_keep_duration = s_start_duration != s_file.params.duration_ms;
+        s_keep_sustain = s_start_sustain != s_file.params.sustain_s;
         s_keep_theme = s_start_theme != s_file.theme;
         s_keep_selection = memcmp(s_start_selected, s_file.selected, g_bench_count) != 0;
         return;
     }
     if (s_keep_duration && cur.params.duration_ms != s_start_duration) s_keep_duration = false;
+    if (s_keep_sustain && cur.params.sustain_s != s_start_sustain) s_keep_sustain = false;
     if (s_keep_theme && cur.theme != s_start_theme) s_keep_theme = false;
     if (s_keep_selection && memcmp(cur.selected, s_start_selected, g_bench_count) != 0) s_keep_selection = false;
     const f64 now = timer_now();

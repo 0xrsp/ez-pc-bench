@@ -7,6 +7,7 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/timer.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,9 @@ static void print_usage() {
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
         "  --passes <n>           Disk passes (default 3)\n"
         "  --repeat <n>           Run each test n times (max 10) and report the median and spread\n"
-        "  --preset <name>        quick, standard or extended: selection + duration / repeat / disk settings;\n"
+        "  --sustain <minutes>    Sustained mode: loop each test this long (decimals allowed, >= 2 passes);\n"
+        "                         reports the median, first / last pass, min / max and the drop. Overrides --repeat\n"
+        "  --preset <name>        quick, standard, extended or sustained: selection + duration / repeat / disk settings;\n"
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --elevate              Relaunch as administrator in a new console\n"
@@ -72,6 +75,24 @@ static BOOL WINAPI on_ctrl(DWORD type) {
         }
     }
     return FALSE;
+}
+
+// Sustained mode: first / last / min / max / median per tracked metric and the drop over the passes.
+static void print_sustain(u32 id) {
+    const SustainRecord* s = &g_sustain[id];
+    if (s->passes < 2) return;
+    printf("          sustained: %u passes in %.0f s\n", s->passes, s->seconds);
+    for (u32 k = 0; k < s->tracked; ++k) {
+        const Metric* m = sustain_metric(id, k);
+        if (!strcmp(m->unit, "x")) continue;
+        SustainStats st;
+        sustain_stats(s, k, m->unit, &st);
+        char v[5][32];
+        const f64 vals[] = { st.first, st.last, st.min, st.max, st.median };
+        for (u32 j = 0; j < 5; ++j) format_value(v[j], sizeof(v[j]), vals[j]);
+        printf("          %-27s first %s, last %s, min %s, max %s, median %s %s, drop %.1f%%\n",
+               s->averaged ? "average" : m->name, v[0], v[1], v[2], v[3], v[4], m->unit, st.drop_pct);
+    }
 }
 
 static void print_result(u32 id) {
@@ -131,6 +152,7 @@ static void print_result(u32 id) {
             printf("  median of %u, spread %.1f%%%s", sp[k].runs, sp[k].cv, sp[k].cv >= NOISY_CV_PCT ? " NOISY" : "");
         printf("\n");
     }
+    print_sustain(id);
 }
 
 static void print_live() {
@@ -139,8 +161,11 @@ static void print_live() {
     char v[32];
     format_value(v, sizeof(v), g_live.current.load(std::memory_order_relaxed));
     char line[160];
-    char rep[24] = "";
+    char rep[40] = "";
     if (g_run.reps > 1) snprintf(rep, sizeof(rep), " run %u/%u", g_run.rep.load() + 1, g_run.reps);
+    if (g_run.sustain_s)
+        snprintf(rep, sizeof(rep), " pass %u, %.0f/%u s", g_run.rep.load() + 1,
+                 timer_now() - g_run.test_start.load(), g_run.sustain_s);
     snprintf(line, sizeof(line), "[%u/%u] %s%s %3.0f%%  %s %s  %s", g_run.done_count.load() + 1, g_run.total,
              g_benches[cur].cli_id, rep, g_live.progress.load() * 100.0f, v, g_live.unit.load(), g_live.phase.load());
     printf("\r%-79.79s", line);
@@ -228,9 +253,14 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--disk-size") && has_val) { params.disk_file_bytes = (u64)atoi(val) * MiB; ++i; }
         else if (!wcscmp(a, L"--passes") && has_val) { params.disk_passes = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--repeat") && has_val) { params.repeat = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--sustain") && has_val) {
+            const f64 s = atof(val) * 60.0;
+            params.sustain_s = s <= 0.0 ? 0 : s >= MAX_SUSTAIN_S ? MAX_SUSTAIN_S : (u32)(s + 0.5);
+            ++i;
+        }
         else if (!wcscmp(a, L"--preset") && has_val) {
             const RunPreset* pr = preset_find(val);
-            if (!pr) { fprintf(stderr, "unknown preset '%s' (quick, standard, extended)\n", val); return 3; }
+            if (!pr) { fprintf(stderr, "unknown preset '%s' (quick, standard, extended, sustained)\n", val); return 3; }
             bool preset_sel[MAX_BENCHES] = {};
             preset_apply(pr, &params, preset_sel);
             if (!any_run) { memcpy(selected, preset_sel, sizeof(selected)); any_run = from_preset = true; }

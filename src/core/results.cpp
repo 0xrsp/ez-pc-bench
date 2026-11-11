@@ -238,6 +238,7 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "disk_passes", p->disk_passes);
     toon_bool(f, 1, "disk_write_through", p->disk_write_through);
     toon_num(f, 1, "repeat", p->repeat);
+    toon_num(f, 1, "sustain_s", p->sustain_s);
 }
 
 // Repeated runs: spread[N]{id,name,x,runs,min,max,cv} for every metric whose value is a median.
@@ -265,6 +266,60 @@ static void write_spread(FILE* f) {
             toon_cell_num(&row, sp[k].max);
             toon_cell_num(&row, round(sp[k].cv * 100.0) / 100.0);
             toon_row_end(&row);
+        }
+    }
+}
+
+// Sustained mode (runner.h): sustained[N]{id,name,unit,passes,seconds,first,last,min,max,median,drop_pct} per
+// tracked metric (name "<metric> (average)" for series / matrix results), then every pass:
+// sustain_passes[M]{id,name,pass,t,value} (t = seconds from the test's start to the end of that pass).
+static bool sustained(u32 i) {
+    return (BenchStatus)g_status[i].load(std::memory_order_acquire) == ST_DONE && g_sustain[i].passes >= 2;
+}
+
+static void write_sustain(FILE* f) {
+    u32 n = 0, rows = 0;
+    for (u32 i = 0; i < g_bench_count; ++i)
+        if (sustained(i)) { n += g_sustain[i].tracked; rows += g_sustain[i].tracked * g_sustain[i].passes; }
+    if (!n) return;
+    char name[160];
+    toon_table(f, 0, "sustained", n, "id,name,unit,passes,seconds,first,last,min,max,median,drop_pct");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const SustainRecord* s = &g_sustain[i];
+        if (!sustained(i)) continue;
+        for (u32 k = 0; k < s->tracked; ++k) {
+            const Metric* m = sustain_metric(i, k);
+            snprintf(name, sizeof(name), s->averaged ? "%s (average)" : "%s", m->name);
+            SustainStats st;
+            sustain_stats(s, k, m->unit, &st);
+            ToonRow row = toon_row(f, 1);
+            toon_cell_str(&row, g_benches[i].cli_id);
+            toon_cell_str(&row, name);
+            toon_cell_str(&row, m->unit);
+            toon_cell_num(&row, s->passes);
+            toon_cell_num(&row, round(s->seconds * 10.0) / 10.0);
+            const f64 v[] = { st.first, st.last, st.min, st.max, st.median };
+            for (u32 j = 0; j < ARRAY_COUNT(v); ++j) toon_cell_num(&row, v[j]);
+            toon_cell_num(&row, round(st.drop_pct * 100.0) / 100.0);
+            toon_row_end(&row);
+        }
+    }
+    toon_table(f, 0, "sustain_passes", rows, "id,name,pass,t,value");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const SustainRecord* s = &g_sustain[i];
+        if (!sustained(i)) continue;
+        for (u32 k = 0; k < s->tracked; ++k) {
+            const Metric* m = sustain_metric(i, k);
+            snprintf(name, sizeof(name), s->averaged ? "%s (average)" : "%s", m->name);
+            for (u32 pass = 0; pass < s->passes; ++pass) {
+                ToonRow row = toon_row(f, 1);
+                toon_cell_str(&row, g_benches[i].cli_id);
+                toon_cell_str(&row, name);
+                toon_cell_num(&row, pass + 1);
+                toon_cell_num(&row, round(sustain_time(s, pass) * 100.0) / 100.0);
+                toon_cell_num(&row, sustain_value(s, pass, k));
+                toon_row_end(&row);
+            }
         }
     }
 }
@@ -353,6 +408,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
         }
     }
     write_spread(f);
+    write_sustain(f);
     write_env(f);
     const bool ok = ferror(f) == 0;
     fclose(f);
