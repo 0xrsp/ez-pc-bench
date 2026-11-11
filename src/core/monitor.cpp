@@ -21,6 +21,7 @@ TestEnv g_env[MAX_BENCHES];
 static std::atomic<bool> s_env_ready[MAX_BENCHES];
 static HANDLE s_thread, s_stop;
 static u32 s_gpu_adapter;
+static bool s_run_on_battery;      // the run started on battery: the banner already says so, tests don't repeat it
 
 constexpr u32 SAMPLE_MS = 250;
 constexpr u32 SERIES_MAX = 8192;            // per test, ~34 minutes at 4 Hz; later samples only count in the averages
@@ -407,6 +408,8 @@ void monitor_reset() {
 void monitor_begin(u32 gpu_adapter) {
     if (s_thread) return;
     s_gpu_adapter = gpu_adapter;
+    SYSTEM_POWER_STATUS ps;
+    s_run_on_battery = GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0;
     acc_reset(&s_acc, -1);
     s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_thread = CreateThread(nullptr, 0, monitor_thread, nullptr, 0, nullptr);
@@ -469,12 +472,30 @@ void env_describe(const TestEnv* e, bool gpu, char* buf, u32 size) {
     else if (len == start) append(buf, size, " n/a");
 }
 
+void env_brief(const TestEnv* e, bool gpu, char* buf, u32 size) {
+    buf[0] = 0;
+    if (!e->samples) return;
+    if (gpu) {
+        append(buf, size, "GPU");
+        if (!isnan(e->gpu_mhz)) append(buf, size, " %.2f GHz,", e->gpu_mhz / 1000.0f);
+        if (!isnan(e->gpu_temp_max)) append(buf, size, " %.0f \xC2\xB0""C,", e->gpu_temp_max);
+        else if (!isnan(e->gpu_util)) append(buf, size, " %.0f%% busy,", e->gpu_util);
+    } else {
+        append(buf, size, "CPU");
+        if (!isnan(e->cpu_mhz)) append(buf, size, " %.2f GHz,", e->cpu_mhz / 1000.0f);
+        if (!isnan(e->cpu_util)) append(buf, size, " %.0f%% busy,", e->cpu_util);
+    }
+    const size_t len = strlen(buf);
+    if (buf[len - 1] == ',') buf[len - 1] = 0;
+    else buf[0] = 0;        // nothing reported
+}
+
 void env_warnings(const TestEnv* e, char* buf, u32 size) {
     buf[0] = 0;
     if (!e->samples) return;
     const char* sep = "";
     if (e->flags & ENV_POWER_CHANGED) { append(buf, size, "power source changed"); sep = ", "; }
-    else if (e->flags & ENV_BATTERY) { append(buf, size, "on battery"); sep = ", "; }
+    else if ((e->flags & ENV_BATTERY) && !s_run_on_battery) { append(buf, size, "on battery"); sep = ", "; }
     if (e->flags & ENV_CPU_DROP) { append(buf, size, "%sCPU clock -%.0f%%", sep, e->cpu_drop); sep = ", "; }
     if (e->flags & ENV_GPU_DROP) { append(buf, size, "%sGPU clock -%.0f%%", sep, e->gpu_drop); sep = ", "; }
     if (e->flags & ENV_CPU_HOT) { append(buf, size, "%sCPU %.0f \xC2\xB0""C", sep, e->cpu_temp_max); sep = ", "; }

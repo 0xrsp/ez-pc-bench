@@ -45,6 +45,8 @@ bool env_valid(const TestEnv* e);
 bool env_is_gpu_test(u32 bench_id);
 // "CPU 4.71 GHz (max 5.05), 97 % busy, 78 °C" (+ " · GPU 2.61 GHz, 99 % busy, 71 °C, power 88 %" for GPU tests).
 void env_describe(const TestEnv* e, bool gpu, char* buf, u32 size);
+// Short form for a narrow column: "CPU 4.71 GHz, 97% busy" or, for GPU tests, "GPU 2.61 GHz, 71 °C".
+void env_brief(const TestEnv* e, bool gpu, char* buf, u32 size);
 // Warnings worth showing next to the result ("on battery, CPU clock -12 %"), "" if none.
 void env_warnings(const TestEnv* e, char* buf, u32 size);
 // Flag names for the results file: "battery|cpu-drop", "" if none.

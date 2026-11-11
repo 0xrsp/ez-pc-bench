@@ -663,16 +663,19 @@ static void test_name_cell(u32 id) {
     ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
     const TestEnv* e = &g_env[id];
     if (!env_valid(e)) return;
-    char env[256], warn[160];
+    char brief[96], env[256], warn[160];
+    env_brief(e, env_is_gpu_test(id), brief, sizeof(brief));
     env_describe(e, env_is_gpu_test(id), env, sizeof(env));
     env_warnings(e, warn, sizeof(warn));
     ImGui::PushFont(nullptr, theme_font_size(0.85f));
-    ImGui::TextDisabled("%s", env);
+    ImGui::BeginGroup();
+    if (brief[0]) ImGui::TextDisabled("%s", brief);
     if (warn[0]) ImGui::TextColored(COL_WARN, "%s", warn);
+    ImGui::EndGroup();
     ImGui::PopFont();
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Measured while the test ran (%u samples, every 250 ms). Clocks are averages while busy, "
-                          "temperatures the maximum.", e->samples);
+        ImGui::SetTooltip("While the test ran: %s\n(%u samples; clocks are averages while busy, temperatures the maximum)",
+                          env, e->samples);
 }
 
 // Hover text for a value that is the median of repeated runs.
