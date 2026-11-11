@@ -3,6 +3,7 @@
 #include "app/settings.h"
 #include "app/theme.h"
 #include "core/elevation.h"
+#include "core/monitor.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -617,6 +618,25 @@ static void text_right(const char* s) {
     ImGui::TextUnformatted(s);
 }
 
+// Test name cell of the results table, with the conditions it ran under (clocks, load, temperatures) as a
+// dimmed second line and any warning (battery, clock drop, hot) in the warning color.
+static void test_name_cell(u32 id) {
+    const BenchDesc* b = &g_benches[id];
+    ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+    const TestEnv* e = &g_env[id];
+    if (!env_valid(e)) return;
+    char env[256], warn[160];
+    env_describe(e, env_is_gpu_test(id), env, sizeof(env));
+    env_warnings(e, warn, sizeof(warn));
+    ImGui::PushFont(nullptr, theme_font_size(0.85f));
+    ImGui::TextDisabled("%s", env);
+    if (warn[0]) ImGui::TextColored(COL_WARN, "%s", warn);
+    ImGui::PopFont();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Measured while the test ran (%u samples, every 250 ms). Clocks are averages while busy, "
+                          "temperatures the maximum.", e->samples);
+}
+
 static void draw_results() {
     // Material data table: horizontal dividers only, quiet header.
     const int cols = 4;
@@ -665,7 +685,7 @@ static void draw_results() {
             format_value(vavg, sizeof(vavg), avg);
             format_value(vmax, sizeof(vmax), hi);
             ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+            ImGui::TableNextColumn(); test_name_cell(i);
             ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
             ImGui::TableNextColumn();
             snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
@@ -678,7 +698,7 @@ static void draw_results() {
         for (u32 k = 0; k < r->count; ++k) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            if (k == 0) ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+            if (k == 0) test_name_cell(i);
             ImGui::TableNextColumn();
             if (r->kind == RESULT_SERIES) {
                 format_x(x, sizeof(x), m[k].x, r->x_unit);

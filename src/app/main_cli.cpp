@@ -2,6 +2,7 @@
 #include "core/baseline.h"
 #include "core/bench.h"
 #include "core/elevation.h"
+#include "core/monitor.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -75,6 +76,12 @@ static void print_result(u32 id) {
     printf("\r%-79s\r", "");
     printf("%-9s %s  (%.1f s)%s%s\n", status_name(st), g_benches[id].cli_id, r->seconds, r->error[0] ? "  " : "", r->error);
     if (st != ST_DONE) return;
+    if (env_valid(&g_env[id])) {
+        char env[256], warn[160];
+        env_describe(&g_env[id], env_is_gpu_test(id), env, sizeof(env));
+        env_warnings(&g_env[id], warn, sizeof(warn));
+        printf("          [%s]%s%s\n", env, warn[0] ? "  WARNING: " : "", warn);
+    }
     const Metric* m = res_metrics(r);
     const char* id_str = g_benches[id].cli_id;
     char v[32], x[32];

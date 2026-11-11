@@ -1,4 +1,5 @@
 #include "core/runner.h"
+#include "core/monitor.h"
 #include "core/results.h"
 #include "core/perf.h"
 #include "core/timer.h"
@@ -27,6 +28,7 @@ void live_sample(BenchLive* live, f64 value) {
 }
 
 static void finish(u32 id, BenchStatus st) {
+    monitor_test_end((i32)id);      // conditions are ready before the result shows as finished
     g_status[id].store(st, std::memory_order_release);
     g_run.done_count.fetch_add(1, std::memory_order_release);
 }
@@ -34,6 +36,7 @@ static void finish(u32 id, BenchStatus st) {
 static DWORD WINAPI worker_main(void*) {
     perf_begin_run();
     perf_setup_worker_thread();
+    monitor_begin(g_run.params.gpu_adapter);
 
     const BenchParams* params = &g_run.params;
     SuiteId suite = SUITE_COUNT;
@@ -81,6 +84,7 @@ static DWORD WINAPI worker_main(void*) {
     }
     if (suite != SUITE_COUNT && suite_ok && g_suites[suite].shutdown) g_suites[suite].shutdown(suite_state);
 
+    monitor_end();
     g_run.current.store(-1, std::memory_order_relaxed);
     perf_end_run();
     g_run.end_time = timer_now();

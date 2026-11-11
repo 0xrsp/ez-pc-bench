@@ -1,5 +1,6 @@
 #include "core/results.h"
 #include "core/baseline.h"
+#include "core/monitor.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/toon.h"
@@ -17,6 +18,7 @@ static u32 s_metric_count;
 void results_reset() {
     s_metric_count = 0;
     memset(g_results, 0, sizeof(g_results));
+    monitor_reset();
 }
 
 void res_begin(BenchResult* r, ResultKind kind) {
@@ -215,6 +217,29 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_bool(f, 1, "disk_write_through", p->disk_write_through);
 }
 
+// Conditions each test ran under (monitor.h): env[N]{id,samples,cpu_mhz,...,flags}. NaN = not reported.
+static void write_env(FILE* f) {
+    u32 n = 0;
+    for (u32 i = 0; i < g_bench_count; ++i) n += env_valid(&g_env[i]);
+    if (!n) return;
+    toon_table(f, 0, "env", n, "id,samples,cpu_mhz,cpu_mhz_max,cpu_util,cpu_temp_max,gpu_mhz,gpu_mhz_max,gpu_mem_mhz,"
+                               "gpu_util,gpu_temp_max,gpu_power,cpu_drop,gpu_drop,flags");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const TestEnv* e = &g_env[i];
+        if (!env_valid(e)) continue;
+        char flags[96];
+        env_flag_names(e->flags, flags, sizeof(flags));
+        ToonRow row = toon_row(f, 1);
+        toon_cell_str(&row, g_benches[i].cli_id);
+        toon_cell_num(&row, e->samples);
+        const f32 v[] = { e->cpu_mhz, e->cpu_mhz_max, e->cpu_util, e->cpu_temp_max, e->gpu_mhz, e->gpu_mhz_max,
+                          e->gpu_mem_mhz, e->gpu_util, e->gpu_temp_max, e->gpu_power, e->cpu_drop, e->gpu_drop };
+        for (u32 k = 0; k < ARRAY_COUNT(v); ++k) toon_cell_num(&row, round(v[k] * 10.0) / 10.0);
+        toon_cell_str(&row, flags);
+        toon_row_end(&row);
+    }
+}
+
 bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     FILE* f = _wfopen(path, L"wb");
     if (!f) return false;
@@ -275,6 +300,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
             toon_row_end(&row);
         }
     }
+    write_env(f);
     const bool ok = ferror(f) == 0;
     fclose(f);
     return ok;
