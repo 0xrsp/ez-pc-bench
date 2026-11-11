@@ -168,7 +168,7 @@ static bool parse_file(ToonReader* r, char* err, u32 err_size) {
             have_metrics = true;
         }
     }
-    if (strcmp(app, "ez-pc-bench") != 0 || !have_metrics) { snprintf(err, err_size, "not an ez-pc-bench results file"); return false; }
+    if (strcmp(app, "ez-pc-bench") != 0 || !have_metrics) { snprintf(err, err_size, "not an EzPcBench results file"); return false; }
     if (s_full) { snprintf(err, err_size, "too many results"); return false; }
     return true;
 }

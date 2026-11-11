@@ -305,7 +305,7 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
         else if (!strcmp(path, "params.gpu")) copy_str(s_file.gpu, sizeof(s_file.gpu), v);
         else if (!strcmp(path, "params.duration_ms")) s_file.duration_ms = atof(v);
     }
-    if (!s_file.have_app) { snprintf(err, err_size, "not an ez-pc-bench results file"); return false; }
+    if (!s_file.have_app) { snprintf(err, err_size, "not an EzPcBench results file"); return false; }
     return true;
 }
 

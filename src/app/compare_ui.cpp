@@ -61,7 +61,7 @@ static void add_files_dialog() {
     buf[0] = 0;
     OPENFILENAMEW ofn = { sizeof(ofn) };
     ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
-    ofn.lpstrFilter = L"ez-pc-bench results (*.toon.txt)\0*.toon.txt\0All files\0*.*\0";
+    ofn.lpstrFilter = L"EzPcBench results (*.toon.txt)\0*.toon.txt\0All files\0*.*\0";
     ofn.lpstrFile = buf;
     ofn.nMaxFile = ARRAY_COUNT(buf);
     ofn.lpstrInitialDir = dir;

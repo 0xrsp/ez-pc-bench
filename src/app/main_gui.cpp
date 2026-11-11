@@ -282,7 +282,7 @@ static void compare_open(HINSTANCE inst) {
     int w = (int)(1360 * s_dpi_scale), h = (int)(820 * s_dpi_scale);
     if (w > (work.right - work.left) * 9 / 10) w = (work.right - work.left) * 9 / 10;
     if (h > (work.bottom - work.top) * 9 / 10) h = (work.bottom - work.top) * 9 / 10;
-    s_cmp.hwnd = CreateWindowW(L"ezpcbench_compare", L"ez-pc-bench - Compare", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+    s_cmp.hwnd = CreateWindowW(L"ezpcbench_compare", L"EzPcBench - Compare", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
                                CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
     if (!s_cmp.hwnd || !create_cmp_swapchain()) { compare_close(); return; }
     style_title_bar(s_cmp.hwnd);
@@ -366,7 +366,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
                        CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench", app_icon(inst, true) };
     RegisterClassExW(&wc);
     wchar_t title[96];
-    swprintf(title, 96, L"ez-pc-bench%s", is_elevated() ? L" (Administrator)" : L"");
+    swprintf(title, 96, L"EzPcBench%s", is_elevated() ? L" (Administrator)" : L"");
     RECT work = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     int win_w = (int)(1280 * s_dpi_scale), win_h = (int)(820 * s_dpi_scale);
@@ -376,7 +376,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
                               nullptr, nullptr, inst, nullptr);
     style_title_bar(hwnd);
     if (!create_device(hwnd)) {
-        MessageBoxW(nullptr, L"Failed to create a Direct3D 11 device.", L"ez-pc-bench", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to create a Direct3D 11 device.", L"EzPcBench", MB_ICONERROR);
         return 1;
     }
     ShowWindow(hwnd, SW_SHOWDEFAULT);

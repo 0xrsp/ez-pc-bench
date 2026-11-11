@@ -100,8 +100,8 @@ static bool create_instance(VkCtx* v, char* error, u32 error_size) {
         return false;
     }
     VkApplicationInfo app = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-    app.pApplicationName = "ez-pc-bench";
-    app.pEngineName = "ez-pc-bench";
+    app.pApplicationName = "EzPcBench";
+    app.pEngineName = "EzPcBench";
     app.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo ci = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
