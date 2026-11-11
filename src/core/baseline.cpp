@@ -175,28 +175,11 @@ static bool parse_file(ToonReader* r, char* err, u32 err_size) {
 
 bool baseline_load(const wchar_t* path, char* err, u32 err_size) {
     baseline_clear();
-    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) { snprintf(err, err_size, "cannot open file (error %lu)", GetLastError()); return false; }
-    LARGE_INTEGER size = {};
-    GetFileSizeEx(f, &size);
-    if (size.QuadPart <= 0 || size.QuadPart > 64 * (i64)MiB) {
-        CloseHandle(f);
-        snprintf(err, err_size, "unexpected file size");
-        return false;
-    }
-    char* buf = (char*)VirtualAlloc(nullptr, (SIZE_T)size.QuadPart + 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    DWORD got = 0;
-    const bool read = buf && ReadFile(f, buf, (DWORD)size.QuadPart, &got, nullptr) && got == (DWORD)size.QuadPart;
-    CloseHandle(f);
-    if (!read) {
-        if (buf) VirtualFree(buf, 0, MEM_RELEASE);
-        snprintf(err, err_size, "read failed");
-        return false;
-    }
-    ToonReader r = { buf, buf + got, 0 };
-    if (got >= 3 && !memcmp(buf, "\xEF\xBB\xBF", 3)) r.p += 3;     // tolerate a UTF-8 BOM
+    ToonReader r;
+    char* buf = toon_read_file(path, &r, err, err_size);
+    if (!buf) return false;
     const bool ok = parse_file(&r, err, err_size);
-    VirtualFree(buf, 0, MEM_RELEASE);
+    toon_free_file(buf);
     if (!ok) { baseline_clear(); return false; }
 
     const wchar_t* name = path;

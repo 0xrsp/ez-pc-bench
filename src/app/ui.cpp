@@ -2,7 +2,6 @@
 #include "app/ui.h"
 #include "app/settings.h"
 #include "app/theme.h"
-#include "core/baseline.h"
 #include "core/elevation.h"
 #include "core/results.h"
 #include "core/runner.h"
@@ -180,8 +179,7 @@ static void draw_sysinfo() {
 
 // ---- toolbar --------------------------------------------------------------------
 
-// "results" folder next to the exe (created on demand).
-static void results_dir(wchar_t* dir) {
+void ui_results_dir(wchar_t* dir) {
     GetModuleFileNameW(nullptr, dir, MAX_PATH);
     if (wchar_t* slash = wcsrchr(dir, L'\\')) *slash = 0;
     wcscat_s(dir, MAX_PATH, L"\\results");
@@ -190,7 +188,7 @@ static void results_dir(wchar_t* dir) {
 
 static void save_results() {
     wchar_t dir[MAX_PATH];
-    results_dir(dir);
+    ui_results_dir(dir);
     time_t now = time(nullptr);
     struct tm t;
     localtime_s(&t, &now);
@@ -203,26 +201,12 @@ static void save_results() {
     snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), ok ? "Saved %s" : "Failed to write %s", path8);
 }
 
-static void compare_dialog() {
-    wchar_t dir[MAX_PATH], path[MAX_PATH] = {};
-    results_dir(dir);
-    OPENFILENAMEW ofn = { sizeof(ofn) };
-    ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
-    ofn.lpstrFilter = L"ez-pc-bench results (*.toon.txt)\0*.toon.txt\0All files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrInitialDir = dir;
-    ofn.lpstrTitle = L"Compare against saved results";
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    const bool picked = GetOpenFileNameW(&ofn) != 0;
-    if (SUCCEEDED(co)) CoUninitialize();
-    if (!picked) return;
-    char err[160];
-    if (baseline_load(path, err, sizeof(err)))
-        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Baseline: %u metrics from %s", g_baseline.count, g_baseline.file);
-    else
-        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Cannot load baseline: %s", err);
+static bool s_open_compare;      // "Compare..." clicked; main_gui opens the compare window
+
+bool ui_take_compare_request() {
+    const bool r = s_open_compare;
+    s_open_compare = false;
+    return r;
 }
 
 static void copy_text() {
@@ -306,9 +290,7 @@ static void draw_toolbar() {
     if (theme_button("Copy text")) copy_text();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(running);      // the file dialog would load shell extensions mid-benchmark
-    if (theme_button("Compare...")) compare_dialog();
-    ImGui::EndDisabled();
+    if (theme_button("Compare...")) s_open_compare = true;
 
     ImGui::SameLine();
     ImGui::TextDisabled("%u selected", selected);
@@ -562,40 +544,17 @@ static void text_right(const char* s) {
     ImGui::TextUnformatted(s);
 }
 
-// Baseline value + colored change for one row (the two compare columns).
-static void compare_cells(const char* base_text, f64 value, f64 base, const char* unit) {
-    ImGui::TableNextColumn();
-    theme_push_numbers();
-    ImGui::PushStyleColor(ImGuiCol_Text, COL_DIM);
-    text_right(base_text);
-    ImGui::PopStyleColor();
-    ImGui::TableNextColumn();
-    const f64 pct = delta_pct(value, base);
-    const i32 rating = delta_rating(pct, unit);
-    char d[16];
-    format_delta(d, sizeof(d), pct);
-    ImGui::PushStyleColor(ImGuiCol_Text, rating > 0 ? COL_OK : rating < 0 ? COL_BAD : COL_DIM);
-    text_right(d);
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-}
-
 static void draw_results() {
-    // Material data table: horizontal dividers only, quiet header. Two more columns with a baseline loaded.
-    const bool cmp = g_baseline.loaded;
-    const int cols = cmp ? 6 : 4;
+    // Material data table: horizontal dividers only, quiet header.
+    const int cols = 4;
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable(cmp ? "results_cmp" : "results", cols, flags)) return;
+    if (!ImGui::BeginTable("results", cols, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 3.0f);
     ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 2.5f);
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.2f);
     ImGui::TableSetupColumn("Unit", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-    if (cmp) {
-        ImGui::TableSetupColumn("Baseline", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        ImGui::TableSetupColumn("\xCE\x94", ImGuiTableColumnFlags_WidthStretch, 0.8f);     // Δ
-    }
     // Header row by hand so the number columns can be right-aligned over their numbers.
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
     ImGui::PushFont(g_fonts.medium, 0.0f);
@@ -603,7 +562,7 @@ static void draw_results() {
     for (int c = 0; c < cols; ++c) {
         ImGui::TableSetColumnIndex(c);
         const char* name = ImGui::TableGetColumnName(c);
-        if (c == 2 || c >= 4) align_right(ImGui::CalcTextSize(name).x);
+        if (c == 2) align_right(ImGui::CalcTextSize(name).x);
         ImGui::TableHeader(name);
     }
     ImGui::PopFont();
@@ -641,14 +600,6 @@ static void draw_results() {
             text_right(triple);
             ImGui::PopFont();
             ImGui::TableNextColumn(); ImGui::TextDisabled("%s", m[0].unit);
-            f64 blo, bavg, bhi;
-            if (cmp && baseline_matrix(b->cli_id, r, &blo, &bavg, &bhi)) {     // change of the average
-                format_value(vmin, sizeof(vmin), blo);
-                format_value(vavg, sizeof(vavg), bavg);
-                format_value(vmax, sizeof(vmax), bhi);
-                snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
-                compare_cells(triple, avg, bavg, m[0].unit);
-            }
             continue;
         }
         for (u32 k = 0; k < r->count; ++k) {
@@ -670,11 +621,6 @@ static void draw_results() {
             ImGui::PopFont();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", m[k].unit);
-            f64 base;
-            if (cmp && baseline_metric(b->cli_id, r, k, &base)) {
-                format_value(v, sizeof(v), base);
-                compare_cells(v, m[k].value, base, m[k].unit);
-            }
         }
     }
     ImGui::EndTable();
@@ -818,21 +764,6 @@ void ui_draw() {
         if (theme_tab("Results", tab == 0)) tab = 0;
         ImGui::SameLine(0.0f, 4.0f);
         if (theme_tab("Charts", tab == 1)) tab = 1;
-        if (g_baseline.loaded) {
-            // Baseline file at the right end of the tab row, with a quiet button to drop it.
-            char label[400];
-            snprintf(label, sizeof(label), "vs %s  \xC2\xB7  %s", g_baseline.file, g_baseline.timestamp);
-            const f32 clear_w = ImGui::CalcTextSize("Clear").x + ImGui::GetFontSize() * 2.0f;
-            ImGui::SameLine();
-            const f32 avail = ImGui::GetContentRegionAvail().x - clear_w;
-            const f32 label_w = ImGui::CalcTextSize(label).x;
-            ImGui::AlignTextToFramePadding();
-            if (avail > label_w) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - label_w);
-            ImGui::TextDisabled("%s", label);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Baseline: %u metrics. Green = better, red = worse (> 1%%).", g_baseline.count);
-            ImGui::SameLine();
-            if (theme_tab("Clear", false)) baseline_clear();
-        }
         if (tab == 0) {
             draw_results();
         } else {

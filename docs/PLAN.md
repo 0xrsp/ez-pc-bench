@@ -486,6 +486,16 @@ None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
 
+- 2026-11-11 (compare window): "Compare..." opens a second top-level window (own HWND, swapchain on the
+  shared D3D11 device, own ImGui context and font atlas; `g_fonts` is swapped per window, the Win32
+  backend gets each window's io explicitly via `ImGui_ImplWin32_WndProcHandlerEx`). `core/compare.*`
+  aligns up to 16 runs (TOON files and/or the current in-memory run) into rows keyed by (test, metric,
+  x); matrices reduce to off-diagonal min / avg / max rows. The UI shows system info, raw values and
+  the change vs a chosen reference run, with suite tabs, search, drag & drop (UIPI filter opened for
+  elevated runs) and a tab-separated "Copy table". The single-baseline Δ columns in the main results
+  table were removed; the CLI keeps `--compare <file>`. GUI `--compare [files...]` opens the window.
+  Project licensed MIT; releases ship the two exes as separate assets (no zip).
+
 - 2026-11-11 (reference + build): CPU and memory kernel files are compiled with `/clang:-falign-loops=64`
   so hot-loop placement can't swing results between builds (sieve −33 %, see §10). README.md added
   (build, run, results format, reference numbers); the elevated run is the reference baseline.

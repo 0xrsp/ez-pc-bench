@@ -1,4 +1,6 @@
-// GUI entry: Win32 window + D3D11 swapchain + Dear ImGui loop, throttled while benchmarks run.
+// GUI entry: Win32 window + D3D11 swapchain + Dear ImGui loop, throttled while benchmarks run. The compare
+// window is a second top-level window with its own ImGui context and swapchain on the same device.
+#include "app/compare_ui.h"
 #include "app/settings.h"
 #include "app/theme.h"
 #include "app/ui.h"
@@ -11,12 +13,13 @@
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
 #include <windows.h>
+#include <shellapi.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <dwmapi.h>
 #include <wchar.h>
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND, UINT, WPARAM, LPARAM, ImGuiIO&);
 
 struct Gfx {
     ID3D11Device* device;
@@ -29,6 +32,23 @@ struct Gfx {
 static Gfx s_gfx;
 static f32 s_dpi_scale = 1.0f;
 static bool s_dpi_changed = false;
+
+// Each window has its own ImGui context (and font atlas). g_fonts is swapped to the drawing window's fonts.
+static ImGuiContext* s_main_ctx;
+static ImGuiIO* s_main_io;
+static ThemeFonts s_main_fonts;
+
+struct CompareWin {
+    HWND hwnd;
+    IDXGISwapChain* swapchain;
+    ID3D11RenderTargetView* rtv;
+    ImGuiContext* ctx;
+    ImGuiIO* io;
+    ThemeFonts fonts;
+    UINT resize_w, resize_h;
+    bool close, occluded, restyle;
+};
+static CompareWin s_cmp;
 
 static void create_rtv() {
     ID3D11Texture2D* back = nullptr;
@@ -118,7 +138,8 @@ static void destroy_device() {
 }
 
 static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
+    // Explicit io: messages can arrive while the compare context is current (e.g. its file dialog's modal loop).
+    if (s_main_io && ImGui_ImplWin32_WndProcHandlerEx(hwnd, msg, wp, lp, *s_main_io)) return true;
     switch (msg) {
         case WM_SIZE:
             if (wp != SIZE_MINIMIZED) { s_gfx.resize_w = LOWORD(lp); s_gfx.resize_h = HIWORD(lp); }
@@ -156,6 +177,164 @@ static void style_title_bar(HWND hwnd) {
     const COLORREF caption = bg_colorref(), text = dark ? RGB(0xE2, 0xE2, 0xE9) : RGB(0x19, 0x1C, 0x20);
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
+}
+
+// ---- compare window ------------------------------------------------------------------------------
+
+static LRESULT WINAPI cmp_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (s_cmp.io && ImGui_ImplWin32_WndProcHandlerEx(hwnd, msg, wp, lp, *s_cmp.io)) return true;
+    switch (msg) {
+        case WM_SIZE:
+            if (wp != SIZE_MINIMIZED) { s_cmp.resize_w = LOWORD(lp); s_cmp.resize_h = HIWORD(lp); }
+            return 0;
+        case WM_DROPFILES: {
+            const HDROP drop = (HDROP)wp;
+            const UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            for (UINT i = 0; i < n; ++i) {
+                wchar_t path[MAX_PATH];
+                if (DragQueryFileW(drop, i, path, MAX_PATH)) compare_ui_add_path(path);
+            }
+            DragFinish(drop);
+            return 0;
+        }
+        case WM_SETTINGCHANGE:
+            if (lp && wcscmp((const wchar_t*)lp, L"ImmersiveColorSet") == 0) theme_system_changed();
+            break;
+        case WM_DPICHANGED: {
+            const RECT* r = (const RECT*)lp;
+            SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
+        case WM_SYSCOMMAND:
+            if ((wp & 0xfff0) == SC_KEYMENU) return 0;
+            break;
+        case WM_CLOSE:
+            s_cmp.close = true;     // torn down by the main loop, outside any ImGui frame
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static bool create_cmp_swapchain() {
+    IDXGIDevice* dxgi_dev = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    IDXGIFactory* factory = nullptr;
+    bool ok = SUCCEEDED(s_gfx.device->QueryInterface(IID_PPV_ARGS(&dxgi_dev))) &&
+              SUCCEEDED(dxgi_dev->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetParent(IID_PPV_ARGS(&factory)));
+    if (ok) {
+        DXGI_SWAP_CHAIN_DESC sd = {};
+        sd.BufferCount = 2;
+        sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.OutputWindow = s_cmp.hwnd;
+        sd.SampleDesc.Count = 1;
+        sd.Windowed = TRUE;
+        sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        ok = SUCCEEDED(factory->CreateSwapChain(s_gfx.device, &sd, &s_cmp.swapchain));
+    }
+    if (factory) factory->Release();
+    if (adapter) adapter->Release();
+    if (dxgi_dev) dxgi_dev->Release();
+    if (!ok) return false;
+    ID3D11Texture2D* back = nullptr;
+    s_cmp.swapchain->GetBuffer(0, IID_PPV_ARGS(&back));
+    s_gfx.device->CreateRenderTargetView(back, nullptr, &s_cmp.rtv);
+    back->Release();
+    return true;
+}
+
+static void compare_close() {
+    if (!s_cmp.hwnd) return;
+    if (s_cmp.ctx) {
+        ImGui::SetCurrentContext(s_cmp.ctx);
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext(s_cmp.ctx);
+        ImGui::SetCurrentContext(s_main_ctx);
+    }
+    if (s_cmp.rtv) s_cmp.rtv->Release();
+    if (s_cmp.swapchain) s_cmp.swapchain->Release();
+    const HWND hwnd = s_cmp.hwnd;
+    s_cmp = {};
+    DestroyWindow(hwnd);
+}
+
+static void compare_open(HINSTANCE inst) {
+    if (s_cmp.hwnd) {
+        if (IsIconic(s_cmp.hwnd)) ShowWindow(s_cmp.hwnd, SW_RESTORE);
+        SetForegroundWindow(s_cmp.hwnd);
+        return;
+    }
+    static bool registered;
+    if (!registered) {
+        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, cmp_wnd_proc, 0, 0, inst, nullptr, LoadCursorW(nullptr, IDC_ARROW),
+                           CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench_compare", nullptr };
+        registered = RegisterClassExW(&wc) != 0;
+    }
+    RECT work = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    int w = (int)(1360 * s_dpi_scale), h = (int)(820 * s_dpi_scale);
+    if (w > (work.right - work.left) * 9 / 10) w = (work.right - work.left) * 9 / 10;
+    if (h > (work.bottom - work.top) * 9 / 10) h = (work.bottom - work.top) * 9 / 10;
+    s_cmp.hwnd = CreateWindowW(L"ezpcbench_compare", L"ez-pc-bench - Compare", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+                               CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
+    if (!s_cmp.hwnd || !create_cmp_swapchain()) { compare_close(); return; }
+    style_title_bar(s_cmp.hwnd);
+    // Accept files dropped from a non-elevated Explorer (UIPI blocks these messages by default).
+    DragAcceptFiles(s_cmp.hwnd, TRUE);
+    ChangeWindowMessageFilterEx(s_cmp.hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(s_cmp.hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(s_cmp.hwnd, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
+
+    s_cmp.ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(s_cmp.ctx);
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr;
+    ui_apply_style(s_dpi_scale);
+    ImGui_ImplWin32_Init(s_cmp.hwnd);
+    ImGui_ImplDX11_Init(s_gfx.device, s_gfx.ctx);
+    theme_load_fonts();
+    s_cmp.fonts = g_fonts;
+    s_cmp.io = &io;
+    g_fonts = s_main_fonts;
+    ImGui::SetCurrentContext(s_main_ctx);
+
+    compare_ui_on_open();
+    ShowWindow(s_cmp.hwnd, SW_SHOW);
+}
+
+// One frame of the compare window. `vsync`: present with sync interval 1 (when the main window didn't).
+static void compare_frame(bool vsync) {
+    if (s_cmp.resize_w && s_cmp.resize_h) {
+        if (s_cmp.rtv) { s_cmp.rtv->Release(); s_cmp.rtv = nullptr; }
+        s_cmp.swapchain->ResizeBuffers(0, s_cmp.resize_w, s_cmp.resize_h, DXGI_FORMAT_UNKNOWN, 0);
+        s_cmp.resize_w = s_cmp.resize_h = 0;
+        ID3D11Texture2D* back = nullptr;
+        s_cmp.swapchain->GetBuffer(0, IID_PPV_ARGS(&back));
+        s_gfx.device->CreateRenderTargetView(back, nullptr, &s_cmp.rtv);
+        back->Release();
+    }
+    ImGui::SetCurrentContext(s_cmp.ctx);
+    g_fonts = s_cmp.fonts;
+    if (s_cmp.restyle) {
+        ui_apply_style(s_dpi_scale);
+        style_title_bar(s_cmp.hwnd);
+        s_cmp.restyle = false;
+    }
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    compare_ui_draw();
+    ImGui::Render();
+    f32 clear[4] = { 0, 0, 0, 1 };
+    theme_bg_rgb(clear);
+    s_gfx.ctx->OMSetRenderTargets(1, &s_cmp.rtv, nullptr);
+    s_gfx.ctx->ClearRenderTargetView(s_cmp.rtv, clear);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    s_cmp.occluded = s_cmp.swapchain->Present(vsync ? 1 : 0, 0) == DXGI_STATUS_OCCLUDED;
+    g_fonts = s_main_fonts;
+    ImGui::SetCurrentContext(s_main_ctx);
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
@@ -198,7 +377,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     UpdateWindow(hwnd);
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    s_main_ctx = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -206,6 +385,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(s_gfx.device, s_gfx.ctx);
     theme_load_fonts();
+    s_main_fonts = g_fonts;
+    s_main_io = &io;
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
@@ -217,6 +398,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             ui_select_only(ids);
         }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
+        // --compare [files...]: open the compare window with these result files.
+        int argc = 0;
+        if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+            for (int i = 1; i < argc; ++i) {
+                if (wcscmp(argv[i], L"--compare") != 0) continue;
+                for (int k = i + 1; k < argc && wcsncmp(argv[k], L"--", 2) != 0; ++k) compare_ui_add_path(argv[k]);
+                compare_open(inst);
+            }
+            LocalFree(argv);
+        }
     }
 
     // Frame pacing: ~15 FPS while a run is active (stay out of the benchmarks' way),
@@ -232,29 +423,37 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             last_input = timer_now();
         }
         if (done || ui_wants_quit()) break;
+        if (s_cmp.close) compare_close();
 
         const f64 now = timer_now();
         const bool running = runner_is_running();
         const f64 interval = running ? 1.0 / 15.0 : (now - last_input < 1.0 ? 0.0 : 0.25);
         const bool occluded = s_gfx.occluded && s_gfx.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED;
-        if (now - last_frame < interval || occluded) {
-            const f64 wait = occluded ? 0.1 : interval - (now - last_frame);
+        const bool cmp_visible = s_cmp.hwnd &&
+            !(s_cmp.occluded && s_cmp.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED);
+        if (now - last_frame < interval || (occluded && !cmp_visible)) {
+            const f64 wait = occluded && !cmp_visible ? 0.1 : interval - (now - last_frame);
             MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(wait * 1000.0) + 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             continue;
         }
-        s_gfx.occluded = false;
         last_frame = now;
+        if (s_dpi_changed || theme_take_change()) {
+            ui_apply_style(s_dpi_scale);
+            style_title_bar(hwnd);
+            s_dpi_changed = false;
+            s_cmp.restyle = true;
+        }
+        if (occluded) {     // main window minimized / hidden: only the compare window draws
+            compare_frame(true);
+            continue;
+        }
+        s_gfx.occluded = false;
 
         if (s_gfx.resize_w && s_gfx.resize_h) {
             release_rtv();
             s_gfx.swapchain->ResizeBuffers(0, s_gfx.resize_w, s_gfx.resize_h, DXGI_FORMAT_UNKNOWN, 0);
             s_gfx.resize_w = s_gfx.resize_h = 0;
             create_rtv();
-        }
-        if (s_dpi_changed || theme_take_change()) {
-            ui_apply_style(s_dpi_scale);
-            style_title_bar(hwnd);
-            s_dpi_changed = false;
         }
 
         ImGui_ImplDX11_NewFrame();
@@ -270,11 +469,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         s_gfx.ctx->ClearRenderTargetView(s_gfx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         s_gfx.occluded = s_gfx.swapchain->Present(1, 0) == DXGI_STATUS_OCCLUDED;
+
+        if (ui_take_compare_request()) compare_open(inst);
+        if (cmp_visible) compare_frame(false);
     }
 
     if (runner_is_running()) runner_cancel();
     runner_wait();
     ui_shutdown();
+    compare_close();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

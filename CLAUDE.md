@@ -10,6 +10,11 @@ keep it updated (decision log, open questions, measured facts).
 - Commit messages: short one-line subject. Omit the body/description unless it's genuinely needed; if
   needed, keep it to a few lines.
 
+## Releases
+
+- GitHub releases (`gh release create vX.Y.Z`): upload `ez-pc-bench.exe` and `ez-pc-bench-cli.exe` as
+  separate assets so each can be downloaded on its own. No zip. Build fresh from the tagged commit first.
+
 ## Code style
 
 - C-style C++: procedural, data-oriented. Plain structs + free functions, flat arrays indexed by id,
@@ -32,7 +37,8 @@ keep it updated (decision log, open questions, measured facts).
 - Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --out out.toon.txt` (`--list` shows ids,
   `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
-  suite), `--only <ids>` (implies `--dev`), `--light` / `--dark`. Keep the build warning-free.
+  suite), `--only <ids>` (implies `--dev`), `--light` / `--dark`, `--compare [files...]` (opens the compare
+  window with those results). Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.

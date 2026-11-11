@@ -48,6 +48,11 @@ struct ToonLine {
     const char* value_end;
 };
 
+// Reads a whole file (up to 64 MiB) and points `r` at it, past a UTF-8 BOM. Returns the buffer to pass to
+// toon_free_file, or null with `err` set.
+char* toon_read_file(const wchar_t* path, ToonReader* r, char* err, u32 err_size);
+void toon_free_file(char* buf);
+
 // Next non-blank line without its indentation and line break. False at the end of the input.
 bool toon_next_line(ToonReader* r, const char** s, const char** e, u32* indent);
 // Parses a key line. False if the line has no `key:` part.

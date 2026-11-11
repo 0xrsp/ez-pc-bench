@@ -1,4 +1,5 @@
 #include "core/toon.h"
+#include <windows.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -107,6 +108,34 @@ void toon_cell_bool(ToonRow* r, bool v) {
 void toon_row_end(ToonRow* r) { fputc('\n', r->f); }
 
 // ---- reader -------------------------------------------------------------------------------------
+
+char* toon_read_file(const wchar_t* path, ToonReader* r, char* err, u32 err_size) {
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { snprintf(err, err_size, "cannot open file (error %lu)", GetLastError()); return nullptr; }
+    LARGE_INTEGER size = {};
+    GetFileSizeEx(f, &size);
+    if (size.QuadPart <= 0 || size.QuadPart > 64 * (i64)MiB) {
+        CloseHandle(f);
+        snprintf(err, err_size, "unexpected file size");
+        return nullptr;
+    }
+    char* buf = (char*)VirtualAlloc(nullptr, (SIZE_T)size.QuadPart + 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    DWORD got = 0;
+    const bool read = buf && ReadFile(f, buf, (DWORD)size.QuadPart, &got, nullptr) && got == (DWORD)size.QuadPart;
+    CloseHandle(f);
+    if (!read) {
+        toon_free_file(buf);
+        snprintf(err, err_size, "read failed");
+        return nullptr;
+    }
+    *r = { buf, buf + got, 0 };
+    if (got >= 3 && !memcmp(buf, "\xEF\xBB\xBF", 3)) r->p += 3;
+    return buf;
+}
+
+void toon_free_file(char* buf) {
+    if (buf) VirtualFree(buf, 0, MEM_RELEASE);
+}
 
 bool toon_next_line(ToonReader* r, const char** s, const char** e, u32* indent_out) {
     while (r->p < r->end) {

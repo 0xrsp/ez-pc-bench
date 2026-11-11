@@ -99,6 +99,7 @@ add_library(ezbench_core STATIC
     src/core/runner.cpp
     src/core/results.cpp
     src/core/baseline.cpp
+    src/core/compare.cpp
     src/core/toon.cpp
     src/core/sysinfo.cpp
     src/core/perf.cpp
@@ -134,6 +135,7 @@ set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cp
 add_executable(ez-pc-bench WIN32
     src/app/main_gui.cpp
     src/app/ui.cpp
+    src/app/compare_ui.cpp
     src/app/settings.cpp
     src/app/theme.cpp
     src/app/gui.rc)

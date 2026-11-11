@@ -22,7 +22,8 @@ that run the same tests.
 
 ## Download
 
-Get `ez-pc-bench.zip` from [Releases](https://github.com/0xrsp/ez-pc-bench/releases). You need Windows
+Get `ez-pc-bench.exe` (GUI) and/or `ez-pc-bench-cli.exe` from
+[Releases](https://github.com/0xrsp/ez-pc-bench/releases). You need Windows
 10/11 x64, a CPU with AVX2, and a GPU driver with Vulkan support (it installs `vulkan-1.dll`). The GPU
 tests need D3D12 and Vulkan 1.3.
 
@@ -47,8 +48,10 @@ vcvars is needed.
 **GUI:**
 1. Pick the GPU and disk(s) at the top.
 2. Tick the tests you want and press **Run**.
-3. **Save results** writes a `.toon.txt` file. **Compare...** loads a saved file and shows the change
-   for each metric.
+3. **Save results** writes a `.toon.txt` file.
+4. **Compare...** opens the compare window. Add saved results (or drop files onto the window) and the
+   current run to see them side by side: system info, raw values and the change vs a reference run.
+   **Copy table** puts it on the clipboard for spreadsheets.
 
 The app asks for admin rights at start. They are optional; without them a few tweaks are skipped.
 
@@ -74,7 +77,8 @@ Results are plain [TOON](https://github.com/toon-format/toon) text files.
 
 A complete run on a Ryzen 7 250 / RTX 5060 Laptop / Samsung NVMe laptop (AC, Best performance, admin) is
 in [docs/reference/2026-11-11_ac_best-performance_admin.toon.txt](docs/reference/2026-11-11_ac_best-performance_admin.toon.txt).
-Load it with **Compare...** to see how your machine differs.
+Add it in the compare window to see how your machine differs.
 
-Design notes and measurements: [docs/PLAN.md](docs/PLAN.md). Third-party: Dear ImGui (MIT), Inter font
-(SIL OFL 1.1).
+Design notes and measurements: [docs/PLAN.md](docs/PLAN.md).
+
+MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1).
