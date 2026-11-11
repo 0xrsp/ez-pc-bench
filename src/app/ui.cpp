@@ -9,6 +9,7 @@
 #include "core/timer.h"
 #include "imgui.h"
 #include <windows.h>
+#include <shellapi.h>
 #include <commdlg.h>
 #include <objbase.h>
 #include <stdarg.h>
@@ -158,7 +159,7 @@ static const ToolButton s_tool_buttons[] = {
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
 static bool system_header_row() {
     const f32 h = ImGui::GetFrameHeight(), gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
-    const f32 lead = ImGui::GetStyle().ItemSpacing.x;       // space between the header and the first button
+    const f32 lead = ImGui::GetFontSize() * 2.0f;           // space between the header and the first button
     f32 buttons_w = lead;
     for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i)
         buttons_w += theme_icon_button_width(s_tool_buttons[i].label, h) + (i ? gap : 0.0f);
@@ -382,6 +383,13 @@ static void draw_toolbar() {
     ImGui::BeginDisabled(!have_results);
     if (theme_button("Save results...")) s_save.open_request = true;
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_button("Results folder")) {
+        wchar_t dir[MAX_PATH];
+        ui_results_dir(dir);        // created if it doesn't exist yet
+        ShellExecuteW(nullptr, L"open", dir, nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    theme_help("Opens the folder where saved results (.toon.txt) go, next to the exe, in Explorer.");
     ImGui::SameLine();
     if (theme_button("Compare...")) ui_request_tool(TOOL_COMPARE);
 
