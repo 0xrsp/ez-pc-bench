@@ -125,6 +125,10 @@ target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
     d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization)
+# Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
+# linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
+set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
+    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
 
 # GUI
 add_executable(ez-pc-bench WIN32

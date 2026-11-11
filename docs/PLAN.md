@@ -430,34 +430,50 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
 - **Frame pacing stats**: 0.1% low needs enough frames — at least ~5000 frames per test; extend the
   duration automatically if FPS is low.
 
-## 10. Reference run (2026-11-11, AC + "Best performance", default settings, not elevated)
+## 10. Reference run (2026-11-11, AC + "Best performance", default settings, elevated)
 
-Full default selection, 3 s phases, 53 tests, 437 s, all done. Raw data (use as the GUI "Compare..."
-baseline): [docs/reference/2026-11-11_ac_best-performance.toon.txt](reference/2026-11-11_ac_best-performance.toon.txt)
-(converted from the original JSON export; disk metrics renamed to the per-drive form `C: Read`).
+Full default selection, 3 s phases, 53 tests, all done, run elevated (`cmd /c ... --out` via RunAs). Raw
+data (use as the GUI "Compare..." baseline):
+[docs/reference/2026-11-11_ac_best-performance_admin.toon.txt](reference/2026-11-11_ac_best-performance_admin.toon.txt).
+`cpu.work.sieve` in that file comes from a re-run after the loop-alignment fix below; the other 52 tests are
+the original run. The earlier non-elevated run is kept as
+[2026-11-11_ac_best-performance.toon.txt](reference/2026-11-11_ac_best-performance.toon.txt) (converted from
+JSON); elevated vs not differs only within noise except disk (file in the drive root vs a subfolder).
 Numbers are single thread → multi-thread unless noted.
 
 | Area | Result | Sanity check |
 |---|---|---|
-| Int ALU / imul | 16.4 → 138 / 4.7 → 38 Gops/s | 3.4 ops/clk @ ~4.8 GHz; 1 imul/clk |
-| FP32 FMA scalar / AVX2 / AVX-512 | 19.0 → 150 / 155 → 1212 / 155 → 1232 GFLOPS | 32 FLOP/clk @ 4.83 GHz ST, ~4.7 GHz all-core |
-| FP64 AVX2 / AVX-512 | 77 → 605 / 77 → 615 GFLOPS | half of FP32 |
-| SGEMM 1920² | 122 → 872 GFLOPS | 79 % / 72 % of FMA peak |
-| SHA-256 / AES-128 (VAES-512) | 2.4 → 35 / 28 → 217 GB/s | |
-| Sort 16M / sieve 1e9 | 16.3 → 104 Melem/s / 2808 → 18790 Mnum/s | |
-| Core-to-core | SMT siblings 13–16 ns, cross-core 22–33 ns (avg 23.5) | single CCX |
-| FMA scaling 1/2/4/8/16 T | 154 / 306 / 606 / 1181 / 1207 GFLOPS | linear per core, SMT ~+2 % |
-| DRAM read / write / NT write / copy / triad | 47 → 60 / 26 → 26 / 49 → 58 / 29 → 36 / 32 → 41 GB/s | read = 67 % of 89.6 peak |
-| Latency L1 / L2 / L3 / DRAM | 0.9 / 3.0 / 9.5–20 / 98–139 ns (4 KiB pages) | 4 / 14 clk |
-| Read sweep L1 / L2 / L3 / DRAM | 291 / ~150 / ~125 / ~45 GB/s ST; 2133 / ~1115 / — / 60 GB/s MT | 64 B/clk L1 |
-| Disk SEQ1M Q8T1 / Q1T1 | 7049 / 5861, 1338 / 2060 MB/s (read / write) | Q1T1 read after the Q8 writes (~87 GB written) was lower than on battery (2419) — SSD busy flushing |
-| Disk RND4K Q32T1 / Q1T1 | 412 / 704, 59.7 / 123 MB/s | 2x the battery run (CPU-bound submission) |
-| GPU FP32 / FP16 / INT32 | VK 14.6 / 15.9 / 9.2, D3D12 14.5 / 17.4 / 9.1 T(FL)OPS | |
-| GPU VRAM read / LDS / PCIe | 368 GB/s / 8.5–8.6 TB/s / 14.1 GB/s each way (both APIs) | 96 % of ~384 GB/s; Gen4 x8 |
-| GPU tri / fill / texfill | 2.58 Gtri/s / 104.6 Gpix/s / 176 Gtex/s (APIs within 1–2 %) | |
-| GPU draw calls | VK 29.7 M/s, D3D12 63.7 M/s | driver CPU cost per draw |
-| GPU scene / sprites | VK 7351 / D3D12 6910 fps, 78 Msprites/s both | |
-| GPU blit / clear | VK 731 / 2387, D3D12 661 / 3048 GB/s | L2-resident targets, fast clears |
+| Int ALU / imul | 17.7 → 140 / 4.8 → 39 Gops/s | 3.6 ops/clk @ ~4.9 GHz; 1 imul/clk |
+| FP32 FMA scalar / AVX2 / AVX-512 | 19.4 → 153 / 155 → 1213 / 155 → 1239 GFLOPS | 32 FLOP/clk @ 4.84 GHz ST, ~4.7 GHz all-core |
+| FP64 AVX2 / AVX-512 | 77 → 606 / 78 → 613 GFLOPS | half of FP32 |
+| SGEMM 1920² | 134 → 879 GFLOPS | 86 % / 72 % of FMA peak |
+| SHA-256 / AES-128 (VAES-512) | 2.4 → 35.5 / 29.1 → 220 GB/s | |
+| Sort 16M / sieve 1e9 | 16.8 → 107 Melem/s / 2892 → 19134 Mnum/s | |
+| Core-to-core | min 12.7 (SMT siblings) / avg 23.7 / max 31.3 ns | single CCX |
+| FMA scaling 1/2/4/8/16 T | 156 / 311 / 623 / 1206 / 1209 GFLOPS | linear per core, SMT ~0 |
+| DRAM read / write / NT write / copy / triad | 47 → 60 / 27 → 26 / 52 → 58 / 30 → 35 / 32 → 41 GB/s | read = 67 % of 89.6 peak |
+| Latency L1 / L2 / L3 / DRAM | 0.8 / 2.9 / 9.2–33 / 92–124 ns (4 KiB pages) | 4 / 14 clk |
+| Disk SEQ1M Q8T1 / Q1T1 | 7025 / 5889, 2811 / 2344 MB/s (read / write) | |
+| Disk RND4K Q32T1 / Q1T1 | 427 / 734 (104K / 179K IOPS), 60.5 / 121 MB/s (68 / 34 µs) | |
+| GPU FP32 / FP16 / INT32 | VK 14.7 / 16.0 / 9.2, D3D12 14.5 / 17.5 / 9.2 T(FL)OPS | |
+| GPU VRAM read / write / copy | VK 368 / 347 / 338, D3D12 369 / 368 / 338 GB/s | 96 % of ~384 GB/s |
+| GPU LDS / PCIe | 8.6 / 8.5 TB/s / 14.1–14.2 GB/s each way | Gen4 x8 |
+| GPU tri / fill / texfill | VK 2.65 Gtri/s / 107 Gpix/s / 180 Gtex/s, D3D12 2.56 / 104 / 174 | |
+| GPU draw calls | VK 31.6 M/s, D3D12 65.5 M/s | driver CPU cost per draw |
+| GPU scene / sprites | VK 7490 (1 % low 3674) / D3D12 6826 fps; 80.0 / 77.9 Msprites/s | |
+| GPU blit / clear | VK 720 / 2436, D3D12 668 / 3076 GB/s | L2-resident targets, fast clears |
+
+**Sieve / code-placement finding:** after the TOON/multi-drive commit the sieve dropped to 1847 → 13407
+Mnum/s (−33 %) although `cpu_bench.cpp.obj` disassembled identically to the old build; only the hot
+loop's address in the linked exe changed. Compiling the CPU and memory kernel files with
+`/clang:-falign-loops=64` (one Zen 4 op-cache line) restored 2870–2892 → 18941–19134; SGEMM, sort and the
+rest were unchanged within noise. Lesson: tight loops can move ±30 % between unrelated builds — keep
+loop alignment on for kernel files and compare builds, not just source.
+
+**Background-load noise:** a re-run of the memory suite with a game client (Roblox) open in the background
+gave L3-range latency of 43–106 ns and 2–16 MiB sweep reads of 24–77 GB/s, swinging 2–3x between runs
+(clean run: 9–33 ns, ~125 GB/s), while its CPU usage showed only ~1 %. L3 and DRAM are shared, so close
+other apps (especially anything rendering) before memory runs.
 
 With the APIs run back-to-back after warm-up, Vulkan and D3D12 agree within ~2 % except FP16 (+9 % D3D12),
 draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). A full run writes ~130 GB to the
@@ -470,6 +486,9 @@ None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
 
+- 2026-11-11 (reference + build): CPU and memory kernel files are compiled with `/clang:-falign-loops=64`
+  so hot-loop placement can't swing results between builds (sieve −33 %, see §10). README.md added
+  (build, run, results format, reference numbers); the elevated run is the reference baseline.
 - 2026-11-11 (results format + targets):
   - JSON and CSV export removed; the only results file is TOON text, `*.toon.txt`, written and read by our
     own ~350-line subset (`core/toon.*`): `key: value`, nested objects by 2-space indent, tabular arrays
