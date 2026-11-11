@@ -4,6 +4,9 @@
 #include <dxgi1_6.h>
 #include <powrprof.h>
 #include <powersetting.h>
+#include <winioctl.h>
+#include <shobjidl.h>
+#include <propsys.h>
 #include <intrin.h>
 #include <stdio.h>
 #include <string.h>
@@ -270,6 +273,172 @@ bool power_is_best_performance(const PowerInfo* p) {
     return p->mode == POWER_MODE_PERFORMANCE || p->scheme_high_perf;
 }
 
+// ---- Drives --------------------------------------------------------------------
+
+#ifndef PERSISTENT_VOLUME_STATE_DEV_VOLUME
+#define PERSISTENT_VOLUME_STATE_DEV_VOLUME 0x00002000
+#endif
+
+static const char* bus_name(u32 t) {
+    switch (t) {
+        case BusTypeScsi: return "SCSI";        case BusTypeAtapi: return "ATAPI";
+        case BusTypeAta: return "ATA";          case BusType1394: return "1394";
+        case BusTypeUsb: return "USB";          case BusTypeRAID: return "RAID";
+        case BusTypeiScsi: return "iSCSI";      case BusTypeSas: return "SAS";
+        case BusTypeSata: return "SATA";        case BusTypeSd: return "SD";
+        case BusTypeMmc: return "MMC";          case BusTypeVirtual: return "Virtual";
+        case BusTypeFileBackedVirtual: return "File-backed virtual";
+        case BusTypeSpaces: return "Storage Spaces";
+        case BusTypeNvme: return "NVMe";        case BusTypeSCM: return "SCM";
+        case BusTypeUfs: return "UFS";          default: return "Unknown";
+    }
+}
+
+static void storage_query(HANDLE vol, DriveInfo* d) {
+    STORAGE_PROPERTY_QUERY q = {};
+    q.PropertyId = StorageDeviceProperty;
+    q.QueryType = PropertyStandardQuery;
+    u8 buf[1024] = {};
+    DWORD got = 0;
+    if (DeviceIoControl(vol, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf, sizeof(buf), &got, nullptr) &&
+        got >= sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
+        const STORAGE_DEVICE_DESCRIPTOR* dd = (const STORAGE_DEVICE_DESCRIPTOR*)buf;
+        char vendor[32] = {}, product[48] = {};    // space padded in the descriptor
+        if (dd->VendorIdOffset && dd->VendorIdOffset < got) strncpy_s(vendor, (const char*)buf + dd->VendorIdOffset, _TRUNCATE);
+        if (dd->ProductIdOffset && dd->ProductIdOffset < got) strncpy_s(product, (const char*)buf + dd->ProductIdOffset, _TRUNCATE);
+        trim(vendor);
+        trim(product);
+        snprintf(d->model, sizeof(d->model), "%s%s%s", vendor, vendor[0] ? " " : "", product);
+        d->bus_type = (u32)dd->BusType;
+        d->virtual_disk = dd->BusType == BusTypeVirtual || dd->BusType == BusTypeFileBackedVirtual;
+    }
+    strncpy_s(d->bus, bus_name(d->bus_type), _TRUNCATE);
+
+    q.PropertyId = StorageAccessAlignmentProperty;
+    STORAGE_ACCESS_ALIGNMENT_DESCRIPTOR al = {};
+    if (DeviceIoControl(vol, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), &al, sizeof(al), &got, nullptr) &&
+        got >= offsetof(STORAGE_ACCESS_ALIGNMENT_DESCRIPTOR, BytesPerPhysicalSector) + sizeof(DWORD)) {
+        d->logical_sector = al.BytesPerLogicalSector;
+        d->physical_sector = al.BytesPerPhysicalSector;
+    }
+
+}
+
+// Dev Drive flag. Needs a file system handle; the volume root directory works without admin.
+static void dev_drive_query(const wchar_t* root, DriveInfo* d) {
+    HANDLE h = CreateFileW(root, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    FILE_FS_PERSISTENT_VOLUME_INFORMATION in = {}, out = {};
+    in.FlagMask = PERSISTENT_VOLUME_STATE_DEV_VOLUME;
+    in.Version = 1;
+    DWORD got = 0;
+    if (DeviceIoControl(h, FSCTL_QUERY_PERSISTENT_VOLUME_STATE, &in, sizeof(in), &out, sizeof(out), &got, nullptr))
+        d->dev_drive = (out.VolumeFlags & PERSISTENT_VOLUME_STATE_DEV_VOLUME) != 0;
+    CloseHandle(h);
+}
+
+bool drive_query(wchar_t letter, DriveInfo* d) {
+    memset(d, 0, sizeof(*d));
+    d->letter = (char)letter;
+    d->bitlocker = -1;
+    const wchar_t root[4] = { letter, L':', L'\\', 0 };
+    const UINT type = GetDriveTypeW(root);
+    if (type == DRIVE_NO_ROOT_DIR || type == DRIVE_UNKNOWN) return false;
+
+    wchar_t fs[16] = {};
+    if (GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, nullptr, fs, ARRAY_COUNT(fs)))
+        WideCharToMultiByte(CP_UTF8, 0, fs, -1, d->fs, sizeof(d->fs), nullptr, nullptr);
+    d->refs = strcmp(d->fs, "ReFS") == 0;
+    ULARGE_INTEGER free_user, total, free_all;
+    if (GetDiskFreeSpaceExW(root, &free_user, &total, &free_all)) {
+        d->total_bytes = total.QuadPart;
+        d->free_bytes = free_user.QuadPart;
+    }
+
+    // Zero access rights are enough for storage property queries, no admin needed.
+    const wchar_t dev[7] = { L'\\', L'\\', L'.', L'\\', letter, L':', 0 };
+    HANDLE vol = CreateFileW(dev, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                             OPEN_EXISTING, 0, nullptr);
+    if (vol == INVALID_HANDLE_VALUE)
+        vol = CreateFileW(dev, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (vol != INVALID_HANDLE_VALUE) {
+        storage_query(vol, d);
+        CloseHandle(vol);
+    } else {
+        strncpy_s(d->bus, "Unknown", _TRUNCATE);
+    }
+    dev_drive_query(root, d);
+    return true;
+}
+
+// Shell property System.Volume.BitLockerProtection: 1 = on, 2 = off, 3 = encrypting, 4 = decrypting,
+// 5 = on (locked), 6 = suspended. Works without admin. Caller has COM initialized.
+static void bitlocker_query(DriveInfo* d) {
+    PROPERTYKEY key;
+    if (FAILED(PSGetPropertyKeyFromName(L"System.Volume.BitLockerProtection", &key))) return;
+    const wchar_t root[4] = { (wchar_t)d->letter, L':', L'\\', 0 };
+    IShellItem2* item = nullptr;
+    if (FAILED(SHCreateItemFromParsingName(root, nullptr, IID_PPV_ARGS(&item)))) return;
+    PROPVARIANT v;
+    PropVariantInit(&v);
+    if (SUCCEEDED(item->GetProperty(key, &v))) {
+        if (v.vt == VT_I4) d->bitlocker = v.lVal;
+        else if (v.vt == VT_UI4) d->bitlocker = (i32)v.ulVal;
+        else if (v.vt == VT_I2) d->bitlocker = v.iVal;
+        else if (v.vt == VT_UI1) d->bitlocker = v.bVal;
+        d->bitlocker_on = d->bitlocker == 1 || d->bitlocker == 3 || d->bitlocker == 5;
+    }
+    PropVariantClear(&v);
+    item->Release();
+}
+
+static void drives_query(SysInfo* s) {
+    const DWORD mask = GetLogicalDrives();
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    for (u32 i = 0; i < 26 && s->drive_count < ARRAY_COUNT(s->drives); ++i) {
+        if (!(mask & (1u << i))) continue;
+        const wchar_t letter = (wchar_t)(L'A' + i);
+        const wchar_t root[4] = { letter, L':', L'\\', 0 };
+        if (GetDriveTypeW(root) != DRIVE_FIXED) continue;
+        DriveInfo* d = &s->drives[s->drive_count];
+        if (!drive_query(letter, d)) continue;
+        if (SUCCEEDED(co)) bitlocker_query(d);
+        s->drive_count++;
+    }
+    if (SUCCEEDED(co)) CoUninitialize();
+}
+
+const DriveInfo* sysinfo_find_drive(wchar_t letter) {
+    for (u32 i = 0; i < g_sys.drive_count; ++i)
+        if (g_sys.drives[i].letter == (char)letter) return &g_sys.drives[i];
+    return nullptr;
+}
+
+void drive_describe(const DriveInfo* d, char* buf, u32 size) {
+    const char* bl = d->bitlocker < 0 ? "" : d->bitlocker_on ? ", BitLocker on" : ", BitLocker off";
+    snprintf(buf, size, "%s, %s, %s%s, %.0f GiB (%.0f GiB free), sector %u/%u%s", d->model[0] ? d->model : "?", d->bus,
+             d->fs, d->dev_drive ? " Dev Drive" : "", d->total_bytes / (f64)GiB, d->free_bytes / (f64)GiB,
+             d->logical_sector, d->physical_sector, bl);
+}
+
+u32 drive_target_warnings(wchar_t letter, char lines[2][192]) {
+    const DriveInfo* d = sysinfo_find_drive(letter);
+    if (!d) return 0;
+    u32 n = 0;
+    if (d->virtual_disk || d->dev_drive) {
+        const char* kind = d->virtual_disk && d->dev_drive ? "virtual disk (VHD) / Dev Drive"
+                           : d->virtual_disk                ? "virtual disk (VHD)"
+                                                            : "Dev Drive";
+        snprintf(lines[n++], 192, "Disk target %c: is a %s (%s): results include virtualization / file system overhead.",
+                 d->letter, kind, d->fs);
+    }
+    if (d->bitlocker_on)
+        snprintf(lines[n++], 192, "BitLocker is on for disk target %c: (software encryption costs throughput and CPU).",
+                 d->letter);
+    return n;
+}
+
 // ---- OS ----------------------------------------------------------------------
 
 typedef LONG(WINAPI* RtlGetVersionFn)(OSVERSIONINFOW*);
@@ -290,6 +459,7 @@ void sysinfo_init() {
     cpu_topology(&g_sys.cpu);
     ram_query(&g_sys.ram);
     gpu_query(&g_sys);
+    drives_query(&g_sys);
     LoadLibraryW(L"powrprof.dll");
     sysinfo_refresh_power();
     os_query(g_sys.os, sizeof(g_sys.os));
