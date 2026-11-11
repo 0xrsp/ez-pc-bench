@@ -5,6 +5,7 @@
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
 #include "app/temps_ui.h"
+#include "app/system_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/elevation.h"
@@ -55,6 +56,7 @@ static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
     { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 980, 720, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - System details", 1180, 800, system_ui_draw, system_ui_on_open, nullptr, false },
 };
 
 struct ToolWin {
@@ -448,7 +450,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health", L"system" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)

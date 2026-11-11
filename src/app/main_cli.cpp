@@ -7,6 +7,7 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,8 @@ static void print_usage() {
         "  --preset <name>        quick, standard or extended: selection + duration / repeat / disk settings;\n"
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
+        "  --sysinfo [base]       Print the full system report (queries Vulkan / D3D12 on every GPU, which\n"
+        "                         wakes a sleeping laptop GPU); with a path, also write <base>.txt / .toon.txt\n"
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --pause                Wait for Enter before exiting\n");
 }
@@ -151,6 +154,9 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
     const SysInfo* s = &g_sys;
     printf("CPU   %s, %uC/%uT, L2 %u KiB/core, L3 %u KiB\n", s->cpu.brand, s->cpu.cores, s->cpu.threads,
            s->cpu.l2_kib, s->cpu.l3_kib);
+    if (g_cpux.codename[0] || g_cpux.microcode)
+        printf("      %s (%s), microcode 0x%08X, base %u MHz%s\n", g_cpux.codename[0] ? g_cpux.codename : "?",
+               g_cpux.microarch, g_cpux.microcode, g_cpux.base_mhz, g_cpux.hybrid ? ", hybrid" : "");
     printf("RAM   %.1f GiB usable", s->ram.total_bytes / (f64)GiB);
     for (u32 i = 0; i < s->ram.module_count; ++i)
         printf("%s %llu GiB %s-%u", i ? "," : " |", s->ram.modules[i].size_bytes / GiB, s->ram.modules[i].type,
@@ -187,6 +193,20 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
     }
 }
 
+// --sysinfo: full system report on stdout, optionally saved as text + TOON.
+static int print_report(const wchar_t* save_base) {
+    gpu_api_details_query_all();
+    static SysReport rep;
+    static char text[512 * 1024];
+    sysreport_build(&rep);
+    sysreport_text(&rep, text, sizeof(text));
+    fputs(text, stdout);
+    if (!save_base) return 0;
+    if (!sysreport_save(save_base)) { fwprintf(stderr, L"Failed to write %s.txt\n", save_base); return 1; }
+    wprintf(L"\nWrote %s.txt and %s.toon.txt\n", save_base, save_base);
+    return 0;
+}
+
 static void to_utf8(const wchar_t* w, char* out, int size) {
     WideCharToMultiByte(CP_UTF8, 0, w, -1, out, size, nullptr, nullptr);
 }
@@ -212,6 +232,7 @@ int wmain(int argc, wchar_t** argv) {
         if (!wcscmp(a, L"--list")) list = true;
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--elevate")) elevate = true;
+        else if (!wcscmp(a, L"--sysinfo")) return print_report(has_val && argv[i + 1][0] != L'-' ? argv[i + 1] : nullptr);
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];

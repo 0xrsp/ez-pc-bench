@@ -9,6 +9,7 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include "core/timer.h"
 #include "imgui.h"
 #include <windows.h>
@@ -158,6 +159,9 @@ struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const ch
 static const ToolButton s_tool_buttons[] = {
     { TOOL_TEMPS, ICON_THERMOMETER, "Sensors", "Live CPU clock and load per core, GPU clocks / load / VRAM / PCIe "
                                                "link, and CPU, GPU and drive temperatures in their own window." },
+    { TOOL_SYSTEM, ICON_CHIP, "Details", "System details: CPU codename, microcode, caches and core map, chipset, "
+                                          "GPU details, displays, PCI and USB devices, network and audio. Copy or "
+                                          "save the full report." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
     { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
@@ -200,7 +204,9 @@ static void draw_sysinfo() {
     if (!system_header_row()) return;
     ImGui::Indent(ImGui::GetStyle().FramePadding.x);
     const CpuInfo* c = &s->cpu;
-    sys_line("CPU", "%s  (%u cores / %u threads)", c->brand, c->cores, c->threads);
+    sys_line("CPU", "%s  (%u cores / %u threads)%s%s%s%s", c->brand, c->cores, c->threads,
+             g_cpux.codename[0] ? "  \xC2\xB7  " : "", g_cpux.codename, g_cpux.codename[0] && g_cpux.microarch[0] ? ", " : "",
+             g_cpux.codename[0] ? g_cpux.microarch : "");
     sys_line("", "L1D %u KiB, L2 %u KiB per core, L3 %u KiB  \xC2\xB7  %s%s%s%s%s", c->l1d_kib, c->l2_kib, c->l3_kib,
              c->avx2 ? "AVX2 " : "", c->fma ? "FMA " : "", c->avx512f ? "AVX-512 " : "", c->sha ? "SHA " : "",
              c->vaes ? "VAES" : "");

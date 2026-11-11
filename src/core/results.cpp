@@ -3,6 +3,7 @@
 #include "core/monitor.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include "core/toon.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -219,6 +220,7 @@ static void write_system(FILE* f) {
     toon_bool(f, 2, "on_ac", s->power.on_ac);
     toon_str(f, 2, "plan", s->power.scheme_name);
     toon_str(f, 2, "mode", power_mode_name(s->power.mode));
+    sysreport_write_results(f, 1);     // sysinfo_ext.h: CPU / board / GPU / display details
 }
 
 static void write_params(FILE* f, const BenchParams* p) {
