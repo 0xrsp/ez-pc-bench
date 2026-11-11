@@ -1,19 +1,26 @@
-// Sensor sampling thread (see sensors.h). Readings live in s_sensors under an SRW lock; the UI copies them.
+// Sensor sampling thread (see sensors.h). Each sample first reads every source into a Reading without any
+// lock (PDH thermal zones can take 5-20 s under full load), then publishes under s_lock, which the UI only
+// holds for a copy. Log rows are written after publishing, under s_log_lock.
 #include "core/sensors.h"
 #include "core/bench.h"
+#include "core/emi.h"
 #include "core/physdisk.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
+#include "core/toon.h"
 #include <windows.h>
-#include <winternl.h>
-#include <d3dkmthk.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
+const char* const g_channel_group_names[CHG_COUNT] = { "CPU", "CPU per logical processor", "Graphics", "Temperatures", "Power" };
+
+// Published state (s_lock).
 static SensorReading s_sensors[SENSOR_MAX];
 static u32 s_count;
 static f64 s_last_sample;
@@ -21,20 +28,50 @@ static SRWLOCK s_lock = SRWLOCK_INIT;
 static CpuLive s_cpu;
 static GpuLive s_gpus[8];
 static u32 s_gpu_count;
-static HANDLE s_thread, s_stop;
+static PowerLive s_power;
+static SensorChannel s_ch[CH_MAX];
+static u32 s_ch_count, s_seq;
+static f32 s_hist[CH_MAX][CH_HISTORY];      // ring, shared head: every channel gets a point each second
+static u32 s_hist_head, s_hist_count;
+static f64 s_hist_t;
 
-// Sources, owned by the sampling thread.
-struct GpuSource { D3DKMT_HANDLE adapter; u32 sensor; };
-struct DiskSource { HANDLE h; u32 sensor; };
+static HANDLE s_thread, s_stop;
+static u32 s_refs;                          // sensors_start / sensors_stop references (callers' threads)
+static SRWLOCK s_ref_lock = SRWLOCK_INIT;
+static std::atomic<u32> s_period_ms{ 1000 };
+
+// ---- sources (owned by the sampling thread) -------------------------------------------------------------
+
+struct DiskSource { HANDLE h; u32 sensor; u32 number; };
 struct Sources {
     PDH_HQUERY query;
     PDH_HCOUNTER zones;
     bool zones_precise;         // "High Precision Temperature" (0.1 K) vs "Temperature" (K)
-    GpuSource gpus[8];
-    u32 gpu_count;
+    CpuReader cpu;
+    GpuReader gpu;
+    u32 gpu_sensor[8];          // temperature sensor per GPU (UINT32_MAX = none)
     DiskSource disks[PHYSDISK_MAX];
     u32 disk_count;
+    BatteryReader bat;
+    EmiReader emi;
 };
+
+// One sample, read without the lock.
+constexpr u32 ZONE_MAX = 16;
+struct Reading {
+    u32 zone_count;
+    char zone_inst[ZONE_MAX][64];
+    f32 zone_c[ZONE_MAX];
+    bool zone_ok[ZONE_MAX];
+    u32 lps;
+    f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
+    GpuReading gpu[8];
+    bool disks_paused;
+    f32 disk_c[PHYSDISK_MAX], disk_warn[PHYSDISK_MAX];
+    bool disk_ok[PHYSDISK_MAX];
+};
+
+// ---- temperature sensors (s_sensors) ------------------------------------------------------------------
 
 static u32 add_sensor(SensorGroup g, const char* name, f32 warn_c) {
     if (s_count >= SENSOR_MAX) return UINT32_MAX;
@@ -83,29 +120,13 @@ static void open_zones(Sources* src) {
     PdhCollectQueryData(src->query);
 }
 
-static void open_gpus(Sources* src) {
-    for (u32 i = 0; i < g_sys.gpu_count && src->gpu_count < 8; ++i) {
-        const GpuInfo* g = &g_sys.gpus[i];
-        if (g->software) continue;
-        D3DKMT_OPENADAPTERFROMLUID oa = {};
-        oa.AdapterLuid.LowPart = g->luid_low;
-        oa.AdapterLuid.HighPart = g->luid_high;
-        if (D3DKMTOpenAdapterFromLuid(&oa) != 0) continue;
-        D3DKMT_ADAPTER_PERFDATACAPS caps = {};
-        D3DKMT_QUERYADAPTERINFO qi = {};
-        qi.hAdapter = oa.hAdapter;
-        qi.Type = KMTQAITYPE_ADAPTERPERFDATA_CAPS;
-        qi.pPrivateDriverData = &caps;
-        qi.PrivateDriverDataSize = sizeof(caps);
-        const bool have_caps = D3DKMTQueryAdapterInfo(&qi) == 0;
-        const f32 warn = have_caps && caps.TemperatureWarning ? caps.TemperatureWarning / 10.0f : 83.0f;
-        const u32 s = add_sensor(SG_GPU, g->name, warn);
-        if (s == UINT32_MAX) break;
-        src->gpus[src->gpu_count++] = { oa.hAdapter, s };
-    }
+static void open_gpu_sensors(Sources* src) {      // s_lock held
+    for (u32 i = 0; i < 8; ++i) src->gpu_sensor[i] = UINT32_MAX;
+    for (u32 i = 0; i < src->gpu.count; ++i)
+        if (src->gpu.handle[i]) src->gpu_sensor[i] = add_sensor(SG_GPU, g_sys.gpus[i].name, src->gpu.warn_c[i]);
 }
 
-static void open_disks(Sources* src) {
+static void open_disks(Sources* src) {          // s_lock held
     PhysDisk disks[PHYSDISK_MAX];
     const u32 n = physdisk_enum(disks, PHYSDISK_MAX);
     for (u32 i = 0; i < n; ++i) {
@@ -123,13 +144,14 @@ static void open_disks(Sources* src) {
             CloseHandle(h);
             h = physdisk_open(d->number, true);
         }
-        src->disks[src->disk_count++] = { h, s };
+        src->disks[src->disk_count++] = { h, s, d->number };
     }
 }
 
-// ---- sampling -----------------------------------------------------------------------------------------
+// ---- reading (no lock) --------------------------------------------------------------------------------
 
-static void sample_zones(Sources* src) {
+static void read_zones(Sources* src, Reading* rd) {
+    rd->zone_count = 0;
     if (!src->query || PdhCollectQueryData(src->query) != ERROR_SUCCESS) return;
     DWORD size = 0, count = 0;
     if (PdhGetFormattedCounterArrayW(src->zones, PDH_FMT_DOUBLE, &size, &count, nullptr) != (PDH_STATUS)PDH_MORE_DATA || !size) return;
@@ -137,10 +159,187 @@ static void sample_zones(Sources* src) {
     if (size > sizeof(buf)) return;
     PDH_FMT_COUNTERVALUE_ITEM_W* items = (PDH_FMT_COUNTERVALUE_ITEM_W*)buf;
     if (PdhGetFormattedCounterArrayW(src->zones, PDH_FMT_DOUBLE, &size, &count, items) != ERROR_SUCCESS) return;
-    for (DWORD i = 0; i < count; ++i) {
+    for (DWORD i = 0; i < count && rd->zone_count < ZONE_MAX; ++i) {
+        const u32 z = rd->zone_count++;
+        WideCharToMultiByte(CP_UTF8, 0, items[i].szName, -1, rd->zone_inst[z], sizeof(rd->zone_inst[z]), nullptr, nullptr);
+        const f64 v = items[i].FmtValue.doubleValue;
+        rd->zone_c[z] = (f32)(src->zones_precise ? v / 10.0 - 273.15 : v - 273.15);
+        rd->zone_ok[z] = items[i].FmtValue.CStatus == ERROR_SUCCESS && rd->zone_c[z] > -40.0f && rd->zone_c[z] < 150.0f;
+    }
+}
+
+static bool disk_test_running() {
+    const i32 cur = g_run.current.load(std::memory_order_relaxed);
+    return runner_is_running() && cur >= 0 && g_benches[cur].suite == SUITE_DISK;
+}
+
+static void read_all(Sources* src, Reading* rd) {
+    read_zones(src, rd);
+    rd->lps = cpu_reader_sample(&src->cpu, rd->util, rd->mhz);
+    gpu_reader_collect(&src->gpu);
+    for (u32 i = 0; i < src->gpu.count; ++i) gpu_reader_read(&src->gpu, i, &rd->gpu[i], true);
+    rd->disks_paused = disk_test_running();     // keep the last values: don't add commands to the drive under test
+    for (u32 i = 0; i < src->disk_count && !rd->disks_paused; ++i) {
+        rd->disk_c[i] = rd->disk_warn[i] = 0.0f;
+        rd->disk_ok[i] = src->disks[i].h != INVALID_HANDLE_VALUE &&
+                         physdisk_temperature(src->disks[i].h, &rd->disk_c[i], &rd->disk_warn[i]);
+    }
+    battery_read(&src->bat);
+    emi_read(&src->emi);
+}
+
+// ---- channels (s_lock held) ---------------------------------------------------------------------------
+
+// Sets channel `id` (created on first use; channels keep their slot for the life of the thread). The cursor
+// makes the common case (same order every sample) a single compare.
+static u32 s_cursor;
+static void ch_put(const char* id, const char* name, const char* label, const char* unit, ChannelGroup g, u8 flags,
+                   u8 decimals, f32 v) {
+    u32 i = s_cursor < s_ch_count && !strcmp(s_ch[s_cursor].id, id) ? s_cursor : UINT32_MAX;
+    for (u32 k = 0; k < s_ch_count && i == UINT32_MAX; ++k)
+        if (!strcmp(s_ch[k].id, id)) i = k;
+    if (i == UINT32_MAX) {
+        if (s_ch_count >= CH_MAX) return;
+        i = s_ch_count++;
+        SensorChannel* c = &s_ch[i];
+        memset(c, 0, sizeof(*c));
+        snprintf(c->id, sizeof(c->id), "%s", id);
+        c->group = g;
+        c->flags = flags;
+        c->decimals = decimals;
+        c->min = c->max = NAN;
+        for (u32 k = 0; k < CH_HISTORY; ++k) s_hist[i][k] = NAN;
+    }
+    s_cursor = i + 1;
+    SensorChannel* c = &s_ch[i];
+    snprintf(c->name, sizeof(c->name), "%s", name);     // names may improve once a source reports (e.g. zones)
+    snprintf(c->label, sizeof(c->label), "%s", label);
+    snprintf(c->unit, sizeof(c->unit), "%s", unit);
+    c->valid = !isnan(v);
+    c->value = v;
+    if (!c->valid) return;
+    c->min = c->count && c->min <= v ? c->min : v;
+    c->max = c->count && c->max >= v ? c->max : v;
+    c->sum += v;
+    ++c->count;
+}
+
+static const char* DEG_C = "\xC2\xB0""C";
+
+static void publish_cpu(const Reading* rd) {
+    if (!rd->lps) return;
+    CpuLive* c = &s_cpu;
+    c->lps = rd->lps;
+    f64 sum = 0.0, wsum = 0.0, w = 0.0;
+    f32 hi = NAN;
+    for (u32 i = 0; i < rd->lps; ++i) {
+        c->util[i] = rd->util[i];
+        c->mhz[i] = rd->mhz[i];
+        sum += rd->util[i];
+        if (!isnan(rd->mhz[i]) && !(rd->mhz[i] <= hi)) hi = rd->mhz[i];
+        if (rd->util[i] >= 50.0f && !isnan(rd->mhz[i])) {
+            wsum += (f64)rd->mhz[i] * rd->util[i];
+            w += rd->util[i];
+        }
+    }
+    if (!isnan(hi) && !(hi <= c->max_mhz)) c->max_mhz = hi;
+    c->avg_util = (f32)(sum / rd->lps);
+    c->busy_mhz = w > 0.0 ? (f32)(wsum / w) : NAN;
+    if (c->hist_count < SENSOR_HISTORY) c->util_hist[c->hist_count++] = c->avg_util;
+    else {
+        memmove(c->util_hist, c->util_hist + 1, (SENSOR_HISTORY - 1) * sizeof(f32));
+        c->util_hist[SENSOR_HISTORY - 1] = c->avg_util;
+    }
+}
+
+static void cpu_channels() {
+    const CpuLive* c = &s_cpu;
+    const bool ok = c->lps > 0;
+    ch_put("cpu.load", "CPU load", "CPU load", "%", CHG_CPU, 0, 1, ok ? c->avg_util : NAN);
+    ch_put("cpu.busy_mhz", "CPU clock, busy cores", "CPU clock", "MHz", CHG_CPU, 0, 0, ok ? c->busy_mhz : NAN);
+    f32 hi = NAN;
+    for (u32 i = 0; i < c->lps; ++i) hi = !isnan(c->mhz[i]) && !(c->mhz[i] <= hi) ? c->mhz[i] : hi;
+    ch_put("cpu.max_mhz", "CPU clock, fastest core", "CPU max clock", "MHz", CHG_CPU, 0, 0, hi);
+    char id[40], name[96];
+    // Before the first full sample the LP count comes from sysinfo, so the channel order is the same every run.
+    const u32 lps = ok ? c->lps : g_sys.cpu.threads < HW_MAX_LPS ? g_sys.cpu.threads : HW_MAX_LPS;
+    for (u32 i = 0; i < lps; ++i) {
+        snprintf(id, sizeof(id), "lp%u.mhz", i);
+        snprintf(name, sizeof(name), "LP %u clock", i);
+        ch_put(id, name, name, "MHz", CHG_LP, CHF_DETAIL, 0, ok ? c->mhz[i] : NAN);
+        snprintf(id, sizeof(id), "lp%u.load", i);
+        snprintf(name, sizeof(name), "LP %u load", i);
+        ch_put(id, name, name, "%", CHG_LP, CHF_DETAIL, 1, ok ? c->util[i] : NAN);
+    }
+}
+
+static void gpu_channels() {
+    char id[40], name[96], label[24];
+    for (u32 i = 0; i < s_gpu_count; ++i) {
+        const GpuLive* g = &s_gpus[i];
+        if (!g->opened) continue;
+        const GpuReading* r = &g->r;
+        struct { const char* key; const char* what; const char* brief; const char* unit; u8 dec; f32 v; } rows[] = {
+            { "core_mhz", "core clock", "clock", "MHz", 0, r->core_mhz },
+            { "mem_mhz", "memory clock", "mem clock", "MHz", 0, r->mem_mhz },
+            { "load", "load", "load", "%", 1, r->util },
+            { "vram_mib", "VRAM used", "VRAM", "MiB", 0, r->vram_used_mib },
+            { "power_pct", "power (of limit)", "power", "%", 1, r->power_pct },
+            { "fan_rpm", "fan", "fan", "RPM", 0, r->fan_rpm },
+        };
+        for (u32 k = 0; k < ARRAY_COUNT(rows); ++k) {
+            snprintf(id, sizeof(id), "gpu%u.%s", i, rows[k].key);
+            snprintf(name, sizeof(name), "%s %s", g->name, rows[k].what);
+            snprintf(label, sizeof(label), "GPU%u %s", i, rows[k].brief);
+            ch_put(id, name, label, rows[k].unit, CHG_GPU, 0, rows[k].dec, rows[k].v);
+        }
+    }
+}
+
+static void power_channels(const Sources* src) {
+    char id[40], name[96], label[24];
+    const u32 nb = src->bat.count;
+    for (u32 b = 0; b < nb; ++b) {
+        const BatteryStatus* s = &src->bat.info[b].status;
+        char pre[8] = "bat", what[16] = "Battery";
+        if (nb > 1) { snprintf(pre, sizeof(pre), "bat%u", b); snprintf(what, sizeof(what), "Battery %u", b); }
+        struct { const char* key; const char* what; const char* brief; const char* unit; u8 dec; f32 v; } rows[] = {
+            { "rate_w", "rate (+ charging, - discharging)", "", "W", 2, s->rate_w },
+            { "voltage_v", "voltage", " volt", "V", 3, s->voltage_v },
+            { "charge_pct", "charge level", " level", "%", 1, s->charge_pct },
+            { "remaining_wh", "remaining", " left", "Wh", 2, s->capacity_wh },
+        };
+        for (u32 k = 0; k < ARRAY_COUNT(rows); ++k) {
+            snprintf(id, sizeof(id), "%s.%s", pre, rows[k].key);
+            snprintf(name, sizeof(name), "%s %s", what, rows[k].what);
+            snprintf(label, sizeof(label), "%s%s", what, rows[k].brief);
+            ch_put(id, name, label, rows[k].unit, CHG_POWER, 0, rows[k].dec, rows[k].v);
+        }
+        if (src->bat.has_temp[b]) {
+            snprintf(id, sizeof(id), "%s.temp", pre);
+            snprintf(name, sizeof(name), "%s temperature", what);
+            snprintf(label, sizeof(label), "%s temp", what);
+            ch_put(id, name, label, DEG_C, CHG_TEMP, 0, 1, s->temp_c);
+        }
+    }
+    for (u32 i = 0; i < src->emi.channel_count; ++i) {
+        const EmiChannel* e = &src->emi.ch[i];
+        snprintf(id, sizeof(id), "emi.%s", e->id);
+        snprintf(name, sizeof(name), "%s power", e->name);
+        const bool core = e->order >= 100 && e->order < 900;
+        if (core) snprintf(label, sizeof(label), "Core %u", e->order - 100);
+        else snprintf(label, sizeof(label), "%s", e->name);
+        ch_put(id, name, label, "W", CHG_POWER, core ? CHF_DETAIL : 0, 2, e->watts);
+    }
+}
+
+// ---- publishing (s_lock held) -------------------------------------------------------------------------
+
+static void publish_zones(const Reading* rd) {
+    char id[40];
+    for (u32 z = 0; z < rd->zone_count; ++z) {
         // Instance names look like "\_TZ.TZ01"; show "Thermal zone TZ01".
-        char inst[64];
-        WideCharToMultiByte(CP_UTF8, 0, items[i].szName, -1, inst, sizeof(inst), nullptr, nullptr);
+        const char* inst = rd->zone_inst[z];
         const char* shortname = strrchr(inst, '.') ? strrchr(inst, '.') + 1 : inst;
         char name[96];
         snprintf(name, sizeof(name), "Thermal zone %s", shortname);
@@ -152,55 +351,73 @@ static void sample_zones(Sources* src) {
             if (s == UINT32_MAX) continue;
             snprintf(s_sensors[s].detail, sizeof(s_sensors[s].detail), "ACPI %s", inst);
         }
-        const f64 v = items[i].FmtValue.doubleValue;
-        const f32 c = (f32)(src->zones_precise ? v / 10.0 - 273.15 : v - 273.15);
-        if (items[i].FmtValue.CStatus == ERROR_SUCCESS && c > -40.0f && c < 150.0f) push(s, c);
+        if (rd->zone_ok[z]) push(s, rd->zone_c[z]);
         else no_value(s, "No reading from this zone.");
+        u32 n = snprintf(id, sizeof(id), "temp.");
+        for (const char* p = shortname; *p && n + 1 < sizeof(id); ++p)
+            id[n++] = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : ((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9')) ? *p : '_';
+        id[n] = 0;
+        ch_put(id, name, shortname, DEG_C, CHG_TEMP, 0, 1, s < s_count && s_sensors[s].valid ? s_sensors[s].temp_c : NAN);
     }
 }
 
-static void sample_gpus(Sources* src) {
-    for (u32 i = 0; i < src->gpu_count; ++i) {
-        D3DKMT_ADAPTER_PERFDATA pd = {};
-        D3DKMT_QUERYADAPTERINFO qi = {};
-        qi.hAdapter = src->gpus[i].adapter;
-        qi.Type = KMTQAITYPE_ADAPTERPERFDATA;
-        qi.pPrivateDriverData = &pd;
-        qi.PrivateDriverDataSize = sizeof(pd);
-        const u32 s = src->gpus[i].sensor;
-        if (D3DKMTQueryAdapterInfo(&qi) != 0 || pd.Temperature == 0) {
+static void publish_gpu_temps(const Sources* src, const Reading* rd) {
+    char id[40], name[128], label[24];
+    for (u32 i = 0; i < src->gpu.count; ++i) {
+        const u32 s = src->gpu_sensor[i];
+        if (s == UINT32_MAX) continue;
+        const GpuReading* r = &rd->gpu[i];
+        if (isnan(r->temp_c)) {
             no_value(s, "The driver doesn't report a temperature for this GPU (common for integrated GPUs, and for a "
                         "laptop GPU that is powered down while idle).");
-            continue;
+        } else {
+            push(s, r->temp_c);
+            char extra[96] = "";
+            if (!isnan(r->fan_rpm)) snprintf(extra, sizeof(extra), "fan %.0f RPM", r->fan_rpm);
+            if (!isnan(r->power_pct)) {
+                const size_t len = strlen(extra);
+                snprintf(extra + len, sizeof(extra) - len, "%spower %.0f%%", len ? ", " : "", r->power_pct);
+            }
+            snprintf(s_sensors[s].detail, sizeof(s_sensors[s].detail), "%s", extra);
         }
-        push(s, pd.Temperature / 10.0f);
-        char extra[96] = "";
-        if (pd.FanRPM) snprintf(extra, sizeof(extra), "fan %lu RPM", pd.FanRPM);
-        if (pd.Power) {
-            const size_t len = strlen(extra);
-            snprintf(extra + len, sizeof(extra) - len, "%spower %.0f%%", len ? ", " : "", pd.Power / 10.0);
-        }
-        snprintf(s_sensors[s].detail, sizeof(s_sensors[s].detail), "%s", extra);
+        snprintf(id, sizeof(id), "gpu%u.temp", i);
+        snprintf(name, sizeof(name), "%s temperature", g_sys.gpus[i].name);
+        snprintf(label, sizeof(label), "GPU%u temp", i);
+        ch_put(id, name, label, DEG_C, CHG_TEMP, 0, 1, r->temp_c);
     }
 }
 
-static bool disk_test_running() {
-    const i32 cur = g_run.current.load(std::memory_order_relaxed);
-    return runner_is_running() && cur >= 0 && g_benches[cur].suite == SUITE_DISK;
-}
-
-static void sample_disks(Sources* src) {
-    if (disk_test_running()) return;    // keep the last values: don't add commands to the drive under test
+static void publish_disks(const Sources* src, const Reading* rd) {
+    char id[40], name[128], label[24];
     for (u32 i = 0; i < src->disk_count; ++i) {
         const u32 s = src->disks[i].sensor;
-        f32 t = 0.0f, w = 0.0f;
-        if (src->disks[i].h == INVALID_HANDLE_VALUE || !physdisk_temperature(src->disks[i].h, &t, &w)) {
-            no_value(s, "This drive doesn't report a temperature to Windows, or reading it needs administrator rights.");
-            continue;
+        if (!rd->disks_paused) {
+            if (!rd->disk_ok[i]) {
+                no_value(s, "This drive doesn't report a temperature to Windows, or reading it needs administrator rights.");
+            } else {
+                if (rd->disk_warn[i] > 0.0f) s_sensors[s].warn_c = rd->disk_warn[i];
+                push(s, rd->disk_c[i]);
+            }
         }
-        if (w > 0.0f) s_sensors[s].warn_c = w;
-        push(s, t);
+        snprintf(id, sizeof(id), "disk%u.temp", src->disks[i].number);
+        snprintf(name, sizeof(name), "%s temperature", s_sensors[s].name);
+        snprintf(label, sizeof(label), "Disk %u temp", src->disks[i].number);
+        ch_put(id, name, label, DEG_C, CHG_TEMP, 0, 1, s_sensors[s].valid ? s_sensors[s].temp_c : NAN);
     }
+}
+
+static void publish_power(const Sources* src) {
+    PowerLive* p = &s_power;
+    p->read = true;
+    p->battery_count = src->bat.count;
+    memcpy(p->battery, src->bat.info, sizeof(p->battery));
+    p->rail_count = src->emi.channel_count < SENSOR_RAILS ? src->emi.channel_count : SENSOR_RAILS;
+    for (u32 i = 0; i < p->rail_count; ++i) {
+        memcpy(p->rail_name[i], src->emi.ch[i].name, sizeof(p->rail_name[i]));
+        memcpy(p->rail_raw[i], src->emi.ch[i].raw, sizeof(p->rail_raw[i]));
+        p->rail_w[i] = src->emi.ch[i].watts;
+    }
+    memcpy(p->emi_status, src->emi.status, sizeof(p->emi_status));
 }
 
 static void hist_push(f32* hist, u32* count, f32 v) {
@@ -211,95 +428,323 @@ static void hist_push(f32* hist, u32* count, f32 v) {
     }
 }
 
-static void sample_live(CpuReader* cpu, GpuReader* gpu) {
-    f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
-    const u32 n = cpu_reader_sample(cpu, util, mhz);
-    if (n) {
-        CpuLive* c = &s_cpu;
-        c->lps = n;
-        f64 sum = 0.0, wsum = 0.0, w = 0.0;
-        for (u32 i = 0; i < n; ++i) {
-            c->util[i] = util[i];
-            c->mhz[i] = mhz[i];
-            sum += util[i];
-            if (!isnan(mhz[i]) && !(mhz[i] <= c->max_mhz)) c->max_mhz = mhz[i];
-            if (util[i] >= 50.0f && !isnan(mhz[i])) {
-                wsum += (f64)mhz[i] * util[i];
-                w += util[i];
-            }
-        }
-        c->avg_util = (f32)(sum / n);
-        c->busy_mhz = w > 0.0 ? (f32)(wsum / w) : NAN;
-        hist_push(c->util_hist, &c->hist_count, c->avg_util);
-    }
-    gpu_reader_collect(gpu);
+static void publish(const Sources* src, const Reading* rd) {
+    s_cursor = 0;
+    publish_cpu(rd);
+    cpu_channels();
     for (u32 i = 0; i < s_gpu_count; ++i) {
         GpuLive* g = &s_gpus[i];
-        gpu_reader_read(gpu, i, &g->r, true);
+        g->r = rd->gpu[i];
         if (!isnan(g->r.util)) hist_push(g->util_hist, &g->hist_count, g->r.util);
     }
+    gpu_channels();
+    publish_zones(rd);
+    publish_gpu_temps(src, rd);
+    publish_disks(src, rd);
+    publish_power(src);
+    power_channels(src);
+
+    // One history point per second, whatever the sample period.
+    const f64 now = timer_now();
+    if (s_hist_count == 0 || now - s_hist_t >= 0.95) {
+        s_hist_t = now;
+        for (u32 i = 0; i < s_ch_count; ++i) s_hist[i][s_hist_head] = s_ch[i].valid ? s_ch[i].value : NAN;
+        s_hist_head = (s_hist_head + 1) % CH_HISTORY;
+        if (s_hist_count < CH_HISTORY) ++s_hist_count;
+    }
+    s_last_sample = now;
+    ++s_seq;
 }
 
+// ---- log ----------------------------------------------------------------------------------------------
+
+struct LogState {
+    bool active, header_done;
+    SensorLogFormat format;
+    u32 interval_ms;
+    char patterns[512];
+    wchar_t path[MAX_PATH], tmp_path[MAX_PATH + 16];
+    FILE* f;                    // CSV file, or the TOON rows temp file
+    u32 cols[CH_MAX], ncols;
+    u32 rows;
+    f64 t0, next_row, last_row;
+    char stamp[32];             // local time of the first row (ISO 8601)
+    char error[160];
+};
+static LogState s_log;
+static SRWLOCK s_log_lock = SRWLOCK_INIT;
+
+static bool wild(const char* pat, const char* pe, const char* s) {     // pattern [pat, pe) against s
+    if (pat == pe) return !*s;
+    if (*pat == '*') return wild(pat + 1, pe, s) || (*s && wild(pat, pe, s + 1));
+    return *s == *pat && wild(pat + 1, pe, s + 1);
+}
+
+bool sensors_channel_matches(const SensorChannel* c, const char* patterns) {
+    if (!patterns || !patterns[0]) return !(c->flags & CHF_DETAIL);
+    if (!strcmp(patterns, "all")) return true;
+    for (const char* p = patterns; *p;) {
+        const char* e = strchr(p, ',');
+        if (!e) e = p + strlen(p);
+        while (p < e && *p == ' ') ++p;
+        const char* end = e;
+        while (end > p && end[-1] == ' ') --end;
+        if (end > p && wild(p, end, c->id)) return true;
+        p = *e ? e + 1 : e;
+    }
+    return false;
+}
+
+static f64 round_to(f64 v, u32 decimals) {
+    const f64 m = pow(10.0, (f64)decimals);
+    return round(v * m) / m;
+}
+
+static void csv_field(FILE* f, const char* s) {
+    if (!strpbrk(s, ",\"\n")) { fputs(s, f); return; }
+    fputc('"', f);
+    for (; *s; ++s) {
+        if (*s == '"') fputc('"', f);
+        fputc(*s, f);
+    }
+    fputc('"', f);
+}
+
+// First row: fix the columns, write the CSV header. s_log_lock held; the sampling thread owns s_ch writes.
+static void log_header() {
+    s_log.ncols = 0;
+    for (u32 i = 0; i < s_ch_count; ++i)
+        if (sensors_channel_matches(&s_ch[i], s_log.patterns)) s_log.cols[s_log.ncols++] = i;
+    s_log.header_done = true;
+    if (s_log.format != SLOG_CSV) return;
+    fputs("Time,Seconds", s_log.f);
+    for (u32 k = 0; k < s_log.ncols; ++k) {
+        const SensorChannel* c = &s_ch[s_log.cols[k]];
+        char col[128];
+        snprintf(col, sizeof(col), "%s [%s]", c->name, c->unit);
+        fputc(',', s_log.f);
+        csv_field(s_log.f, col);
+    }
+    fputc('\n', s_log.f);
+}
+
+// Sampling thread, after publishing.
+static void log_tick() {
+    AcquireSRWLockExclusive(&s_log_lock);
+    const f64 now = timer_now();
+    const f64 half = s_period_ms.load(std::memory_order_relaxed) / 2000.0;
+    if (s_log.active && s_log.f && (!s_log.rows || now + half >= s_log.next_row)) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        if (!s_log.rows) {
+            s_log.t0 = now;
+            s_log.next_row = now;
+            snprintf(s_log.stamp, sizeof(s_log.stamp), "%04u-%02u-%02uT%02u:%02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour,
+                     st.wMinute, st.wSecond);
+        }
+        if (!s_log.header_done) log_header();
+        const f64 t = now - s_log.t0;
+        if (s_log.format == SLOG_CSV) {
+            fprintf(s_log.f, "%04u-%02u-%02u %02u:%02u:%02u.%03u,%.3f", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+                    st.wSecond, st.wMilliseconds, t);
+            for (u32 k = 0; k < s_log.ncols; ++k) {
+                const SensorChannel* c = &s_ch[s_log.cols[k]];
+                if (c->valid) fprintf(s_log.f, ",%.*f", c->decimals, c->value);
+                else fputc(',', s_log.f);
+            }
+            fputc('\n', s_log.f);
+        } else {
+            ToonRow row = toon_row(s_log.f, 1);
+            toon_cell_num(&row, round_to(t, 3));
+            for (u32 k = 0; k < s_log.ncols; ++k) {
+                const SensorChannel* c = &s_ch[s_log.cols[k]];
+                toon_cell_num(&row, c->valid ? round_to(c->value, c->decimals) : NAN);
+            }
+            toon_row_end(&row);
+        }
+        if (fflush(s_log.f) != 0 && !s_log.error[0]) snprintf(s_log.error, sizeof(s_log.error), "Writing the log failed (disk full?).");
+        ++s_log.rows;
+        s_log.last_row = now;
+        s_log.next_row += s_log.interval_ms / 1000.0;
+        if (s_log.next_row < now) s_log.next_row = now + s_log.interval_ms / 1000.0;     // fell behind (load): don't burst
+    }
+    ReleaseSRWLockExclusive(&s_log_lock);
+}
+
+// TOON: header + channels table + samples header, then the rows from the temp file. s_log_lock held.
+static void log_finish_toon() {
+    if (s_log.f) fclose(s_log.f);
+    s_log.f = nullptr;
+    FILE* out = _wfopen(s_log.path, L"wb");
+    FILE* in = _wfopen(s_log.tmp_path, L"rb");
+    if (!out) {
+        snprintf(s_log.error, sizeof(s_log.error), "Can't write the log file; the rows are kept in the .rows.tmp file.");
+        if (in) fclose(in);
+        return;
+    }
+    AcquireSRWLockShared(&s_lock);
+    if (!s_log.header_done) log_header();
+    toon_str(out, 0, "app", "ez-pc-bench");
+    toon_num(out, 0, "format", 1);
+    toon_str(out, 0, "kind", "sensor-log");
+    toon_str(out, 0, "timestamp", s_log.stamp[0] ? s_log.stamp : "");
+    toon_num(out, 0, "interval_ms", s_log.interval_ms);
+    toon_str(out, 0, "cpu", g_sys.cpu.brand);
+    toon_table(out, 0, "channels", s_log.ncols, "id,name,unit");
+    static char fields[CH_MAX * 42 + 8];
+    u32 n = snprintf(fields, sizeof(fields), "t");
+    for (u32 k = 0; k < s_log.ncols; ++k) {
+        const SensorChannel* c = &s_ch[s_log.cols[k]];
+        ToonRow row = toon_row(out, 1);
+        toon_cell_str(&row, c->id);
+        toon_cell_str(&row, c->name);
+        toon_cell_str(&row, c->unit);
+        toon_row_end(&row);
+        n += snprintf(fields + n, sizeof(fields) - n, ",%s", c->id);
+    }
+    ReleaseSRWLockShared(&s_lock);
+    toon_table(out, 0, "samples", s_log.rows, fields);
+    if (in) {
+        static char buf[65536];
+        size_t got;
+        while ((got = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, got, out);
+        fclose(in);
+    }
+    const bool ok = fclose(out) == 0;
+    if (ok) DeleteFileW(s_log.tmp_path);
+    else snprintf(s_log.error, sizeof(s_log.error), "Writing the log failed; the rows are kept in the .rows.tmp file.");
+}
+
+bool sensors_log_start(const wchar_t* path, SensorLogFormat format, u32 interval_ms, const char* patterns, char* err,
+                       u32 err_size) {
+    sensors_log_stop();
+    LogState l = {};
+    l.format = format;
+    l.interval_ms = interval_ms < 100 ? 100 : interval_ms;
+    snprintf(l.patterns, sizeof(l.patterns), "%s", patterns ? patterns : "");
+    wcsncpy_s(l.path, path, _TRUNCATE);
+    if (format == SLOG_TOON) {
+        swprintf(l.tmp_path, ARRAY_COUNT(l.tmp_path), L"%s.rows.tmp", path);
+        l.f = _wfopen(l.tmp_path, L"wb");
+    } else {
+        l.f = _wfopen(path, L"wb");
+        if (l.f) fputs("\xEF\xBB\xBF", l.f);     // UTF-8 BOM: Excel otherwise reads the file as ANSI
+    }
+    if (!l.f) {
+        snprintf(err, err_size, "Can't create the log file (errno %d).", errno);
+        return false;
+    }
+    l.active = true;
+    sensors_start();
+    AcquireSRWLockExclusive(&s_log_lock);
+    s_log = l;
+    ReleaseSRWLockExclusive(&s_log_lock);
+    s_period_ms.store(l.interval_ms < 1000 ? l.interval_ms : 1000, std::memory_order_relaxed);
+    if (err_size) err[0] = 0;
+    return true;
+}
+
+void sensors_log_stop() {
+    AcquireSRWLockExclusive(&s_log_lock);
+    const bool was = s_log.active;
+    if (was) {
+        if (s_log.format == SLOG_TOON) log_finish_toon();
+        else if (s_log.f) fclose(s_log.f);
+        s_log.f = nullptr;
+        s_log.active = false;
+    }
+    ReleaseSRWLockExclusive(&s_log_lock);
+    if (!was) return;
+    s_period_ms.store(1000, std::memory_order_relaxed);
+    sensors_stop();
+}
+
+void sensors_log_status(SensorLogStatus* out) {
+    memset(out, 0, sizeof(*out));
+    AcquireSRWLockShared(&s_log_lock);
+    out->active = s_log.active;
+    out->format = s_log.format;
+    out->rows = s_log.rows;
+    out->columns = s_log.ncols;
+    out->interval_ms = s_log.interval_ms;
+    out->seconds = s_log.rows ? s_log.last_row - s_log.t0 : 0.0;
+    WideCharToMultiByte(CP_UTF8, 0, s_log.path, -1, out->path, sizeof(out->path), nullptr, nullptr);
+    memcpy(out->error, s_log.error, sizeof(out->error));
+    ReleaseSRWLockShared(&s_log_lock);
+}
+
+// ---- thread -------------------------------------------------------------------------------------------
+
 static DWORD WINAPI sensor_thread(void*) {
-    Sources src = {};
-    CpuReader cpu;
-    GpuReader gpu;
-    cpu_reader_open(&cpu);
-    gpu_reader_open(&gpu);
+    static Sources src;         // large (PDH scratch pointers, EMI tables): not on the stack
+    static Reading rd;
+    memset(&src, 0, sizeof(src));
+    cpu_reader_open(&src.cpu);
+    gpu_reader_open(&src.gpu);
+    battery_open(&src.bat);
+    emi_open(&src.emi);
     AcquireSRWLockExclusive(&s_lock);
     memset(&s_cpu, 0, sizeof(s_cpu));
     s_cpu.max_mhz = NAN;
-    s_gpu_count = gpu.count;
+    s_gpu_count = src.gpu.count;
     for (u32 i = 0; i < s_gpu_count; ++i) {
         memset(&s_gpus[i], 0, sizeof(s_gpus[i]));
         snprintf(s_gpus[i].name, sizeof(s_gpus[i].name), "%s", g_sys.gpus[i].name);
-        s_gpus[i].opened = gpu.handle[i] != 0;
+        s_gpus[i].opened = src.gpu.handle[i] != 0;
         s_gpus[i].vram_total_mib = (f32)(g_sys.gpus[i].dedicated_vram / MiB);
     }
-    ReleaseSRWLockExclusive(&s_lock);
-    AcquireSRWLockExclusive(&s_lock);
-    s_count = 0;
-    open_gpus(&src);
+    memset(&s_power, 0, sizeof(s_power));
+    s_count = s_ch_count = s_hist_head = s_hist_count = 0;
+    open_gpu_sensors(&src);
     open_disks(&src);
     ReleaseSRWLockExclusive(&s_lock);
     open_zones(&src);
+    DWORD wait;
     do {
+        const f64 t = timer_now();
+        read_all(&src, &rd);
         AcquireSRWLockExclusive(&s_lock);
-        sample_zones(&src);
-        sample_gpus(&src);
-        sample_disks(&src);
-        sample_live(&cpu, &gpu);
-        s_last_sample = timer_now();
+        publish(&src, &rd);
         ReleaseSRWLockExclusive(&s_lock);
-    } while (WaitForSingleObject(s_stop, 1000) == WAIT_TIMEOUT);
+        log_tick();
+        const f64 spent_ms = (timer_now() - t) * 1000.0;
+        const u32 period = s_period_ms.load(std::memory_order_relaxed);
+        wait = spent_ms >= period ? 10 : (DWORD)(period - spent_ms);
+    } while (WaitForSingleObject(s_stop, wait) == WAIT_TIMEOUT);
 
-    cpu_reader_close(&cpu);
-    gpu_reader_close(&gpu);
+    cpu_reader_close(&src.cpu);
+    gpu_reader_close(&src.gpu);
+    battery_close(&src.bat);
+    emi_close(&src.emi);
     if (src.query) PdhCloseQuery(src.query);
-    for (u32 i = 0; i < src.gpu_count; ++i) {
-        D3DKMT_CLOSEADAPTER ca = { src.gpus[i].adapter };
-        D3DKMTCloseAdapter(&ca);
-    }
     for (u32 i = 0; i < src.disk_count; ++i)
         if (src.disks[i].h != INVALID_HANDLE_VALUE) CloseHandle(src.disks[i].h);
     return 0;
 }
 
 void sensors_start() {
-    if (s_thread) return;
-    s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    s_thread = CreateThread(nullptr, 0, sensor_thread, nullptr, 0, nullptr);
-    if (s_thread) SetThreadPriority(s_thread, THREAD_PRIORITY_BELOW_NORMAL);
+    AcquireSRWLockExclusive(&s_ref_lock);
+    if (s_refs++ == 0) {
+        s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        s_thread = CreateThread(nullptr, 0, sensor_thread, nullptr, 0, nullptr);
+        if (s_thread) SetThreadPriority(s_thread, THREAD_PRIORITY_BELOW_NORMAL);
+    }
+    ReleaseSRWLockExclusive(&s_ref_lock);
 }
 
 void sensors_stop() {
-    if (!s_thread) return;
-    SetEvent(s_stop);
-    WaitForSingleObject(s_thread, INFINITE);
-    CloseHandle(s_thread);
-    CloseHandle(s_stop);
-    s_thread = s_stop = nullptr;
+    AcquireSRWLockExclusive(&s_ref_lock);
+    if (s_refs && --s_refs == 0 && s_thread) {
+        SetEvent(s_stop);
+        WaitForSingleObject(s_thread, INFINITE);
+        CloseHandle(s_thread);
+        CloseHandle(s_stop);
+        s_thread = s_stop = nullptr;
+    }
+    ReleaseSRWLockExclusive(&s_ref_lock);
 }
+
+// ---- readers ------------------------------------------------------------------------------------------
 
 u32 sensors_live(CpuLive* cpu, GpuLive* gpus) {
     AcquireSRWLockShared(&s_lock);
@@ -317,4 +762,45 @@ u32 sensors_snapshot(SensorReading* out, u32 max, f64* updated) {
     if (updated) *updated = s_last_sample > 0.0 ? timer_now() - s_last_sample : -1.0;
     ReleaseSRWLockShared(&s_lock);
     return n;
+}
+
+void sensors_power(PowerLive* out) {
+    AcquireSRWLockShared(&s_lock);
+    *out = s_power;
+    ReleaseSRWLockShared(&s_lock);
+}
+
+u32 sensors_channels(SensorChannel* out, u32 max, u32* seq) {
+    AcquireSRWLockShared(&s_lock);
+    const u32 n = s_ch_count < max ? s_ch_count : max;
+    memcpy(out, s_ch, n * sizeof(SensorChannel));
+    if (seq) *seq = s_seq;
+    ReleaseSRWLockShared(&s_lock);
+    return n;
+}
+
+u32 sensors_channel_history(u32 ch, f32* out, u32 max) {
+    AcquireSRWLockShared(&s_lock);
+    u32 n = 0;
+    if (ch < s_ch_count) {
+        n = s_hist_count < max ? s_hist_count : max;
+        const u32 start = (s_hist_head + CH_HISTORY - n) % CH_HISTORY;     // the newest n points
+        for (u32 i = 0; i < n; ++i) out[i] = s_hist[ch][(start + i) % CH_HISTORY];
+    }
+    ReleaseSRWLockShared(&s_lock);
+    return n;
+}
+
+void sensors_reset_stats() {
+    AcquireSRWLockExclusive(&s_lock);
+    for (u32 i = 0; i < s_ch_count; ++i) {
+        SensorChannel* c = &s_ch[i];
+        c->min = c->max = c->valid ? c->value : NAN;
+        c->sum = c->valid ? c->value : 0.0;
+        c->count = c->valid ? 1 : 0;
+    }
+    for (u32 i = 0; i < s_count; ++i)
+        if (s_sensors[i].valid) s_sensors[i].min_c = s_sensors[i].max_c = s_sensors[i].temp_c;
+    s_cpu.max_mhz = NAN;
+    ReleaseSRWLockExclusive(&s_lock);
 }
