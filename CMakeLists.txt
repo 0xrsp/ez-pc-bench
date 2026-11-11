@@ -131,7 +131,8 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_vk_tests.cpp
     src/gpu/gpu_present.cpp
     src/gpu/gpu_present_d3d12.cpp
-    src/gpu/gpu_present_vk.cpp)
+    src/gpu/gpu_present_vk.cpp
+    src/frames/frame_capture.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
@@ -166,6 +167,8 @@ add_executable(ez-pc-bench WIN32
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
     src/app/health_ui.cpp
+    src/app/frames_ui.cpp
+    src/app/frames_graph.cpp
     src/app/library.cpp
     src/app/settings.cpp
     src/app/theme.cpp

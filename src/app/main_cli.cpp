@@ -7,6 +7,8 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/timer.h"
+#include "frames/frame_capture.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +35,11 @@ static void print_usage() {
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --elevate              Relaunch as administrator in a new console\n"
+        "  --capture <exe|pid|*>  Frame capture of another application (ETW present events; needs admin):\n"
+        "                         fps, frame times, 1%% / 0.1%% lows. * = the busiest presenting process\n"
+        "  --seconds <n>          Capture length (default 20)\n"
+        "  --capture-etl <file>   Analyze present events from a recorded .etl trace instead (--capture = pid)\n"
+        "  --capture-selftest     Check the event decoding and frame analysis on synthetic events\n"
         "  --pause                Wait for Enter before exiting\n");
 }
 
@@ -68,6 +75,10 @@ static bool select_patterns(const char* list, bool* selected) {
 
 static BOOL WINAPI on_ctrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) {
+        if (g_capture.state.load() == CAP_RUNNING) {
+            capture_stop();
+            return TRUE;
+        }
         if (runner_is_running()) {
             runner_cancel();
             return TRUE;
@@ -193,6 +204,48 @@ static void to_utf8(const wchar_t* w, char* out, int size) {
     WideCharToMultiByte(CP_UTF8, 0, w, -1, out, size, nullptr, nullptr);
 }
 
+// --capture: record (or read from an .etl) present events of another process, print and save the result.
+static int run_capture(const char* target, f64 seconds, const wchar_t* etl, const wchar_t* out_path) {
+    char err[320];
+    if (etl) {
+        if (!capture_load_etl(etl, target, err, sizeof(err))) { fprintf(stderr, "Capture failed: %s\n", err); return 1; }
+    } else {
+        if (!capture_allowed())
+            printf("Note: not elevated and not in Performance Log Users; the ETW session will most likely be refused.\n");
+        if (!capture_start(target, seconds, err, sizeof(err))) { fprintf(stderr, "Capture failed: %s\n", err); return 1; }
+        SetConsoleCtrlHandler(on_ctrl, TRUE);
+        u32 last = 0;
+        f64 last_t = timer_now();
+        while (g_capture.state.load() == CAP_RUNNING) {
+            Sleep(250);
+            const f64 now = timer_now();
+            const u32 p = g_capture.presents.load();
+            printf("\rCapturing %s: %4.1f / %.0f s, %u presents (%.0f /s)   ", target, now - g_capture.start, seconds, p,
+                   (p - last) / (now - last_t));
+            fflush(stdout);
+            last = p;
+            last_t = now;
+        }
+        capture_wait();
+        printf("\n");
+        if (g_capture.state.load() != CAP_DONE) { fprintf(stderr, "Capture failed: %s\n", g_capture.error); return 1; }
+    }
+    const FrameCapture* c = capture_result();
+    printf("Process  %s (pid %u), %s%s, %.1f s, %u frames\n", c->process, c->pid, c->api,
+           c->tearing < 0 ? "" : c->tearing ? ", tearing" : ", no tearing", c->seconds, c->frames);
+    printf("FPS      avg %.1f, 1%% low %.1f, 0.1%% low %.1f (from p99 / p99.9 frame time), 1%% low average %.1f\n",
+           c->avg_fps, 1000.0 / c->p99_ms, 1000.0 / c->p999_ms, c->low1_avg_fps);
+    printf("Frame ms avg %.3f, median %.3f, p95 %.3f, p99 %.3f, p99.9 %.3f, max %.3f\n", c->avg_ms, c->p50_ms, c->p95_ms,
+           c->p99_ms, c->p999_ms, c->max_ms);
+    if (c->present_call_ms == c->present_call_ms) printf("Present() avg %.3f ms, sync interval %d\n", c->present_call_ms, c->sync_interval);
+    if (c->dropped) printf("WARNING: %u events lost\n", c->dropped);
+    if (out_path) {
+        if (!capture_write_toon(out_path, c)) { fwprintf(stderr, L"Failed to write %s\n", out_path); return 1; }
+        wprintf(L"Wrote %s\n", out_path);
+    }
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     sysinfo_init();
@@ -202,6 +255,10 @@ int wmain(int argc, wchar_t** argv) {
     bool any_run = false, from_preset = false, list = false, pause = false, elevate = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
+    const wchar_t* capture_etl = nullptr;
+    char capture_target[256] = {};
+    f64 capture_seconds = 20.0;
+    bool capture = false, capture_check = false;
     BenchParams params;
     params.gpu_adapter = sysinfo_default_gpu();
 
@@ -215,6 +272,10 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
+        else if (!wcscmp(a, L"--capture") && has_val) { capture = true; strncpy_s(capture_target, val, _TRUNCATE); ++i; }
+        else if (!wcscmp(a, L"--seconds") && has_val) { capture_seconds = atof(val); ++i; }
+        else if (!wcscmp(a, L"--capture-etl") && has_val) { capture = true; capture_etl = argv[++i]; }
+        else if (!wcscmp(a, L"--capture-selftest")) capture_check = true;
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
@@ -252,6 +313,19 @@ int wmain(int argc, wchar_t** argv) {
             printf("%-28s %s / %s / %s\n", g_benches[i].cli_id, g_suites[g_benches[i].suite].name, g_benches[i].group,
                    g_benches[i].name);
         return 0;
+    }
+
+    if (capture_check) {     // --out also writes the synthetic capture (a test file for the compare window)
+        char report[1024];
+        const bool pass = capture_selftest(report, sizeof(report));
+        printf("%s\n", report);
+        if (out_path && !capture_write_toon(out_path, capture_result())) return 1;
+        return pass ? 0 : 1;
+    }
+    if (capture) {
+        if (!capture_etl && !capture_target[0]) { fprintf(stderr, "--capture needs a process name, pid or *\n"); return 3; }
+        if (capture_seconds < 1.0) capture_seconds = 1.0;
+        return run_capture(capture_target, capture_seconds, capture_etl, out_path);
     }
 
     if (elevate && !g_sys.elevated) {
