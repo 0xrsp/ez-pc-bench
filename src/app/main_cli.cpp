@@ -23,6 +23,8 @@ static void print_usage() {
         "  --duration <ms>        Measured duration per phase (default 3000)\n"
         "  --threads <n>          Thread count for MT tests (default: all logical)\n"
         "  --gpu <index>          GPU adapter index (default 0 = most powerful)\n"
+        "  --gpu-present <mode>   3D / 2D tests: offscreen (default), windowed or fullscreen (real swapchain,\n"
+        "                         vsync off, tearing; Esc in the benchmark window stops the test)\n"
         "  --disk-drives <list>   Disk test target drive(s), e.g. C or C,D (default C)\n"
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
         "  --passes <n>           Disk passes (default 3)\n"
@@ -219,6 +221,12 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--threads") && has_val) { params.thread_count = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--gpu") && has_val) { params.gpu_adapter = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--gpu-present") && has_val) {
+            if (!strcmp(val, "offscreen")) params.gpu_onscreen = false;
+            else if (!strcmp(val, "windowed") || !strcmp(val, "fullscreen")) { params.gpu_onscreen = true; params.gpu_fullscreen = val[0] == 'f'; }
+            else { fprintf(stderr, "unknown --gpu-present mode '%s' (offscreen, windowed, fullscreen)\n", val); return 3; }
+            ++i;
+        }
         else if (!wcscmp(a, L"--disk-drives") && has_val) {
             params.disk_drives = 0;
             for (const char* d = val; *d; ++d)

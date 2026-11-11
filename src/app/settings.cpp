@@ -87,6 +87,7 @@ void settings_load(BenchParams* p, bool* selected) {
         p->gpu_width = read_u32(L"gpu_width", p->gpu_width, 64, 16384);
         p->gpu_height = read_u32(L"gpu_height", p->gpu_height, 64, 16384);
         p->gpu_fullscreen = read_u32(L"gpu_fullscreen", p->gpu_fullscreen, 0, 1) != 0;
+        p->gpu_onscreen = read_u32(L"gpu_onscreen", p->gpu_onscreen, 0, 1) != 0;
         if (read_str(L"disk_drives", w, ARRAY_COUNT(w))) {      // "C,D"; drives that aren't fixed any more are dropped
             u32 mask = 0;
             for (const wchar_t* c = w; *c; ++c) {
@@ -127,7 +128,7 @@ static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
     return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
            x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
-           x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
+           x->gpu_fullscreen == y->gpu_fullscreen && x->gpu_onscreen == y->gpu_onscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
            x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && !memcmp(a->selected, b->selected, g_bench_count);
 }
@@ -166,6 +167,7 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"gpu_width=%u", p->gpu_width);
     sec_add(&s, L"gpu_height=%u", p->gpu_height);
     sec_add(&s, L"gpu_fullscreen=%u", p->gpu_fullscreen ? 1u : 0u);
+    sec_add(&s, L"gpu_onscreen=%u", p->gpu_onscreen ? 1u : 0u);
     wchar_t drives[64] = {};
     for (u32 d = 0, n = 0; d < 26; ++d)
         if ((p->disk_drives >> d) & 1) {

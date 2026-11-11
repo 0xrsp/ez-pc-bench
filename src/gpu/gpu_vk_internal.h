@@ -76,6 +76,9 @@ struct VkCtx {
     VkFence fence[GPU_FRAMES_IN_FLIGHT];
     VkFence xfer_fence;
     VkQueryPool query_pool;         // 2 * VK_MAX_BATCH timestamps
+
+    // On-screen mode (gpu_present_vk.cpp): extensions found and enabled at instance / device creation.
+    bool has_surface, has_swapchain, has_present_wait;
 };
 
 // Per-test resources, freed together by scratch_free.
@@ -107,3 +110,18 @@ void image_barrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
                    VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access, VkImageLayout new_layout);
 void memory_barrier(VkCommandBuffer cb, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                     VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
+
+// On-screen mode (gpu_present_vk.cpp, see gpu_present.h). One at a time.
+u32 vkp_instance_extensions(VkCtx* v, const char** out);   // surface extensions (writes <= 2), sets has_surface
+// Appends swapchain (+ present id / wait) to out[*n] and returns the feature chain to use in front of `next`.
+void* vkp_device_extensions(VkCtx* v, const char** out, u32* n, void* next);
+struct VkPresent;
+VkPresent* vkp_open(VkCtx* v, const BenchParams* p, const char* test_name, char* err, u32 err_size);
+bool vkp_acquire(VkPresent* s, VkCtx* v, u32 slot);         // next swapchain image, signals the slot's semaphore
+// Blits `src` (left in its stage / access / layout) into the acquired image and moves that to PRESENT_SRC.
+void vkp_record_copy(VkPresent* s, VkCommandBuffer cb, VkImage src, u32 src_w, u32 src_h, VkPipelineStageFlags2 stage,
+                     VkAccessFlags2 access, VkImageLayout layout);
+// Submits cb (waits for the acquire, signals `fence`) and presents. 0 ok, 1 window closed by the user, 2 error.
+u32 vkp_submit_present(VkPresent* s, VkCtx* v, VkCommandBuffer cb, VkFence fence, u32 slot, bool measuring);
+void vkp_begin_measure(VkPresent* s);
+void vkp_close(VkPresent* s, VkCtx* v);

@@ -128,7 +128,10 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_d3d12_compute.cpp
     src/gpu/gpu_d3d12_raster.cpp
     src/gpu/gpu_vk.cpp
-    src/gpu/gpu_vk_tests.cpp)
+    src/gpu/gpu_vk_tests.cpp
+    src/gpu/gpu_present.cpp
+    src/gpu/gpu_present_d3d12.cpp
+    src/gpu/gpu_present_vk.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan

@@ -100,3 +100,12 @@ void d3d_compute_test(D3d* d, GpuTestId test, const BenchParams* p, BenchLive* l
 void d3d_transfer_test(D3d* d, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel);
 void d3d_raster_test(D3d* d, GpuTestId test, const BenchParams* p, BenchLive* live, BenchResult* out,
                      const CancelFlag* cancel);
+
+// On-screen mode (gpu_present_d3d12.cpp, see gpu_present.h). One at a time.
+struct D3dPresent;
+D3dPresent* d3d_present_open(D3d* d, const BenchParams* p, const char* test_name, char* err, u32 err_size);
+// Records the copy of `src` (left in src_state) into the current back buffer.
+void d3d_present_record(D3dPresent* s, ID3D12GraphicsCommandList* list, ID3D12Resource* src, D3D12_RESOURCE_STATES src_state);
+u32 d3d_present_present(D3dPresent* s, bool measuring);    // 0 ok, 1 window closed by the user, 2 present failed
+void d3d_present_begin_measure(D3dPresent* s);            // the next present starts the display log
+void d3d_present_close(D3dPresent* s);

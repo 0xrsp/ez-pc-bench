@@ -228,6 +228,7 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_str(f, 1, "gpu", p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "");
     toon_num(f, 1, "gpu_width", p->gpu_width);
     toon_num(f, 1, "gpu_height", p->gpu_height);
+    toon_str(f, 1, "gpu_present", !p->gpu_onscreen ? "offscreen" : p->gpu_fullscreen ? "fullscreen" : "windowed");
     u32 drives = 0;
     for (u32 d = 0; d < 26; ++d) drives += (p->disk_drives >> d) & 1;
     fprintf(f, "  disk_drives[%u]: ", drives);
