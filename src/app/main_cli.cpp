@@ -147,18 +147,27 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
         printf("%s %llu GiB %s-%u", i ? "," : " |", s->ram.modules[i].size_bytes / GiB, s->ram.modules[i].type,
                s->ram.modules[i].configured_mts);
     printf("\n");
-    for (u32 i = 0; i < s->gpu_count; ++i) printf("GPU%u  %s\n", i, s->gpus[i].name);
+    for (u32 i = 0; i < s->gpu_count; ++i)
+        printf("GPU%u  %s, driver %s%s\n", i, s->gpus[i].name, s->gpus[i].driver[0] ? s->gpus[i].driver : "?",
+               s->gpus[i].hags < 0 ? "" : s->gpus[i].hags ? ", HW scheduling on" : ", HW scheduling off");
+    if (s->board.sys_product[0] || s->board.board_product[0])
+        printf("Board %s %s, %s %s, BIOS %s (%s)\n", s->board.sys_vendor, s->board.sys_product, s->board.board_vendor,
+               s->board.board_product, s->board.bios_version, s->board.bios_date);
     for (u32 i = 0; i < s->drive_count; ++i) {
         char d[192];
         drive_describe(&s->drives[i], d, sizeof(d));
         printf("Disk  %c:  %s\n", s->drives[i].letter, d);
     }
-    printf("OS    %s\n", s->os);
+    char win[192];
+    winstate_describe(&s->win, win, sizeof(win));
+    printf("OS    %s, %s\n", s->os, win);
     printf("Power %s, plan \"%s\", mode \"%s\"\n\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
            power_mode_name(s->power.mode));
     if (!s->elevated) printf("WARNING: not running as administrator (use --elevate). Some tests are degraded.\n");
     if (!s->power.on_ac) printf("WARNING: running on battery - results will be lower.\n");
     if (!power_is_best_performance(&s->power)) printf("WARNING: power mode is not \"Best performance\".\n");
+    char wl[2][192];
+    for (u32 i = 0, n = winstate_warnings(&s->win, wl, 2); i < n; ++i) printf("WARNING: %s\n", wl[i]);
     bool disk_selected = false;
     for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && selected[i];
     for (u32 d = 0; d < 26 && disk_selected; ++d) {

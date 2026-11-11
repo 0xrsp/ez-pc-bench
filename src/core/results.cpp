@@ -162,15 +162,27 @@ static void write_system(FILE* f) {
         toon_row_end(&r);
     }
 
-    toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id");
+    toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id,driver,hags");
     for (u32 i = 0; i < s->gpu_count; ++i) {
+        const GpuInfo* g = &s->gpus[i];
         ToonRow r = toon_row(f, 2);
-        toon_cell_str(&r, s->gpus[i].name);
-        toon_cell_num(&r, (f64)s->gpus[i].dedicated_vram);
-        toon_cell_num(&r, s->gpus[i].vendor_id);
-        toon_cell_num(&r, s->gpus[i].device_id);
+        toon_cell_str(&r, g->name);
+        toon_cell_num(&r, (f64)g->dedicated_vram);
+        toon_cell_num(&r, g->vendor_id);
+        toon_cell_num(&r, g->device_id);
+        toon_cell_str(&r, g->driver);
+        toon_cell_str(&r, g->hags < 0 ? "unsupported" : g->hags ? "on" : "off");
         toon_row_end(&r);
     }
+
+    toon_key(f, 1, "board");
+    toon_str(f, 2, "system", s->board.sys_vendor);
+    toon_str(f, 2, "product", s->board.sys_product);
+    toon_str(f, 2, "board_vendor", s->board.board_vendor);
+    toon_str(f, 2, "board", s->board.board_product);
+    toon_str(f, 2, "bios_vendor", s->board.bios_vendor);
+    toon_str(f, 2, "bios_version", s->board.bios_version);
+    toon_str(f, 2, "bios_date", s->board.bios_date);
 
     toon_table(f, 1, "drives", s->drive_count,
                "letter,model,bus,fs,total_bytes,logical_sector,physical_sector,virtual_disk,dev_drive,bitlocker");
@@ -193,6 +205,11 @@ static void write_system(FILE* f) {
 
     toon_str(f, 1, "os", s->os);
     toon_bool(f, 1, "elevated", s->elevated);
+    toon_key(f, 1, "windows");
+    const i8 w[] = { s->win.hypervisor, s->win.vbs, s->win.hvci, s->win.secure_boot, s->win.game_mode };
+    const char* const wn[] = { "hypervisor", "vbs", "memory_integrity", "secure_boot", "game_mode" };
+    for (u32 i = 0; i < ARRAY_COUNT(w); ++i) toon_str(f, 2, wn[i], w[i] < 0 ? "unknown" : w[i] ? "on" : "off");
+    toon_str(f, 2, "tpm", s->win.tpm == 20 ? "2.0" : s->win.tpm == 12 ? "1.2" : "none");
     toon_key(f, 1, "power");
     toon_bool(f, 2, "on_ac", s->power.on_ac);
     toon_str(f, 2, "plan", s->power.scheme_name);

@@ -129,7 +129,28 @@ static const char* smbios_mem_type(u8 t) {
     }
 }
 
-static void ram_query(RamInfo* ram) {
+static void copy_smbios(char* dst, u32 size, const u8* p, u8 len, const u8* end, u8 index) {
+    snprintf(dst, size, "%s", smbios_string(p, len, end, index));
+    trim(dst);
+}
+
+// Types 0 (BIOS), 1 (system), 2 (baseboard).
+static void board_record(BoardInfo* b, const u8* p, u8 len, const u8* end) {
+    const u8 type = p[0];
+    if (type == 0 && len >= 0x09) {
+        copy_smbios(b->bios_vendor, sizeof(b->bios_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->bios_version, sizeof(b->bios_version), p, len, end, p[0x05]);
+        copy_smbios(b->bios_date, sizeof(b->bios_date), p, len, end, p[0x08]);
+    } else if (type == 1 && len >= 0x08) {
+        copy_smbios(b->sys_vendor, sizeof(b->sys_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->sys_product, sizeof(b->sys_product), p, len, end, p[0x05]);
+    } else if (type == 2 && len >= 0x08) {
+        copy_smbios(b->board_vendor, sizeof(b->board_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->board_product, sizeof(b->board_product), p, len, end, p[0x05]);
+    }
+}
+
+static void smbios_query(RamInfo* ram, BoardInfo* board) {
     MEMORYSTATUSEX ms = { sizeof(ms) };
     if (GlobalMemoryStatusEx(&ms)) ram->total_bytes = ms.ullTotalPhys;
     ULONGLONG installed_kib = 0;
@@ -144,7 +165,7 @@ static void ram_query(RamInfo* ram) {
         const RawSmbios* raw = (const RawSmbios*)buf;
         const u8* p = raw->data;
         const u8* end = raw->data + raw->length;
-        while (p + 4 <= end && ram->module_count < ARRAY_COUNT(ram->modules)) {
+        while (p + 4 <= end) {
             const u8 type = p[0], len = p[1];
             if (len < 4) break;
             // Structure end: formatted area followed by a double-null-terminated string set.
@@ -152,7 +173,8 @@ static void ram_query(RamInfo* ram) {
             while (next + 1 < end && !(next[0] == 0 && next[1] == 0)) ++next;
             next += 2;
 
-            if (type == 17 && len >= 0x15) {
+            board_record(board, p, len, end);
+            if (type == 17 && len >= 0x15 && ram->module_count < ARRAY_COUNT(ram->modules)) {
                 u16 size_field = *(const u16*)(p + 0x0C);
                 u64 bytes = 0;
                 if (size_field == 0x7FFF && len >= 0x20) bytes = (u64)*(const u32*)(p + 0x1C) * MiB;
@@ -519,8 +541,10 @@ void sysinfo_init() {
     memset(&g_sys, 0, sizeof(g_sys));
     cpu_query(&g_sys.cpu);
     cpu_topology(&g_sys.cpu);
-    ram_query(&g_sys.ram);
+    smbios_query(&g_sys.ram, &g_sys.board);
     gpu_query(&g_sys);
+    gpu_details_query(&g_sys);
+    winstate_query(&g_sys.win);
     drives_query(&g_sys);
     LoadLibraryW(L"powrprof.dll");
     sysinfo_refresh_power();

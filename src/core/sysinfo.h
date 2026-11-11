@@ -34,6 +34,24 @@ struct GpuInfo {
     u32 vendor_id, device_id;
     u32 luid_low; i32 luid_high;
     bool software;
+    char driver[24];        // user-mode driver version, "32.0.16.2114"
+    i8 hags;                // hardware-accelerated GPU scheduling: -1 unsupported, 0 off, 1 on
+};
+
+// SMBIOS types 0 / 1 / 2.
+struct BoardInfo {
+    char sys_vendor[64], sys_product[64];
+    char board_vendor[64], board_product[64];
+    char bios_vendor[64], bios_version[64], bios_date[16];
+};
+
+// Windows settings that move benchmark numbers. -1 = unknown, 0 = off, 1 = on.
+struct WinState {
+    i8 hypervisor;          // running under a hypervisor (Hyper-V / VBS root partition counts)
+    i8 vbs, hvci;           // virtualization-based security, memory integrity (Core isolation)
+    i8 secure_boot;
+    i8 game_mode;
+    u8 tpm;                 // 20 = 2.0, 12 = 1.2, 0 = none / unknown
 };
 
 enum PowerMode : u8 { POWER_MODE_UNKNOWN, POWER_MODE_EFFICIENCY, POWER_MODE_BALANCED, POWER_MODE_PERFORMANCE };
@@ -70,6 +88,8 @@ struct SysInfo {
     u32 drive_count;
     DriveInfo drives[26];   // fixed drives
     PowerInfo power;
+    BoardInfo board;
+    WinState win;
     char os[64];
     bool elevated;
 };
@@ -94,3 +114,10 @@ const DriveInfo* sysinfo_find_drive(wchar_t letter);   // fixed drives gathered 
 void drive_describe(const DriveInfo* d, char* buf, u32 size);
 // Disk-target warnings shared by GUI and CLI (VHD / Dev Drive, BitLocker). Returns the line count (0..2).
 u32 drive_target_warnings(wchar_t letter, char lines[2][192]);
+
+// sysinfo_win.cpp
+void winstate_query(WinState* w);
+void gpu_details_query(SysInfo* s);     // driver version + HAGS per GPU
+void winstate_describe(const WinState* w, char* buf, u32 size);
+// Warnings about Windows settings that change results (memory integrity on, Game Mode off). Returns the count.
+u32 winstate_warnings(const WinState* w, char lines[][192], u32 max);

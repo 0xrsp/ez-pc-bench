@@ -125,6 +125,9 @@ static void draw_warnings() {
                  power_mode_name(s->power.mode), s->power.scheme_name);
         lines[n++] = power;
     }
+    static char win[2][192];
+    const u32 nw = winstate_warnings(&s->win, win, 2);
+    for (u32 i = 0; i < nw; ++i) lines[n++] = win[i];
     bool disk_selected = false;
     for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && s_ui.selected[i];
     static char drive[26][2][192];
@@ -204,14 +207,24 @@ static void draw_sysinfo() {
         sys_line("", "%s: %llu GiB %s @ %u MT/s (rated %u)  %s %s", m->locator, m->size_bytes / GiB, m->type,
                  m->configured_mts, m->speed_mts, m->manufacturer, m->part);
     }
-    for (u32 i = 0; i < s->gpu_count; ++i)
-        sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)", i, s->gpus[i].name, s->gpus[i].dedicated_vram / MiB);
+    for (u32 i = 0; i < s->gpu_count; ++i) {
+        const GpuInfo* g = &s->gpus[i];
+        sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)  \xC2\xB7  driver %s%s", i, g->name, g->dedicated_vram / MiB,
+                 g->driver[0] ? g->driver : "?", g->hags < 0 ? "" : g->hags ? ", HW scheduling on" : ", HW scheduling off");
+    }
     for (u32 i = 0; i < s->drive_count; ++i) {
         char d[192];
         drive_describe(&s->drives[i], d, sizeof(d));
         sys_line(i ? "" : "Disk", "%c:  %s", s->drives[i].letter, d);
     }
+    const BoardInfo* bd = &s->board;
+    if (bd->sys_product[0] || bd->board_product[0])
+        sys_line("Board", "%s %s  \xC2\xB7  %s %s  \xC2\xB7  BIOS %s (%s)", bd->sys_vendor, bd->sys_product, bd->board_vendor,
+                 bd->board_product, bd->bios_version, bd->bios_date);
     sys_line("OS", "%s, %s", s->os, s->elevated ? "administrator" : "standard user");
+    char win[192];
+    winstate_describe(&s->win, win, sizeof(win));
+    sys_line("", "%s", win);
     sys_line("Power", "%s%s, plan \"%s\", mode \"%s\"", s->power.on_ac ? "AC" : "battery",
              s->power.has_battery ? "" : " (no battery)", s->power.scheme_name, power_mode_name(s->power.mode));
     ImGui::Unindent(ImGui::GetStyle().FramePadding.x);
