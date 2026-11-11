@@ -139,7 +139,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(s_gfx.device, s_gfx.ctx);
     load_font();
-    if (cmdline && wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
+    if (cmdline) {
+        if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
+    }
 
     // Frame pacing: ~15 FPS while a run is active (stay out of the benchmarks' way),
     // vsync while the user interacts, 4 FPS when idle.

@@ -370,8 +370,14 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   CLI exe, registry with suite init/shutdown, runner thread, metric arena, smoke suite (values / series /
   matrix) with live progress, cancel, results table, JSON export + copy text, elevation prompt + banners,
   sysinfo (CPUID, cache topology, SMBIOS RAM, DXGI GPUs, power plan + mode, OS).
-  Dev flags: GUI `--no-elevate` (skip UAC prompt), `--autorun` (start default selection at launch).
-- **M1 CPU** suite (inline-asm kernels, perf setup, pinned pool).
+  Dev flags: GUI `--no-elevate` (skip UAC prompt), `--autorun` (start default selection at launch),
+  `--duration <ms>`.
+- **M1 CPU** — ✅ done 2026-11-11: 14 tests (`cpu.*`), inline-asm int/FMA kernels, AVX2 SGEMM, SHA-NI,
+  AES-NI/VAES-512, sort, sieve, core-to-core matrix, thread scaling series. Every test with checkable
+  output self-verifies (known-answer tests, GEMM spot check, sortedness, π(1e9)). Pinned pool in
+  `core/threads.*`, generic ST/MT throughput driver in `cpu_bench.cpp`. GUI got a Charts tab
+  (series plots + heat-mapped matrix). Not done: pinning the UI thread away from the ST core
+  (UI at 15 FPS is negligible; revisit if ST numbers look noisy).
 - **M2 Memory** suite.
 - **M3 Disk** suite.
 - **M4 GPU infra + Compute**: shader build (DXIL + SPIR-V), adapter selection, D3D12 + Vulkan devices,
@@ -447,3 +453,14 @@ None currently. (All earlier ones resolved — see decision log.)
   dst offset is ahead of src by 16–48 B. A real Zen 4 `rep movsb` aliasing effect — remember it when
   designing the memory copy test (use own kernels, control relative alignment).
 - CRT `memset` switches to non-temporal stores somewhere above 32 MiB (write BW jumps 14 → 39 GB/s on battery).
+- CPU suite on battery / "Best power efficiency" (~2.4 GHz effective), 1 s phases, ST → MT:
+  int ALU 8.6 → 72 Gops/s (≈3.6 ops/clk, 4 ALUs), imul 2.3 → 19.7 Gops/s (1/clk),
+  FP32 FMA scalar 9.7 → 78.6, AVX2 FP32 75 → 629, AVX2 FP64 35 → 313, AVX-512 FP32 71 → 628 GFLOPS
+  (Zen 4 double-pumps zmm: same FLOPs/clk as AVX2), SGEMM 67 → 566 GFLOPS (~89 % of FMA peak),
+  SHA-256 1.21 → 19.0 GB/s (MT/ST 15.7x: latency-bound, SMT helps), AES-128 VAES-512 14.6 → 123 GB/s,
+  sort 8.3 → 54.8 Melem/s, sieve 1448 → 10699 Mnum/s. FMA scaling linear to 8 threads, SMT adds ~0.
+  Re-measure on AC + Best performance.
+- Core-to-core: spinning **without** `pause` inflated everything (cross-core 60–70 ns, SMT 42–52 ns).
+  With `_mm_pause()` in both spin loops: cross-core ~43–50 ns, SMT siblings ~27–40 ns. Kept `pause`.
+- Throughput live rate uses a ~0.5 s sliding window; without it single-thread SGEMM (0.2 s per call)
+  showed 4x spikes.

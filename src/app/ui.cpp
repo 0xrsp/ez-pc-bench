@@ -34,6 +34,10 @@ void ui_init() {
 
 bool ui_wants_quit() { return s_ui.quit; }
 
+void ui_set_duration(u32 ms) {
+    if (ms >= 100) s_ui.params.duration_ms = ms;
+}
+
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
     runner_start(s_ui.selected, &s_ui.params);
@@ -239,6 +243,8 @@ static void draw_test_row(u32 id, bool running) {
     } else if (st != ST_NOT_RUN) {
         ImGui::TextColored(status_color(st), "%s", status_name(st));
         if ((st == ST_FAILED || st == ST_SKIPPED) && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_results[id].error);
+    } else {
+        ImGui::TextUnformatted("");     // end the line started by SameLine
     }
     ImGui::PopID();
 }
@@ -259,7 +265,7 @@ static void draw_tree() {
         if (total == 0) continue;
 
         ImGui::PushID((int)s);
-        const bool open = ImGui::TreeNodeEx("##suite", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed |
+        const bool open = ImGui::TreeNodeEx("##suite", (sel ? ImGuiTreeNodeFlags_DefaultOpen : 0) | ImGuiTreeNodeFlags_Framed |
                                                            ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
                                             "%s", g_suites[s].name);
         ImGui::SameLine(s_status_x);
@@ -416,6 +422,29 @@ static void draw_results() {
             continue;
         }
         const Metric* m = res_metrics(r);
+        if (r->kind == RESULT_MATRIX && r->count) {
+            // One summary row; the full grid is on the Charts tab.
+            f64 lo = 0.0, hi = 0.0, sum = 0.0;
+            u32 n = 0;
+            for (u32 k = 0; k < r->count; ++k) {
+                if (r->rows == r->cols && k / r->cols == k % r->cols) continue;    // skip diagonal
+                const f64 val = m[k].value;
+                lo = n == 0 || val < lo ? val : lo;
+                hi = n == 0 || val > hi ? val : hi;
+                sum += val;
+                ++n;
+            }
+            char vmin[32], vavg[32], vmax[32];
+            format_value(vmin, sizeof(vmin), lo);
+            format_value(vavg, sizeof(vavg), n ? sum / n : 0.0);
+            format_value(vmax, sizeof(vmax), hi);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+            ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
+            ImGui::TableNextColumn(); ImGui::Text("%s / %s / %s", vmin, vavg, vmax);
+            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", m[0].unit);
+            continue;
+        }
         for (u32 k = 0; k < r->count; ++k) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -424,8 +453,6 @@ static void draw_results() {
             if (r->kind == RESULT_SERIES) {
                 format_x(x, sizeof(x), m[k].x, r->x_unit);
                 snprintf(label, sizeof(label), "%s @ %s", m[k].name, x);
-            } else if (r->kind == RESULT_MATRIX && r->cols) {
-                snprintf(label, sizeof(label), "%s [%u,%u]", m[k].name, k / r->cols, k % r->cols);
             } else {
                 snprintf(label, sizeof(label), "%s", m[k].name);
             }
@@ -438,6 +465,90 @@ static void draw_results() {
         }
     }
     ImGui::EndTable();
+}
+
+// ---- charts: series plots and matrix grids ----------------------------------------------
+
+static void draw_series(const BenchResult* r) {
+    static f32 ys[1024];
+    const Metric* m = res_metrics(r);
+    const u32 n = r->count < 1024 ? r->count : 1024;
+    f32 hi = 0.0f;
+    for (u32 k = 0; k < n; ++k) {
+        ys[k] = (f32)m[k].value;
+        if (ys[k] > hi) hi = ys[k];
+    }
+    char first[32], last[32];
+    format_x(first, sizeof(first), m[0].x, r->x_unit);
+    format_x(last, sizeof(last), m[n - 1].x, r->x_unit);
+    char overlay[96];
+    snprintf(overlay, sizeof(overlay), "%s [%s] vs %s (%s .. %s)", m[0].name, m[0].unit, r->x_name ? r->x_name : "x",
+             first, last);
+    ImGui::PlotLines("##series", ys, (int)n, 0, overlay, 0.0f, hi * 1.15f, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 8.0f));
+    if (ImGui::IsItemHovered()) {
+        // Map mouse x to a point index (PlotLines spaces points evenly).
+        const f32 t = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x) / ImGui::GetItemRectSize().x;
+        u32 k = (u32)(t * (n - 1) + 0.5f);
+        if (k >= n) k = n - 1;
+        char x[32], v[32];
+        format_x(x, sizeof(x), m[k].x, r->x_unit);
+        format_value(v, sizeof(v), m[k].value);
+        ImGui::SetTooltip("%s: %s %s", x, v, m[k].unit);
+    }
+}
+
+static void draw_matrix(const BenchResult* r) {
+    const Metric* m = res_metrics(r);
+    f64 lo = 0.0, hi = 0.0;
+    bool first = true;
+    for (u32 k = 0; k < r->count; ++k) {
+        if (r->rows == r->cols && k / r->cols == k % r->cols) continue;
+        lo = first || m[k].value < lo ? m[k].value : lo;
+        hi = first || m[k].value > hi ? m[k].value : hi;
+        first = false;
+    }
+    ImGui::TextDisabled("%s [%s], green = low, red = high", m[0].name, m[0].unit);
+    const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX;
+    if (!ImGui::BeginTable("matrix", r->cols + 1, flags)) return;
+    ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+    ImGui::TableNextColumn();
+    for (u32 c = 0; c < r->cols; ++c) { ImGui::TableNextColumn(); ImGui::TextDisabled("%u", c); }
+    char v[32];
+    for (u32 row = 0; row < r->rows; ++row) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("%u", row);
+        for (u32 c = 0; c < r->cols; ++c) {
+            ImGui::TableNextColumn();
+            const u32 k = row * r->cols + c;
+            if (k >= r->count || (r->rows == r->cols && row == c)) continue;
+            const f32 t = hi > lo ? (f32)((m[k].value - lo) / (hi - lo)) : 0.0f;
+            const ImU32 bg = ImGui::GetColorU32(ImVec4(0.15f + 0.55f * t, 0.55f - 0.35f * t, 0.15f, 0.65f));
+            ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, bg);
+            format_value(v, sizeof(v), m[k].value);
+            ImGui::TextUnformatted(v);
+        }
+    }
+    ImGui::EndTable();
+}
+
+static void draw_charts() {
+    bool any = false;
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        if (status_of(i) != ST_DONE) continue;
+        const BenchResult* r = &g_results[i];
+        if (r->count == 0 || r->kind == RESULT_VALUES) continue;
+        any = true;
+        const BenchDesc* b = &g_benches[i];
+        ImGui::PushID((int)i);
+        if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
+            if (r->kind == RESULT_SERIES) draw_series(r);
+            else draw_matrix(r);
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (!any) ImGui::TextDisabled("Series and matrix results (latency curves, scaling, core-to-core) appear here.");
 }
 
 // ---- frame --------------------------------------------------------------------------
@@ -474,7 +585,16 @@ void ui_draw() {
         ImGui::BeginChild("live", ImVec2(0, ImGui::GetFontSize() * 13.0f), ImGuiChildFlags_Borders);
         draw_live();
         ImGui::EndChild();
-        draw_results();
+        if (ImGui::BeginTabBar("out")) {
+            if (ImGui::BeginTabItem("Results")) { draw_results(); ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Charts")) {
+                ImGui::BeginChild("charts", ImVec2(0, 0));
+                draw_charts();
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
         ImGui::EndTable();
     }
     ImGui::End();

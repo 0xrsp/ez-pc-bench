@@ -46,10 +46,16 @@ add_library(ezbench_core STATIC
     src/core/sysinfo.cpp
     src/core/perf.cpp
     src/core/elevation.cpp
-    src/core/smoke_bench.cpp)
+    src/core/smoke_bench.cpp
+    src/core/threads.cpp
+    src/core/mem_util.cpp
+    src/cpu/cpu_bench.cpp
+    src/cpu/cpu_kernels.cpp
+    src/cpu/cpu_crypto.cpp
+    src/cpu/cpu_gemm.cpp)
 target_include_directories(ezbench_core PUBLIC src)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings
-    dxgi powrprof winmm advapi32 shell32)
+    dxgi powrprof winmm advapi32 shell32 synchronization)
 
 # GUI
 add_executable(ez-pc-bench WIN32
