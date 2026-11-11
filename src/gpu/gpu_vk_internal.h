@@ -76,7 +76,29 @@ struct VkCtx {
     VkFence fence[GPU_FRAMES_IN_FLIGHT];
     VkFence xfer_fence;
     VkQueryPool query_pool;         // 2 * VK_MAX_BATCH timestamps
+
+    // Feature tests (gpu_vk_features.cpp): optional features enabled at device creation when supported.
+    bool ray_query;                 // VK_KHR_acceleration_structure + VK_KHR_ray_query + bufferDeviceAddress
+    bool mesh_shader;               // VK_EXT_mesh_shader (task + mesh)
+    bool tessellation;              // tessellationShader
+    bool fsr, fsr_attachment;       // VK_KHR_fragment_shading_rate: pipeline (per draw) / attachment rate
+    u32 comp_family;                // compute-only queue family, ~0u if none (async compute test)
+    VkQueue comp_queue;
 };
+
+// Extensions and feature structs the feature tests need, chained into vkCreateDevice (gpu_vk_features.cpp).
+struct VkFeatureChain {
+    const char* exts[8];
+    u32 ext_count;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR as;
+    VkPhysicalDeviceRayQueryFeaturesKHR rq;
+    VkPhysicalDeviceMeshShaderFeaturesEXT mesh;
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR fsr;
+    void* next;                     // head of the chain of enabled structs (null if none)
+};
+// Before vkCreateDevice: sets v->ray_query / mesh_shader / tessellation / fsr*, fills `fc`, and turns on
+// bufferDeviceAddress / tessellationShader in e12 / features when the tests can use them.
+void vk_features_prepare(VkCtx* v, VkFeatureChain* fc, VkPhysicalDeviceVulkan12Features* e12, VkPhysicalDeviceFeatures* features);
 
 // Per-test resources, freed together by scratch_free.
 struct VkScratch {

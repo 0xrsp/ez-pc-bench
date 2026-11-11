@@ -44,7 +44,14 @@ typedef std::atomic<bool> CancelFlag;
     X(scene,     GT_SCENE,        "3D",      "3d",      "Lit scene",                   BENCH_PREVIEW)   \
     X(sprites,   GT_SPRITES,      "2D",      "2d",      "Sprite batch",                BENCH_PREVIEW)   \
     X(blit,      GT_BLIT,         "2D",      "2d",      "Blit / copy",                 BENCH_PREVIEW)   \
-    X(clear,     GT_CLEAR,        "2D",      "2d",      "Clear",                       BENCH_PREVIEW)
+    X(clear,     GT_CLEAR,        "2D",      "2d",      "Clear",                       BENCH_PREVIEW)   \
+    /* Feature tests: gpu_features.h */                                                                 \
+    X(raytracing,       GT_RAYTRACING,       "Features", "features", "Ray tracing (inline ray query)",  BENCH_PREVIEW) \
+    X(mesh_shader,      GT_MESH_SHADER,      "Features", "features", "Mesh shaders vs vertex pipeline", BENCH_PREVIEW) \
+    X(tessellation,     GT_TESSELLATION,     "Features", "features", "Tessellation",                    BENCH_PREVIEW) \
+    X(vrs,              GT_VRS,              "Features", "features", "Variable-rate shading",           BENCH_PREVIEW) \
+    X(sampler_feedback, GT_SAMPLER_FEEDBACK, "Features", "features", "Sampler feedback",                BENCH_PREVIEW) \
+    X(async_compute,    GT_ASYNC_COMPUTE,    "Features", "features", "Async compute overlap",           BENCH_PREVIEW)
 
 enum GpuTestId : u8 {
 #define X(id, e, g, gid, name, flags) e,

@@ -191,16 +191,23 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     for (u32 i = 0; i < nq; ++i)
         if ((qf[i].queueFlags & VK_QUEUE_TRANSFER_BIT) && !(qf[i].queueFlags & gc) && v->xfer_family == ~0u) v->xfer_family = i;
     if (v->xfer_family == ~0u) v->xfer_family = v->gfx_family;
+    v->comp_family = ~0u;      // async compute test: a compute queue outside the graphics family
+    for (u32 i = 0; i < nq; ++i)
+        if ((qf[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && v->comp_family == ~0u) v->comp_family = i;
     const u32 bits = qf[v->gfx_family].timestampValidBits;
     v->ts_mask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
 
     const f32 prio = 1.0f;
-    VkDeviceQueueCreateInfo qci[2] = {};
-    for (u32 i = 0; i < 2; ++i) {
-        qci[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        qci[i].queueFamilyIndex = i == 0 ? v->gfx_family : v->xfer_family;
-        qci[i].queueCount = 1;
-        qci[i].pQueuePriorities = &prio;
+    VkDeviceQueueCreateInfo qci[3] = {};
+    const u32 families[3] = { v->gfx_family, v->xfer_family, v->comp_family };
+    u32 nqci = 0;
+    for (u32 i = 0; i < 3; ++i) {
+        if (families[i] == ~0u || (i == 1 && families[1] == families[0])) continue;
+        qci[nqci].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        qci[nqci].queueFamilyIndex = families[i];
+        qci[nqci].queueCount = 1;
+        qci[nqci].pQueuePriorities = &prio;
+        ++nqci;
     }
 
     VkPhysicalDeviceVulkan13Features e13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
@@ -210,14 +217,20 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     e12.shaderFloat16 = v->fp16;
     VkPhysicalDeviceFeatures2 ef = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &e12 };
     ef.features.shaderInt16 = v->fp16;
+    VkFeatureChain fc = {};
+    vk_features_prepare(v, &fc, &e12, &ef.features);
+    e13.pNext = fc.next;
 
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &ef };
-    ci.queueCreateInfoCount = v->xfer_family != v->gfx_family ? 2 : 1;
+    ci.queueCreateInfoCount = nqci;
     ci.pQueueCreateInfos = qci;
+    ci.enabledExtensionCount = fc.ext_count;
+    ci.ppEnabledExtensionNames = fc.exts;
     VkResult r = vkCreateDevice(v->phys, &ci, nullptr, &v->dev);
     if (r != VK_SUCCESS) return fail(error, error_size, "vkCreateDevice", r);
     vkGetDeviceQueue(v->dev, v->gfx_family, 0, &v->gfx_queue);
     vkGetDeviceQueue(v->dev, v->xfer_family, 0, &v->xfer_queue);
+    if (v->comp_family != ~0u) vkGetDeviceQueue(v->dev, v->comp_family, 0, &v->comp_queue);
     vkGetPhysicalDeviceMemoryProperties(v->phys, &v->mem_props);
     v->cmd_push_constants = (PFN_vkCmdPushConstants)vkGetDeviceProcAddr(v->dev, "vkCmdPushConstants");
     v->cmd_draw = (PFN_vkCmdDraw)vkGetDeviceProcAddr(v->dev, "vkCmdDraw");

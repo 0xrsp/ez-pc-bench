@@ -1,6 +1,7 @@
 // Vulkan backend: the GPU tests (compute, host <-> GPU transfer, offscreen 3D / 2D with preview).
 // Workloads, timing and reporting follow the shared contract in gpu_common.h.
 #include "gpu/gpu_vk_internal.h"
+#include "gpu/gpu_features.h"
 #include "core/results.h"
 #include "core/timer.h"
 #include <string.h>
@@ -588,6 +589,10 @@ void gpu_vk_run(void* state, GpuTestId test, const BenchParams* p, BenchLive* li
         break;
     case GT_VRAM_BW:  test_vram(v, p, live, out, cancel); break;
     case GT_TRANSFER: test_transfer(v, p, live, out, cancel); break;
-    default:          test_frames(v, test, p, live, out, cancel); break;
+    case GT_RAYTRACING: case GT_MESH_SHADER: case GT_TESSELLATION: case GT_VRS: case GT_SAMPLER_FEEDBACK:
+    case GT_ASYNC_COMPUTE:
+        vk_feature_test(v, test, p, live, out, cancel);
+        break;
+    default:         test_frames(v, test, p, live, out, cancel); break;
     }
 }
