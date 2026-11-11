@@ -159,7 +159,9 @@ static const ToolButton s_tool_buttons[] = {
                                                "link, and CPU, GPU and drive temperatures in their own window." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+    { TOOL_FRAMES, ICON_FRAMES, "Frames", "Frame capture of any running game or app (like PresentMon / CapFrameX): fps, "
+                                          "frame times, 1% / 0.1% lows and a frame-time graph. Needs administrator rights." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution and present mode, disk test file and passes, theme." },
 };
 
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.

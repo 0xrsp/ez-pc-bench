@@ -428,6 +428,15 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             dl->AddLine(ImVec2(c.x - r * 0.62f, c.y + r * 0.36f), ImVec2(c.x + r * 0.05f, c.y + r * 0.36f), col, line);
             break;
         }
+        case ICON_FRAMES: {     // frame-time graph: axes and a line with one spike
+            dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x - r, c.y + r), col, line);
+            dl->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y + r), col, line);
+            const ImVec2 pts[] = { { c.x - r * 0.7f, c.y + r * 0.35f }, { c.x - r * 0.25f, c.y + r * 0.3f },
+                                   { c.x + r * 0.05f, c.y - r * 0.75f }, { c.x + r * 0.35f, c.y + r * 0.3f },
+                                   { c.x + r * 0.95f, c.y + r * 0.35f } };
+            dl->AddPolyline(pts, (int)ARRAY_COUNT(pts), col, line);
+            break;
+        }
     }
 }
 
