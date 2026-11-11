@@ -1,6 +1,7 @@
 // Run monitor (see monitor.h). One sampling thread per run; per-test aggregates are published to g_env
 // when the runner moves on to the next test (or the run ends).
 #include "core/monitor.h"
+#include "core/battery.h"
 #include "core/hwread.h"
 #include "core/results.h"
 #include "core/runner.h"
@@ -34,11 +35,15 @@ struct Sources {
     CpuReader cpu;
     GpuReader gpu;
     f64 last_t;                 // time of the previous sample
+    BatteryReader bat;
+    f64 bat_t;                  // last battery read (firmware refreshes it every few seconds: read once a second)
+    f32 bat_w;                  // discharge W from that read
 };
 
 struct Sample {
     f32 cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp;
     f32 gpu_mhz, gpu_mem_mhz, gpu_util, gpu_temp, gpu_power;
+    f32 bat_w;              // battery discharge W (NaN on AC)
     bool on_ac;
     f64 dt;                 // seconds since the previous sample (weight)
 };
@@ -47,11 +52,14 @@ static void open_sources(Sources* s) {
     memset(s, 0, sizeof(*s));
     cpu_reader_open(&s->cpu);
     gpu_reader_open(&s->gpu, s_gpu_adapter);
+    battery_open(&s->bat);
+    s->bat_w = NAN;
 }
 
 static void close_sources(Sources* s) {
     cpu_reader_close(&s->cpu);
     gpu_reader_close(&s->gpu);
+    battery_close(&s->bat);
 }
 
 static void sample_cpu(Sources* s, Sample* out) {
@@ -90,6 +98,11 @@ static void take_sample(Sources* s, Sample* out) {
     SYSTEM_POWER_STATUS ps;
     out->on_ac = !GetSystemPowerStatus(&ps) || ps.ACLineStatus != 0;
     const f64 now = timer_now();
+    if (s->bat.count && now - s->bat_t >= 1.0) {
+        s->bat_t = now;
+        s->bat_w = battery_read(&s->bat) ? battery_discharge_w(&s->bat) : NAN;
+    }
+    out->bat_w = out->on_ac ? NAN : s->bat_w;
     out->dt = s->last_t > 0.0 ? now - s->last_t : SAMPLE_MS / 1000.0;
     s->last_t = now;
 }
@@ -153,7 +166,7 @@ static void trend_add(Trend* t, const char* phase, f32 v) {
 struct Acc {
     i32 id;
     u32 samples;
-    Stat cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power;
+    Stat cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power, bat_w;
     bool opened;            // first (partial) sample seen
     bool ac_seen, battery_seen;
     Trend cpu_trend, gpu_trend;
@@ -183,6 +196,7 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
     e.gpu_util = stat_avg(&a->gpu_util);
     e.gpu_temp_max = stat_max(&a->gpu_temp);
     e.gpu_power = stat_avg(&a->gpu_power);
+    e.bat_discharge_w = stat_avg(&a->bat_w);
     trend_close(&a->cpu_trend);
     trend_close(&a->gpu_trend);
     e.cpu_drop = a->cpu_trend.worst;
@@ -205,6 +219,7 @@ static void acc_add(Acc* a, const Sample* s, const char* phase) {
     stat_add(&a->gpu_util, s->gpu_util, s->dt);
     stat_add(&a->gpu_temp, s->gpu_temp, s->dt);
     stat_add(&a->gpu_power, s->gpu_power, s->dt);
+    stat_add(&a->bat_w, s->bat_w, s->dt);
     // Clocks only count while that unit is busy: an idle CPU during a GPU test (or vice versa) says nothing.
     if (!isnan(s->cpu_mhz)) {
         stat_add(&a->cpu_mhz, s->cpu_mhz, s->dt);
@@ -317,6 +332,7 @@ void env_describe(const TestEnv* e, bool gpu, char* buf, u32 size) {
     }
     if (!isnan(e->cpu_util)) append(buf, size, " %.0f%% busy", e->cpu_util);
     if (!isnan(e->cpu_temp_max)) append(buf, size, ", %.0f \xC2\xB0""C", e->cpu_temp_max);
+    if (e->bat_discharge_w > 0.0f) append(buf, size, ", battery %.1f W", e->bat_discharge_w);
     if (!gpu) return;
     append(buf, size, "  \xC2\xB7  GPU");
     const size_t start = strlen(buf);
