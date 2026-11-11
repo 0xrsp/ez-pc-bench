@@ -396,10 +396,14 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   drive. Drive info (model, bus, FS, sectors, VHD/Dev Drive, BitLocker) in sysinfo, GUI, CLI and exports.
   **Deviation:** groups are "Sequential"/"Random" and every sequential test runs before any random one
   (random 4K writes slowed later sequential reads, see §13).
-- **M4 GPU infra + Compute** and **M5 GPU 3D + 2D** — in progress 2026-11-11, split by API: groundwork
+- **M4 GPU infra + Compute** and **M5 GPU 3D + 2D** — ✅ done 2026-11-11, split by API: groundwork
   (contract `gpu_common.*`, 18 HLSL entry points → DXIL + SPIR-V build step, registry rows generated from
-  `GPU_TESTS`, preview hand-off + UI preview, `smoke.preview` self-test) done on main; the D3D12 and Vulkan
-  backends are written by two parallel subagents in worktrees against that contract.
+  `GPU_TESTS`, preview hand-off + UI preview, `smoke.preview` self-test) on main; D3D12
+  (`gpu_d3d12*.cpp`: one RS 1.1 root signature, enhanced barriers, copy queue) and Vulkan (`gpu_vk*.cpp`:
+  1.3, dynamic rendering + sync2, device by LUID, dedicated transfer queue) written by two parallel
+  subagents, reviewed and merged. 14 tests per API, all pass on the RTX 5060 Laptop; compute verified on
+  the 780M (adapter selection by LUID). Vulkan validation (incl. sync validation) clean; the D3D12 debug
+  layer isn't installed (Windows optional feature "Graphics Tools"), so D3D12 wasn't layer-validated.
 - **M6 Polish** — ✅ done 2026-11-11 (subagent in a worktree): CSV export (GUI "Save CSV", CLI `--csv`),
   settings persistence (`%APPDATA%\ez-pc-bench\settings.ini`), compare against a saved JSON (GUI
   "Compare...", CLI `--compare`), baseline deltas also in "Copy text". Details in the decision log.
@@ -526,6 +530,33 @@ None currently. (All earlier ones resolved — see decision log.)
   SSD (reproduced twice) → sequential tests always run first.
 - The RTX 5060 vanished from Windows (no PnP device at all) on 2026-11-11 while on battery; likely
   Lenovo Vantage Hybrid-Auto / iGPU-only mode. GPU suites (M4) need AC + dGPU enabled to test it.
+- GPU, RTX 5060 Laptop on AC, both APIs on one build, 1.5 s phases (Vulkan first, D3D12 second):
+  | Test | Vulkan | D3D12 |
+  |---|---|---|
+  | FP32 / FP16 / INT32 | 13.7 / 15.6 TFLOPS / 9.2 TIOPS | 12.2 / 15.3 / 8.4 |
+  | VRAM read | 364 GB/s | 346 GB/s (128-bit GDDR7, ~384 theoretical) |
+  | LDS | 8.7 TB/s | 8.6 TB/s |
+  | Upload / readback | 14.1 GB/s | 14.2 GB/s (PCIe Gen4 x8 link, ~15.75 theoretical) |
+  | Triangles / fill / texfill | 2.95 Gtri/s, 104 Gpix/s, 180 Gtex/s | 2.68, 94, 150 |
+  | Draw calls | 30.0 M/s | 39–67 M/s |
+  | Scene / sprites | 7000 fps / 67.8 Msprites/s | 6180 / 65.7 |
+  | Blit / clear | 678 / 2321 GB/s | 608 / 2408 GB/s |
+  Blit / clear exceed VRAM bandwidth: two 1080p RGBA8 targets (16.6 MB) fit in the 32 MB L2, clears are
+  fast-cleared. The later suite in a run is ~5–15 % slower (heat / boost decay) — compare APIs run-swapped.
+  Radeon 780M compute: FP32 5.2–5.8 TFLOPS, INT32 ~0.9 TIOPS (32-bit imul is slow on RDNA3), VRAM read
+  ~84 GB/s (shared DDR5, 89.6 theoretical), transfer ~35 GB/s (RAM to RAM).
+- Draw calls are CPU-bound in the driver: Vulkan records 10k (push constant + draw) at ~30 ns/draw vs
+  ~13 ns in D3D12 (both measured around the record loop). Push-constant ranges declared for
+  `VK_SHADER_STAGE_ALL` made NVIDIA's Vulkan path ~40 % slower (22 → 30.5 M draws/s): ranges now use
+  compute|vertex|fragment (`VK_PC_STAGES`). Device-level `vkGetDeviceProcAddr` pointers (no loader
+  trampoline) are used for the hot loop but made no measurable difference.
+- NVIDIA places write-combined host heaps (D3D12 UPLOAD and custom L0 + write-combine) in VRAM behind
+  ReBAR, so "upload" from them measured 38–160 GB/s (a VRAM copy). Transfer tests use CPU-cached system
+  memory (D3D12 custom heap L0 + write-back; Vulkan HOST_VISIBLE without DEVICE_LOCAL).
+- Vulkan FP16: DXC's SPIR-V for `cs_fp16` also declares the Int16 capability → needs shaderFloat16 AND
+  shaderInt16. NVIDIA exposes a dedicated transfer-only queue family.
+- Shared shader bugs found by the backend agents and fixed on main: `vs_scene` pitched the camera up (empty
+  frame), `vs_drawcall` used the draw index as the grid column count (`% 0` on draw 0).
 - 2026-11-11: the PC hard-froze once during development (Kernel-Power 41, no low-memory event logged;
   two similar resets on 11/10 predate this project). No benchmark was running then. Precautions since:
   builds use `-- -j 6`, memory arenas capped to ¼ of free RAM, no parallel heavy runs.

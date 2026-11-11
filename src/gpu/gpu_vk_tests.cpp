@@ -41,7 +41,7 @@ static bool run_batch(VkCtx* v, const Dispatch* d, u32 count, f64* ms) {
     vkCmdResetQueryPool(cb, v->query_pool, 0, 2 * count);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipes[d->pipe]);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipe_layout[d->pipe], 0, 1, &d->set, 0, nullptr);
-    vkCmdPushConstants(cb, v->pipe_layout[d->pipe], VK_SHADER_STAGE_ALL, 0, sizeof(GpuParams), &d->pc);
+    vkCmdPushConstants(cb, v->pipe_layout[d->pipe], VK_PC_STAGES, 0, sizeof(GpuParams), &d->pc);
     for (u32 i = 0; i < count; ++i) {
         if (i) memory_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                               VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -372,7 +372,7 @@ static void draw_scene(VkCtx* v, const FrameSetup* f, VkCommandBuffer cb, u32 fr
     case GT_SPRITES:      pc.f[0] = 64.0f / w; pc.f[1] = 64.0f / h; pc.f[2] = time_s; break;
     default: break;
     }
-    vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_ALL, 0, sizeof(pc), &pc);
+    vkCmdPushConstants(cb, layout, VK_PC_STAGES, 0, sizeof(pc), &pc);
 
     switch (f->test) {
     case GT_TRIANGLES:    vkCmdDraw(cb, GR_TRI_COUNT * 3, 1, 0, 0); break;
@@ -382,8 +382,8 @@ static void draw_scene(VkCtx* v, const FrameSetup* f, VkCommandBuffer cb, u32 fr
     case GT_SPRITES:      vkCmdDraw(cb, 6, GR_SPRITES, 0, 0); break;
     case GT_DRAW_CALLS:
         for (u32 i = 0; i < GR_DRAWS; ++i) {
-            vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_ALL, 0, sizeof(u32), &i);
-            vkCmdDraw(cb, 3, 1, 0, 0);
+            v->cmd_push_constants(cb, layout, VK_PC_STAGES, 0, sizeof(u32), &i);
+            v->cmd_draw(cb, 3, 1, 0, 0);
         }
         break;
     default: break;
@@ -480,7 +480,7 @@ static void record_frame(VkCtx* v, const FrameSetup* f, VkCommandBuffer cb, u32 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipes[VP_DOWNSCALE]);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &f->down_set, 0, nullptr);
     const GpuParams pc = { { f->pw, f->ph, 0, 0 }, {} };
-    vkCmdPushConstants(cb, layout, VK_SHADER_STAGE_ALL, 0, sizeof(pc), &pc);
+    vkCmdPushConstants(cb, layout, VK_PC_STAGES, 0, sizeof(pc), &pc);
     vkCmdDispatch(cb, (f->pw + 7) / 8, (f->ph + 7) / 8, 1);
     image_barrier(cb, f->preview->img, color, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                   VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,

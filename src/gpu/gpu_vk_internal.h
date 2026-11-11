@@ -42,6 +42,10 @@ struct VkImg {
     u32 w, h;
 };
 
+// Push constants are visible to the stages we actually use. VK_SHADER_STAGE_ALL would also include
+// tessellation / geometry / mesh / ray stages that some drivers then update on every vkCmdPushConstants.
+constexpr VkShaderStageFlags VK_PC_STAGES = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
 struct VkCtx {
     VkInstance instance;
     VkDebugUtilsMessengerEXT messenger;
@@ -54,6 +58,10 @@ struct VkCtx {
     f64 ts_period_ns;
     u64 ts_mask;
     bool fp16;                      // shaderFloat16 + shaderInt16
+    // Device-level entry points for the per-draw hot loop: skips the vulkan-1.dll loader trampoline
+    // (like D3D12's direct vtable calls), so the draw-call test measures the driver, not the loader.
+    PFN_vkCmdPushConstants cmd_push_constants;
+    PFN_vkCmdDraw cmd_draw;
 
     VkSampler sampler;              // s0: linear, wrap (immutable in the layouts)
     VkDescriptorSetLayout set_layouts[VL_COUNT];

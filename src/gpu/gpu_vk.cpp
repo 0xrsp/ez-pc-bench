@@ -219,6 +219,12 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     vkGetDeviceQueue(v->dev, v->gfx_family, 0, &v->gfx_queue);
     vkGetDeviceQueue(v->dev, v->xfer_family, 0, &v->xfer_queue);
     vkGetPhysicalDeviceMemoryProperties(v->phys, &v->mem_props);
+    v->cmd_push_constants = (PFN_vkCmdPushConstants)vkGetDeviceProcAddr(v->dev, "vkCmdPushConstants");
+    v->cmd_draw = (PFN_vkCmdDraw)vkGetDeviceProcAddr(v->dev, "vkCmdDraw");
+    if (!v->cmd_push_constants || !v->cmd_draw) {
+        snprintf(error, error_size, "vkGetDeviceProcAddr failed");
+        return false;
+    }
     return true;
 }
 
@@ -249,7 +255,7 @@ static bool create_layouts(VkCtx* v) {
     b[VL_TEX][4] = sampler_binding;
     nb[VL_TEX] = 5;
 
-    const VkPushConstantRange pcr = { all, 0, sizeof(GpuParams) };
+    const VkPushConstantRange pcr = { VK_PC_STAGES, 0, sizeof(GpuParams) };
     for (u32 l = 0; l < VL_COUNT; ++l) {
         VkPipelineLayoutCreateInfo pli = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
         pli.pushConstantRangeCount = 1;
