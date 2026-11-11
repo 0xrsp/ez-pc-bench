@@ -393,3 +393,76 @@ bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const 
 f32 theme_checkbox_height() { return ImGui::GetFontSize() + 6.0f * s_scale; }
 
 ImU32 theme_heat(f32 t) { return ImGui::GetColorU32(mix(g_pal.heat_lo, g_pal.heat_hi, t)); }
+
+// ---- icon buttons ---------------------------------------------------------------------------------
+
+static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col, ImU32 bg) {
+    const f32 line = 1.6f * s_scale;
+    switch (icon) {
+        case ICON_GEAR: {
+            const f32 tooth_w = r * 0.42f;
+            for (int k = 0; k < 8; ++k) {
+                const f32 a = k * 0.785398f;
+                const ImVec2 d(cosf(a), sinf(a)), p(-d.y, d.x);
+                const f32 r0 = r * 0.55f, r1 = r * 1.0f, hw = tooth_w * 0.5f;
+                dl->AddQuadFilled(ImVec2(c.x + d.x * r0 - p.x * hw, c.y + d.y * r0 - p.y * hw),
+                                  ImVec2(c.x + d.x * r1 - p.x * hw, c.y + d.y * r1 - p.y * hw),
+                                  ImVec2(c.x + d.x * r1 + p.x * hw, c.y + d.y * r1 + p.y * hw),
+                                  ImVec2(c.x + d.x * r0 + p.x * hw, c.y + d.y * r0 + p.y * hw), col);
+            }
+            dl->AddCircleFilled(c, r * 0.76f, col, 24);
+            dl->AddCircleFilled(c, r * 0.32f, bg, 16);
+            break;
+        }
+        case ICON_THERMOMETER: {
+            const f32 sw = r * 0.26f;
+            dl->AddRect(ImVec2(c.x - sw, c.y - r), ImVec2(c.x + sw, c.y + r * 0.45f), col, sw, line);
+            dl->AddCircleFilled(ImVec2(c.x, c.y + r * 0.58f), r * 0.42f, col, 20);
+            dl->AddRectFilled(ImVec2(c.x - sw * 0.35f, c.y - r * 0.35f), ImVec2(c.x + sw * 0.35f, c.y + r * 0.5f), col);
+            break;
+        }
+        case ICON_DRIVE: {
+            dl->AddRect(ImVec2(c.x - r, c.y - r * 0.62f), ImVec2(c.x + r, c.y + r * 0.62f), col, r * 0.22f, line);
+            dl->AddLine(ImVec2(c.x - r, c.y + r * 0.08f), ImVec2(c.x + r, c.y + r * 0.08f), col, line);
+            dl->AddCircleFilled(ImVec2(c.x + r * 0.58f, c.y + r * 0.36f), r * 0.13f, col, 10);
+            dl->AddLine(ImVec2(c.x - r * 0.62f, c.y + r * 0.36f), ImVec2(c.x + r * 0.05f, c.y + r * 0.36f), col, line);
+            break;
+        }
+    }
+}
+
+f32 theme_icon_button_width(const char* label, f32 h) {
+    if (!label) return h;                                   // icon only: a circle
+    return h * 0.42f + h * 0.55f + h * 0.28f + ImGui::CalcTextSize(label).x + h * 0.5f;
+}
+
+bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip) {
+    const f32 w = theme_icon_button_width(label, h);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
+    const ImVec4 base = g_pal.container_highest;
+    const ImVec4 tint = g_pal.on_surface;
+    const ImVec4 bg = held ? mix(base, tint, 0.12f) : hovered ? mix(base, tint, 0.08f) : base;
+    const ImU32 bg32 = ImGui::GetColorU32(bg), fg = ImGui::GetColorU32(hovered ? g_pal.on_surface : g_pal.on_surface_variant);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg32, h * 0.5f);
+    const f32 icon_r = h * 0.275f;
+    const f32 icon_cx = label ? p.x + h * 0.42f + icon_r : p.x + w * 0.5f;
+    draw_icon(dl, icon, ImVec2(icon_cx, p.y + h * 0.5f), icon_r, fg, bg32);
+    if (label) {
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        dl->AddText(ImVec2(icon_cx + icon_r + h * 0.28f, p.y + (h - ts.y) * 0.5f), fg, label);
+    }
+    if (tooltip) theme_help(tooltip);
+    return clicked;
+}
+
+void theme_help(const char* text) {
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled)) return;
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}

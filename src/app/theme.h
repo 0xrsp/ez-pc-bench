@@ -51,3 +51,11 @@ void theme_progress(f32 fraction, f32 height, f32 width = -FLT_MIN);  // linear 
 // One warning banner, one line per warning; line `button_line` (or -1) gets a button. True when clicked.
 bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const char* button_label);
 ImU32 theme_heat(f32 t);                        // 0 = low (green) .. 1 = high (red)
+
+// Small tonal pill with a drawn icon and an optional label, `h` tall (fits in a header row). The icons are
+// vector-drawn (Inter has no icon glyphs). `tooltip` shows on hover.
+enum ThemeIcon : u8 { ICON_GEAR, ICON_THERMOMETER, ICON_DRIVE };
+f32 theme_icon_button_width(const char* label, f32 h);
+bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip);
+// Wrapped tooltip for the item just drawn (also when it is disabled), after a short hover delay.
+void theme_help(const char* text);

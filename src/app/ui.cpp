@@ -146,11 +146,36 @@ static void sys_line(const char* label, const char* fmt, ...) {
     va_end(args);
 }
 
+// Compact buttons for the tool windows, right-aligned inside the "System" header row just drawn.
+static void draw_tool_buttons() {
+    struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
+    static const ToolButton buttons[] = {
+        { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+    };
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    const ImVec2 after = ImGui::GetCursorScreenPos();
+    const f32 header_h = mx.y - mn.y, h = header_h - ImGui::GetStyle().FramePadding.y;
+    const f32 gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
+    f32 total = 0.0f;
+    for (u32 i = 0; i < ARRAY_COUNT(buttons); ++i) total += theme_icon_button_width(buttons[i].label, h) + (i ? gap : 0.0f);
+    f32 x = mx.x - (header_h - h) * 0.5f - total;
+    for (u32 i = 0; i < ARRAY_COUNT(buttons); ++i) {
+        const ToolButton* b = &buttons[i];
+        ImGui::SetCursorScreenPos(ImVec2(x, mn.y + (header_h - h) * 0.5f));
+        ImGui::PushID((int)b->tool);
+        if (theme_icon_button("##tool", b->icon, b->label, h, b->tip)) ui_request_tool(b->tool);
+        ImGui::PopID();
+        x += theme_icon_button_width(b->label, h) + gap;
+    }
+    ImGui::SetCursorScreenPos(after);
+}
+
 static void draw_sysinfo() {
     const SysInfo* s = &g_sys;
     ImGui::PushFont(g_fonts.medium, 0.0f);
-    const bool open = ImGui::CollapsingHeader("System");
+    const bool open = ImGui::CollapsingHeader("System", ImGuiTreeNodeFlags_AllowOverlap);
     ImGui::PopFont();
+    draw_tool_buttons();
     if (!open) return;
     ImGui::Indent(ImGui::GetStyle().FramePadding.x);
     const CpuInfo* c = &s->cpu;
@@ -261,13 +286,17 @@ static void draw_save_dialog() {
     ImGui::EndPopup();
 }
 
-static bool s_open_compare;      // "Compare..." clicked; main_gui opens the compare window
+static u32 s_tool_requests;      // ToolWindow bits; main_gui opens / focuses them after the frame
 
-bool ui_take_compare_request() {
-    const bool r = s_open_compare;
-    s_open_compare = false;
+void ui_request_tool(ToolWindow t) { s_tool_requests |= 1u << t; }
+
+u32 ui_take_tool_requests() {
+    const u32 r = s_tool_requests;
+    s_tool_requests = 0;
     return r;
 }
+
+BenchParams* ui_params() { return &s_ui.params; }
 
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
 static void draw_targets() {
@@ -341,7 +370,7 @@ static void draw_toolbar() {
     if (theme_button("Save results...")) s_save.open_request = true;
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (theme_button("Compare...")) s_open_compare = true;
+    if (theme_button("Compare...")) ui_request_tool(TOOL_COMPARE);
 
     ImGui::SameLine();
     ImGui::TextDisabled("%u selected", selected);
@@ -468,50 +497,6 @@ static void draw_tree() {
         }
         ImGui::PopID();
     }
-}
-
-// ---- settings -------------------------------------------------------------------
-
-static void draw_settings() {
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    const bool open = ImGui::CollapsingHeader("Settings");
-    ImGui::PopFont();
-    if (!open) return;
-    BenchParams* p = &s_ui.params;
-    ImGui::PushItemWidth(ImGui::GetFontSize() * 12.0f);
-    static const char* const modes[] = { "System", "Light", "Dark" };
-    int mode = (int)theme_mode();
-    if (ImGui::Combo("Theme", &mode, modes, (int)ARRAY_COUNT(modes))) theme_set_mode((ThemeMode)mode);
-    ImGui::PopItemWidth();
-    ImGui::BeginDisabled(runner_is_running());
-    ImGui::PushItemWidth(ImGui::GetFontSize() * 12.0f);
-
-    int duration = (int)p->duration_ms;
-    if (ImGui::SliderInt("Duration per phase (ms)", &duration, 500, 20000)) p->duration_ms = (u32)duration;
-    int threads = (int)p->thread_count;
-    if (ImGui::SliderInt("Threads (0 = all)", &threads, 0, (int)g_sys.cpu.threads)) p->thread_count = (u32)threads;
-
-    int res[2] = { (int)p->gpu_width, (int)p->gpu_height };
-    if (ImGui::InputInt2("GPU render resolution", res)) {
-        p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0]);
-        p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1]);
-    }
-    static const u32 sizes_mib[] = { 64, 256, 512, 1024, 2048, 4096, 8192 };
-    char size_label[16];
-    snprintf(size_label, sizeof(size_label), "%llu MiB", p->disk_file_bytes / MiB);
-    if (ImGui::BeginCombo("Disk test file", size_label)) {
-        for (u32 i = 0; i < ARRAY_COUNT(sizes_mib); ++i) {
-            snprintf(size_label, sizeof(size_label), "%u MiB", sizes_mib[i]);
-            if (ImGui::Selectable(size_label, p->disk_file_bytes == sizes_mib[i] * MiB)) p->disk_file_bytes = sizes_mib[i] * MiB;
-        }
-        ImGui::EndCombo();
-    }
-    int passes = (int)p->disk_passes;
-    if (ImGui::SliderInt("Disk passes", &passes, 1, 9)) p->disk_passes = (u32)passes;
-    theme_checkbox("Disk write-through (FUA)", &p->disk_write_through);
-
-    ImGui::PopItemWidth();
-    ImGui::EndDisabled();
 }
 
 // ---- live panel -----------------------------------------------------------------
@@ -826,8 +811,6 @@ void ui_draw() {
         ImGui::TableNextColumn();
         theme_begin_panel("tree", ImVec2(0, 0));
         draw_tree();
-        ImGui::Spacing();
-        draw_settings();
         theme_end_panel();
 
         ImGui::TableNextColumn();

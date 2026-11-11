@@ -153,6 +153,7 @@ add_executable(ez-pc-bench WIN32
     src/app/main_gui.cpp
     src/app/ui.cpp
     src/app/compare_ui.cpp
+    src/app/settings_ui.cpp
     src/app/library.cpp
     src/app/settings.cpp
     src/app/theme.cpp

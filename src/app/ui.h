@@ -1,4 +1,5 @@
 #pragma once
+#include "app/tool_windows.h"
 #include "core/bench.h"
 
 void ui_init();                         // also loads the saved settings
@@ -11,5 +12,7 @@ void ui_set_preview(void* texture, u32 w, u32 h);   // GPU test preview (ImTextu
 void ui_apply_style(f32 dpi_scale);     // (re)build style for a DPI scale
 void ui_draw();                         // one frame of the whole UI
 bool ui_wants_quit();                   // e.g. after relaunching elevated
-bool ui_take_compare_request();         // true once after "Compare..." was clicked
+void ui_request_tool(ToolWindow t);     // open (or focus) a tool window after this frame
+u32 ui_take_tool_requests();            // bit per ToolWindow requested since the last call
 void ui_results_dir(wchar_t* dir);      // "results" folder next to the exe (created on demand), MAX_PATH chars
+BenchParams* ui_params();               // the settings the next run uses (settings window edits them)

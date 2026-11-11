@@ -2,6 +2,7 @@
 // window is a second top-level window with its own ImGui context and swapchain on the same device.
 #include "app/compare_ui.h"
 #include "app/settings.h"
+#include "app/settings_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/elevation.h"
@@ -38,7 +39,21 @@ static ImGuiContext* s_main_ctx;
 static ImGuiIO* s_main_io;
 static ThemeFonts s_main_fonts;
 
-struct CompareWin {
+// Tool windows (compare, settings, ...): static description + live state, indexed by ToolWindow.
+struct ToolDesc {
+    const wchar_t* title;
+    int w, h;                   // initial size at 100% scaling
+    void (*draw)();             // one frame of the contents
+    void (*on_open)();          // may be null
+    void (*on_close)();         // may be null
+    bool accept_files;          // drag & drop of results files
+};
+static const ToolDesc s_tool_desc[TOOL_COUNT] = {
+    { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
+    { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
+};
+
+struct ToolWin {
     HWND hwnd;
     IDXGISwapChain* swapchain;
     ID3D11RenderTargetView* rtv;
@@ -48,7 +63,7 @@ struct CompareWin {
     UINT resize_w, resize_h;
     bool close, occluded, restyle;
 };
-static CompareWin s_cmp;
+static ToolWin s_tools[TOOL_COUNT];
 
 static void create_rtv() {
     ID3D11Texture2D* back = nullptr;
@@ -185,15 +200,22 @@ static HICON app_icon(HINSTANCE inst, bool small_size) {     // not "small": a m
     return (HICON)LoadImageW(inst, MAKEINTRESOURCEW(100), IMAGE_ICON, w, h, LR_DEFAULTCOLOR);
 }
 
-// ---- compare window ------------------------------------------------------------------------------
+// ---- tool windows ----------------------------------------------------------------------------------
 
-static LRESULT WINAPI cmp_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (s_cmp.io && ImGui_ImplWin32_WndProcHandlerEx(hwnd, msg, wp, lp, *s_cmp.io)) return true;
+static ToolWin* tool_of(HWND hwnd) {
+    for (u32 i = 0; i < TOOL_COUNT; ++i)
+        if (s_tools[i].hwnd == hwnd) return &s_tools[i];
+    return nullptr;
+}
+
+static LRESULT WINAPI tool_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    ToolWin* t = tool_of(hwnd);     // null for messages sent during CreateWindow
+    if (t && t->io && ImGui_ImplWin32_WndProcHandlerEx(hwnd, msg, wp, lp, *t->io)) return true;
     switch (msg) {
         case WM_SIZE:
-            if (wp != SIZE_MINIMIZED) { s_cmp.resize_w = LOWORD(lp); s_cmp.resize_h = HIWORD(lp); }
+            if (t && wp != SIZE_MINIMIZED) { t->resize_w = LOWORD(lp); t->resize_h = HIWORD(lp); }
             return 0;
-        case WM_DROPFILES: {
+        case WM_DROPFILES: {        // only the compare window accepts files
             const HDROP drop = (HDROP)wp;
             const UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
             for (UINT i = 0; i < n; ++i) {
@@ -215,13 +237,22 @@ static LRESULT WINAPI cmp_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if ((wp & 0xfff0) == SC_KEYMENU) return 0;
             break;
         case WM_CLOSE:
-            s_cmp.close = true;     // torn down by the main loop, outside any ImGui frame
+            if (t) t->close = true;     // torn down by the main loop, outside any ImGui frame
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-static bool create_cmp_swapchain() {
+static ID3D11RenderTargetView* back_buffer_rtv(IDXGISwapChain* sc) {
+    ID3D11Texture2D* back = nullptr;
+    ID3D11RenderTargetView* rtv = nullptr;
+    sc->GetBuffer(0, IID_PPV_ARGS(&back));
+    s_gfx.device->CreateRenderTargetView(back, nullptr, &rtv);
+    back->Release();
+    return rtv;
+}
+
+static bool create_tool_swapchain(ToolWin* t) {
     IDXGIDevice* dxgi_dev = nullptr;
     IDXGIAdapter* adapter = nullptr;
     IDXGIFactory* factory = nullptr;
@@ -232,113 +263,119 @@ static bool create_cmp_swapchain() {
         sd.BufferCount = 2;
         sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        sd.OutputWindow = s_cmp.hwnd;
+        sd.OutputWindow = t->hwnd;
         sd.SampleDesc.Count = 1;
         sd.Windowed = TRUE;
         sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        ok = SUCCEEDED(factory->CreateSwapChain(s_gfx.device, &sd, &s_cmp.swapchain));
+        ok = SUCCEEDED(factory->CreateSwapChain(s_gfx.device, &sd, &t->swapchain));
     }
     if (factory) factory->Release();
     if (adapter) adapter->Release();
     if (dxgi_dev) dxgi_dev->Release();
-    if (!ok) return false;
-    ID3D11Texture2D* back = nullptr;
-    s_cmp.swapchain->GetBuffer(0, IID_PPV_ARGS(&back));
-    s_gfx.device->CreateRenderTargetView(back, nullptr, &s_cmp.rtv);
-    back->Release();
-    return true;
+    if (ok) t->rtv = back_buffer_rtv(t->swapchain);
+    return ok;
 }
 
-static void compare_close() {
-    if (!s_cmp.hwnd) return;
-    if (s_cmp.ctx) {
-        ImGui::SetCurrentContext(s_cmp.ctx);
+static void tool_close(u32 id) {
+    ToolWin* t = &s_tools[id];
+    if (!t->hwnd) return;
+    if (t->ctx) {
+        if (s_tool_desc[id].on_close) s_tool_desc[id].on_close();
+        ImGui::SetCurrentContext(t->ctx);
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext(s_cmp.ctx);
+        ImGui::DestroyContext(t->ctx);
         ImGui::SetCurrentContext(s_main_ctx);
     }
-    if (s_cmp.rtv) s_cmp.rtv->Release();
-    if (s_cmp.swapchain) s_cmp.swapchain->Release();
-    const HWND hwnd = s_cmp.hwnd;
-    s_cmp = {};
+    if (t->rtv) t->rtv->Release();
+    if (t->swapchain) t->swapchain->Release();
+    const HWND hwnd = t->hwnd;
+    *t = {};
     DestroyWindow(hwnd);
 }
 
-static void compare_open(HINSTANCE inst) {
-    if (s_cmp.hwnd) {
-        if (IsIconic(s_cmp.hwnd)) ShowWindow(s_cmp.hwnd, SW_RESTORE);
-        SetForegroundWindow(s_cmp.hwnd);
+// Opens tool window `id`, or brings it to the front if it is already open.
+static void tool_open(HINSTANCE inst, u32 id) {
+    ToolWin* t = &s_tools[id];
+    const ToolDesc* d = &s_tool_desc[id];
+    if (t->hwnd) {
+        if (IsIconic(t->hwnd)) ShowWindow(t->hwnd, SW_RESTORE);
+        SetForegroundWindow(t->hwnd);
         return;
     }
     static bool registered;
     if (!registered) {
-        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, cmp_wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
-                           CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench_compare", app_icon(inst, true) };
+        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, tool_wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
+                           CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench_tool", app_icon(inst, true) };
         registered = RegisterClassExW(&wc) != 0;
     }
     RECT work = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    int w = (int)(1360 * s_dpi_scale), h = (int)(820 * s_dpi_scale);
+    int w = (int)(d->w * s_dpi_scale), h = (int)(d->h * s_dpi_scale);
     if (w > (work.right - work.left) * 9 / 10) w = (work.right - work.left) * 9 / 10;
     if (h > (work.bottom - work.top) * 9 / 10) h = (work.bottom - work.top) * 9 / 10;
-    s_cmp.hwnd = CreateWindowW(L"ezpcbench_compare", L"EzPcBench - Compare", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                               CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
-    if (!s_cmp.hwnd || !create_cmp_swapchain()) { compare_close(); return; }
-    style_title_bar(s_cmp.hwnd);
-    // Accept files dropped from a non-elevated Explorer (UIPI blocks these messages by default).
-    DragAcceptFiles(s_cmp.hwnd, TRUE);
-    ChangeWindowMessageFilterEx(s_cmp.hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
-    ChangeWindowMessageFilterEx(s_cmp.hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
-    ChangeWindowMessageFilterEx(s_cmp.hwnd, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
+    t->hwnd = CreateWindowW(L"ezpcbench_tool", d->title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, w, h,
+                            nullptr, nullptr, inst, nullptr);
+    if (!t->hwnd || !create_tool_swapchain(t)) { tool_close(id); return; }
+    style_title_bar(t->hwnd);
+    if (d->accept_files) {
+        // Accept files dropped from a non-elevated Explorer (UIPI blocks these messages by default).
+        DragAcceptFiles(t->hwnd, TRUE);
+        ChangeWindowMessageFilterEx(t->hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+        ChangeWindowMessageFilterEx(t->hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+        ChangeWindowMessageFilterEx(t->hwnd, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
+    }
 
-    s_cmp.ctx = ImGui::CreateContext();
-    ImGui::SetCurrentContext(s_cmp.ctx);
+    t->ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(t->ctx);
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
     ui_apply_style(s_dpi_scale);
-    ImGui_ImplWin32_Init(s_cmp.hwnd);
+    ImGui_ImplWin32_Init(t->hwnd);
     ImGui_ImplDX11_Init(s_gfx.device, s_gfx.ctx);
     theme_load_fonts();
-    s_cmp.fonts = g_fonts;
-    s_cmp.io = &io;
+    t->fonts = g_fonts;
+    t->io = &io;
     g_fonts = s_main_fonts;
     ImGui::SetCurrentContext(s_main_ctx);
 
-    compare_ui_on_open();
-    ShowWindow(s_cmp.hwnd, SW_SHOW);
+    if (d->on_open) d->on_open();
+    ShowWindow(t->hwnd, SW_SHOW);
 }
 
-// One frame of the compare window. `vsync`: present with sync interval 1 (when the main window didn't).
-static void compare_frame(bool vsync) {
-    if (s_cmp.resize_w && s_cmp.resize_h) {
-        if (s_cmp.rtv) { s_cmp.rtv->Release(); s_cmp.rtv = nullptr; }
-        s_cmp.swapchain->ResizeBuffers(0, s_cmp.resize_w, s_cmp.resize_h, DXGI_FORMAT_UNKNOWN, 0);
-        s_cmp.resize_w = s_cmp.resize_h = 0;
-        ID3D11Texture2D* back = nullptr;
-        s_cmp.swapchain->GetBuffer(0, IID_PPV_ARGS(&back));
-        s_gfx.device->CreateRenderTargetView(back, nullptr, &s_cmp.rtv);
-        back->Release();
+static bool tool_visible(u32 id) {
+    const ToolWin* t = &s_tools[id];
+    return t->hwnd && !(t->occluded && t->swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED);
+}
+
+// One frame of tool window `id`. `vsync`: present with sync interval 1 (when nothing else did this loop).
+static void tool_frame(u32 id, bool vsync) {
+    ToolWin* t = &s_tools[id];
+    if (t->resize_w && t->resize_h) {
+        if (t->rtv) { t->rtv->Release(); t->rtv = nullptr; }
+        t->swapchain->ResizeBuffers(0, t->resize_w, t->resize_h, DXGI_FORMAT_UNKNOWN, 0);
+        t->resize_w = t->resize_h = 0;
+        t->rtv = back_buffer_rtv(t->swapchain);
     }
-    ImGui::SetCurrentContext(s_cmp.ctx);
-    g_fonts = s_cmp.fonts;
-    if (s_cmp.restyle) {
+    ImGui::SetCurrentContext(t->ctx);
+    g_fonts = t->fonts;
+    if (t->restyle) {
         ui_apply_style(s_dpi_scale);
-        style_title_bar(s_cmp.hwnd);
-        s_cmp.restyle = false;
+        style_title_bar(t->hwnd);
+        t->restyle = false;
     }
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    compare_ui_draw();
+    s_tool_desc[id].draw();
     ImGui::Render();
     f32 clear[4] = { 0, 0, 0, 1 };
     theme_bg_rgb(clear);
-    s_gfx.ctx->OMSetRenderTargets(1, &s_cmp.rtv, nullptr);
-    s_gfx.ctx->ClearRenderTargetView(s_cmp.rtv, clear);
+    s_gfx.ctx->OMSetRenderTargets(1, &t->rtv, nullptr);
+    s_gfx.ctx->ClearRenderTargetView(t->rtv, clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    s_cmp.occluded = s_cmp.swapchain->Present(vsync ? 1 : 0, 0) == DXGI_STATUS_OCCLUDED;
+    t->occluded = t->swapchain->Present(vsync ? 1 : 0, 0) == DXGI_STATUS_OCCLUDED;
     g_fonts = s_main_fonts;
     ImGui::SetCurrentContext(s_main_ctx);
 }
@@ -407,10 +444,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings" };
             for (int i = 1; i < argc; ++i) {
+                if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
+                    for (u32 t = 0; t < TOOL_COUNT; ++t)
+                        if (!wcscmp(argv[i + 1], tool_names[t])) tool_open(inst, t);
+                    continue;
+                }
                 if (wcscmp(argv[i], L"--compare") != 0) continue;
                 for (int k = i + 1; k < argc && wcsncmp(argv[k], L"--", 2) != 0; ++k) compare_ui_add_path(argv[k]);
-                compare_open(inst);
+                tool_open(inst, TOOL_COMPARE);
             }
             LocalFree(argv);
         }
@@ -429,16 +472,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             last_input = timer_now();
         }
         if (done || ui_wants_quit()) break;
-        if (s_cmp.close) compare_close();
+        for (u32 i = 0; i < TOOL_COUNT; ++i)
+            if (s_tools[i].close) tool_close(i);
 
         const f64 now = timer_now();
         const bool running = runner_is_running();
         const f64 interval = running ? 1.0 / 15.0 : (now - last_input < 1.0 ? 0.0 : 0.25);
         const bool occluded = s_gfx.occluded && s_gfx.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED;
-        const bool cmp_visible = s_cmp.hwnd &&
-            !(s_cmp.occluded && s_cmp.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED);
-        if (now - last_frame < interval || (occluded && !cmp_visible)) {
-            const f64 wait = occluded && !cmp_visible ? 0.1 : interval - (now - last_frame);
+        bool tool_vis[TOOL_COUNT], any_tool = false;
+        for (u32 i = 0; i < TOOL_COUNT; ++i) any_tool |= tool_vis[i] = tool_visible(i);
+        if (now - last_frame < interval || (occluded && !any_tool)) {
+            const f64 wait = occluded && !any_tool ? 0.1 : interval - (now - last_frame);
             MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(wait * 1000.0) + 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             continue;
         }
@@ -447,10 +491,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             ui_apply_style(s_dpi_scale);
             style_title_bar(hwnd);
             s_dpi_changed = false;
-            s_cmp.restyle = true;
+            for (u32 i = 0; i < TOOL_COUNT; ++i) s_tools[i].restyle = true;
         }
-        if (occluded) {     // main window minimized / hidden: only the compare window draws
-            compare_frame(true);
+        if (occluded) {     // main window minimized / hidden: only the tool windows draw (the first one vsyncs)
+            bool vsync = true;
+            for (u32 i = 0; i < TOOL_COUNT; ++i)
+                if (tool_vis[i]) { tool_frame(i, vsync); vsync = false; }
             continue;
         }
         s_gfx.occluded = false;
@@ -476,14 +522,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         s_gfx.occluded = s_gfx.swapchain->Present(1, 0) == DXGI_STATUS_OCCLUDED;
 
-        if (ui_take_compare_request()) compare_open(inst);
-        if (cmp_visible) compare_frame(false);
+        const u32 requests = ui_take_tool_requests();
+        for (u32 i = 0; i < TOOL_COUNT; ++i)
+            if (requests & (1u << i)) tool_open(inst, i);
+        for (u32 i = 0; i < TOOL_COUNT; ++i)
+            if (tool_vis[i]) tool_frame(i, false);
     }
 
     if (runner_is_running()) runner_cancel();
     runner_wait();
     ui_shutdown();
-    compare_close();
+    for (u32 i = 0; i < TOOL_COUNT; ++i) tool_close(i);
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
