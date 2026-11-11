@@ -3,6 +3,7 @@
 #include "app/compare_ui.h"
 #include "app/settings.h"
 #include "app/settings_ui.h"
+#include "app/temps_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/elevation.h"
@@ -51,6 +52,7 @@ struct ToolDesc {
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
+    { L"EzPcBench - Temperatures", 900, 640, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
 };
 
 struct ToolWin {
@@ -444,7 +446,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)

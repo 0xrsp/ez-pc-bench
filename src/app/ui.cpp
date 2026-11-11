@@ -150,6 +150,7 @@ static void sys_line(const char* label, const char* fmt, ...) {
 static void draw_tool_buttons() {
     struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
     static const ToolButton buttons[] = {
+        { TOOL_TEMPS, ICON_THERMOMETER, "Temperatures", "Live CPU, GPU and drive temperatures in their own window." },
         { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
     };
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
