@@ -65,8 +65,9 @@ target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings
 add_executable(ez-pc-bench WIN32
     src/app/main_gui.cpp
     src/app/ui.cpp
+    src/app/theme.cpp
     src/app/app.rc)
-target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi)
+target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

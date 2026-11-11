@@ -1,4 +1,5 @@
 // GUI entry: Win32 window + D3D11 swapchain + Dear ImGui loop, throttled while benchmarks run.
+#include "app/theme.h"
 #include "app/ui.h"
 #include "core/elevation.h"
 #include "core/runner.h"
@@ -10,6 +11,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <dwmapi.h>
 #include <wchar.h>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -89,14 +91,17 @@ static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-static void load_font() {
-    wchar_t path[MAX_PATH];
-    GetWindowsDirectoryW(path, MAX_PATH);
-    wcscat_s(path, L"\\Fonts\\segoeui.ttf");
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return;
-    char path8[MAX_PATH * 3];
-    WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
-    ImGui::GetIO().Fonts->AddFontFromFileTTF(path8);
+static COLORREF bg_colorref() {
+    return RGB((int)(TH_BG_RGB[0] * 255 + 0.5f), (int)(TH_BG_RGB[1] * 255 + 0.5f), (int)(TH_BG_RGB[2] * 255 + 0.5f));
+}
+
+// Dark title bar matching the app background (Windows 11; silently ignored elsewhere).
+static void style_title_bar(HWND hwnd) {
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    const COLORREF caption = bg_colorref(), text = RGB(0xEE, 0xEA, 0xFB);
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
+    DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
@@ -112,7 +117,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
 
     s_dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, LoadCursorW(nullptr, IDC_ARROW),
-                       nullptr, nullptr, L"ezpcbench", nullptr };
+                       CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench", nullptr };
     RegisterClassExW(&wc);
     wchar_t title[96];
     swprintf(title, 96, L"ez-pc-bench%s", is_elevated() ? L" (Administrator)" : L"");
@@ -123,6 +128,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     if (win_h > (work.bottom - work.top) * 9 / 10) win_h = (work.bottom - work.top) * 9 / 10;
     HWND hwnd = CreateWindowW(wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, win_w, win_h,
                               nullptr, nullptr, inst, nullptr);
+    style_title_bar(hwnd);
     if (!create_device(hwnd)) {
         MessageBoxW(nullptr, L"Failed to create a Direct3D 11 device.", L"ez-pc-bench", MB_ICONERROR);
         return 1;
@@ -138,7 +144,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     ui_apply_style(s_dpi_scale);
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(s_gfx.device, s_gfx.ctx);
-    load_font();
+    theme_load_fonts();
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
@@ -187,7 +193,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         ui_draw();
         ImGui::Render();
 
-        const f32 clear[4] = { 0.06f, 0.06f, 0.07f, 1.0f };
+        const f32 clear[4] = { TH_BG_RGB[0], TH_BG_RGB[1], TH_BG_RGB[2], 1.0f };
         s_gfx.ctx->OMSetRenderTargets(1, &s_gfx.rtv, nullptr);
         s_gfx.ctx->ClearRenderTargetView(s_gfx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
