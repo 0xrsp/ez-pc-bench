@@ -55,6 +55,8 @@ static bool ensure_file() {
     return GetFileAttributesW(s_path) != INVALID_FILE_ATTRIBUTES;
 }
 
+const wchar_t* settings_ini_file() { return ensure_file() ? s_path : nullptr; }
+
 static u32 read_u32(const wchar_t* key, u32 def, u32 lo, u32 hi) {
     const UINT v = GetPrivateProfileIntW(L"settings", key, (INT)def, ini_path());
     return v >= lo && v <= hi ? v : def;

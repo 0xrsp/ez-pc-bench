@@ -4,6 +4,7 @@
 #include "app/settings.h"
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
+#include "app/overlay.h"
 #include "app/temps_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
@@ -445,6 +446,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             ui_select_only(ids);
         }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
+        if (wcsstr(cmdline, L"--overlay")) temps_ui_show_overlay();     // sensor overlay with the saved channels
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
@@ -538,6 +540,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     runner_wait();
     ui_shutdown();
     for (u32 i = 0; i < TOOL_COUNT; ++i) tool_close(i);
+    overlay_shutdown();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

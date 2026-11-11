@@ -164,6 +164,7 @@ add_executable(ez-pc-bench WIN32
     src/app/compare_ui.cpp
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
+    src/app/overlay.cpp
     src/app/health_ui.cpp
     src/app/library.cpp
     src/app/settings.cpp
