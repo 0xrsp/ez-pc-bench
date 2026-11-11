@@ -6,6 +6,7 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "imgui.h"
+#include "imgui_internal.h"     // TableGetHoveredRow
 #include <stdio.h>
 
 static bool begin_group(const char* title) {
@@ -13,19 +14,58 @@ static bool begin_group(const char* title) {
     ImGui::PushFont(g_fonts.medium, 0.0f);
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
-    if (!ImGui::BeginTable(title, 2, ImGuiTableFlags_SizingStretchProp)) return false;
+    // A little vertical cell padding so rows are easy hover targets.
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, ImGui::GetFontSize() * 0.2f));
+    const bool ok = ImGui::BeginTable(title, 2, ImGuiTableFlags_SizingStretchProp);
+    ImGui::PopStyleVar();
+    if (!ok) return false;
     ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
     ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthStretch, 0.58f);
     return true;
 }
 
-// Starts a row: label (hover shows `help`), then the control column with a full-width item.
+// Help of the row being drawn: shown when the mouse is anywhere on that row (label, control or the space
+// between), after a short delay, unless a control is being dragged or a dropdown is open.
+static const char* s_row_help;
+static ImGuiID s_hover_id;
+static f64 s_hover_since;
+
+static void finish_row() {
+    if (!s_row_help) return;
+    const ImGuiID id = ImGui::GetID(s_row_help);
+    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+                         ImGui::TableGetHoveredRow() == ImGui::TableGetRowIndex() && !ImGui::IsAnyItemActive() &&
+                         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    if (hovered) {
+        const ImVec4 t = g_pal.on_surface;
+        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(t.x, t.y, t.z, 0.05f)));
+        if (s_hover_id != id) { s_hover_id = id; s_hover_since = ImGui::GetTime(); }
+        if (ImGui::GetTime() - s_hover_since > 0.25) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+            ImGui::TextUnformatted(s_row_help);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    } else if (s_hover_id == id) {
+        s_hover_id = 0;
+    }
+    s_row_help = nullptr;
+}
+
+static void end_group() {
+    finish_row();
+    ImGui::EndTable();
+}
+
+// Starts a row: label, then the control column with a full-width item. `help` covers the whole row.
 static void row(const char* label, const char* help) {
+    finish_row();
     ImGui::TableNextRow();
+    s_row_help = help;
     ImGui::TableNextColumn();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    theme_help(help);
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-FLT_MIN);
 }
@@ -47,8 +87,7 @@ void settings_ui_draw() {
         row("Theme", help);
         int mode = (int)theme_mode();
         if (ImGui::Combo("##theme", &mode, modes, (int)ARRAY_COUNT(modes))) theme_set_mode((ThemeMode)mode);
-        theme_help(help);
-        ImGui::EndTable();
+        end_group();
     }
 
     if (running) {
@@ -65,7 +104,6 @@ void settings_ui_draw() {
         row("Duration per phase", help);
         int duration = (int)p->duration_ms;
         if (ImGui::SliderInt("##duration", &duration, 500, 20000, "%d ms")) p->duration_ms = (u32)duration;
-        theme_help(help);
 
         char threads_help[400];
         snprintf(threads_help, sizeof(threads_help),
@@ -76,8 +114,7 @@ void settings_ui_draw() {
         int threads = (int)p->thread_count;
         if (ImGui::SliderInt("##threads", &threads, 0, (int)g_sys.cpu.threads, threads ? "%d" : "all"))
             p->thread_count = (u32)threads;
-        theme_help(threads_help);
-        ImGui::EndTable();
+        end_group();
     }
 
     if (begin_group("GPU")) {
@@ -90,8 +127,7 @@ void settings_ui_draw() {
             p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0] > 7680 ? 7680 : res[0]);
             p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1] > 4320 ? 4320 : res[1]);
         }
-        theme_help(help);
-        ImGui::EndTable();
+        end_group();
     }
 
     if (begin_group("Disk")) {
@@ -109,7 +145,6 @@ void settings_ui_draw() {
             }
             ImGui::EndCombo();
         }
-        theme_help(file_help);
 
         const char* passes_help = "Each disk test runs this many read passes and write passes and reports the best one, like "
                                   "CrystalDiskMark. More passes give steadier numbers but write more to the SSD: a full "
@@ -117,15 +152,13 @@ void settings_ui_draw() {
         row("Passes", passes_help);
         int passes = (int)p->disk_passes;
         if (ImGui::SliderInt("##passes", &passes, 1, 9)) p->disk_passes = (u32)passes;
-        theme_help(passes_help);
 
         const char* wt_help = "Opens the test file with write-through (FUA): every write must reach the drive's permanent "
                               "storage before it counts, bypassing its volatile write cache. Shows real persistent write "
                               "speed; most drives are much slower this way. Off by default, like most benchmarks.";
         row("Write-through (FUA)", wt_help);
         theme_checkbox("##wt", &p->disk_write_through);
-        theme_help(wt_help);
-        ImGui::EndTable();
+        end_group();
     }
 
     ImGui::Spacing();

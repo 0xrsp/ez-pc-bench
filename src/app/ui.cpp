@@ -146,40 +146,50 @@ static void sys_line(const char* label, const char* fmt, ...) {
     va_end(args);
 }
 
-// Compact buttons for the tool windows, right-aligned inside the "System" header row just drawn.
-static void draw_tool_buttons() {
-    struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
-    static const ToolButton buttons[] = {
-        { TOOL_TEMPS, ICON_THERMOMETER, "Temperatures", "Live CPU, GPU and drive temperatures in their own window." },
-        { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
-                                                  "power-on time from each drive's SMART / NVMe health log." },
-        { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
-    };
-    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-    const ImVec2 after = ImGui::GetCursorScreenPos();
-    const f32 header_h = mx.y - mn.y, h = header_h - ImGui::GetStyle().FramePadding.y;
-    const f32 gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
-    f32 total = 0.0f;
-    for (u32 i = 0; i < ARRAY_COUNT(buttons); ++i) total += theme_icon_button_width(buttons[i].label, h) + (i ? gap : 0.0f);
-    f32 x = mx.x - (header_h - h) * 0.5f - total;
-    for (u32 i = 0; i < ARRAY_COUNT(buttons); ++i) {
-        const ToolButton* b = &buttons[i];
-        ImGui::SetCursorScreenPos(ImVec2(x, mn.y + (header_h - h) * 0.5f));
-        ImGui::PushID((int)b->tool);
-        if (theme_icon_button("##tool", b->icon, b->label, h, b->tip)) ui_request_tool(b->tool);
-        ImGui::PopID();
-        x += theme_icon_button_width(b->label, h) + gap;
+// Tool window buttons, to the right of the "System" header (outside it), same height as the header.
+struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
+static const ToolButton s_tool_buttons[] = {
+    { TOOL_TEMPS, ICON_THERMOMETER, "Temperatures", "Live CPU, GPU and drive temperatures in their own window." },
+    { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
+                                              "power-on time from each drive's SMART / NVMe health log." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+};
+
+// "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
+static bool system_header_row() {
+    const f32 h = ImGui::GetFrameHeight(), gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
+    const f32 lead = ImGui::GetStyle().ItemSpacing.x;       // space between the header and the first button
+    f32 buttons_w = lead;
+    for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i)
+        buttons_w += theme_icon_button_width(s_tool_buttons[i].label, h) + (i ? gap : 0.0f);
+    bool open = false;
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
+    if (ImGui::BeginTable("##system_row", 2)) {
+        ImGui::TableSetupColumn("header", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("tools", ImGuiTableColumnFlags_WidthFixed, buttons_w);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushFont(g_fonts.medium, 0.0f);
+        open = ImGui::CollapsingHeader("System");
+        ImGui::PopFont();
+        ImGui::TableNextColumn();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + lead);
+        for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i) {
+            const ToolButton* b = &s_tool_buttons[i];
+            if (i) ImGui::SameLine(0.0f, gap);
+            ImGui::PushID((int)b->tool);
+            if (theme_icon_button("##tool", b->icon, b->label, h, b->tip)) ui_request_tool(b->tool);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
     }
-    ImGui::SetCursorScreenPos(after);
+    ImGui::PopStyleVar();
+    return open;
 }
 
 static void draw_sysinfo() {
     const SysInfo* s = &g_sys;
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    const bool open = ImGui::CollapsingHeader("System", ImGuiTreeNodeFlags_AllowOverlap);
-    ImGui::PopFont();
-    draw_tool_buttons();
-    if (!open) return;
+    if (!system_header_row()) return;
     ImGui::Indent(ImGui::GetStyle().FramePadding.x);
     const CpuInfo* c = &s->cpu;
     sys_line("CPU", "%s  (%u cores / %u threads)", c->brand, c->cores, c->threads);
