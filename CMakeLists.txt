@@ -143,6 +143,10 @@ add_custom_command(OUTPUT ${LIBRARY_BIN}
     DEPENDS ezb_pack ${LIBRARY_RUNS} VERBATIM)
 file(WRITE ${CMAKE_BINARY_DIR}/library.rc "103 10 \"${LIBRARY_BIN}\"\n")     # 10 = RT_RCDATA
 set_source_files_properties(${CMAKE_BINARY_DIR}/library.rc PROPERTIES OBJECT_DEPENDS ${LIBRARY_BIN})
+# .rc files aren't dependency-scanned: rebuild them when the icon (tools/make_icon.ps1) or fonts change.
+set_source_files_properties(src/app/gui.rc PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_SOURCE_DIR}/assets/icon.ico;${CMAKE_SOURCE_DIR}/third_party/inter/Inter-Regular.ttf;${CMAKE_SOURCE_DIR}/third_party/inter/Inter-Medium.ttf")
+set_source_files_properties(src/app/app.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/assets/icon.ico)
 
 # GUI
 add_executable(ez-pc-bench WIN32

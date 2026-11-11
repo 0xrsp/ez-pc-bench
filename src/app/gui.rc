@@ -2,3 +2,5 @@
 1 24 "app.manifest"
 101 10 "../../third_party/inter/Inter-Regular.ttf"
 102 10 "../../third_party/inter/Inter-Medium.ttf"
+// App icon (assets/icon.svg -> tools/make_icon.ps1). Also the window icon, see main_gui.cpp.
+100 ICON "../../assets/icon.ico"

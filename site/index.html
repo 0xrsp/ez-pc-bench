@@ -8,6 +8,10 @@
 <meta property="og:title" content="ez-pc-bench">
 <meta property="og:description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers, no scores.">
 <meta property="og:image" content="img/main.png">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0B57D0">
 <style>
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.ttf") format("truetype"); font-weight: 500 700; font-display: swap; }
@@ -47,8 +51,7 @@ header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, v
          backdrop-filter: blur(10px); border-bottom: 1px solid var(--outline-variant); }
 header .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
 .logo { font-weight: 600; color: var(--on-surface); font-size: 18px; display: flex; align-items: center; gap: 10px; }
-.logo .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--primary);
-              display: grid; place-items: center; color: var(--on-primary); font-size: 13px; font-weight: 700; }
+.logo .mark { width: 26px; height: 26px; display: block; }
 nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
 nav a { color: var(--on-variant); }
 nav a:hover { color: var(--on-surface); text-decoration: none; }
@@ -111,7 +114,7 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
 
 <header>
   <div class="wrap">
-    <a class="logo" href="#"><span class="mark">ez</span>ez-pc-bench</a>
+    <a class="logo" href="#"><img class="mark" src="favicon.svg" width="26" height="26" alt="">ez-pc-bench</a>
     <nav>
       <a class="opt" href="#measures">What it measures</a>
       <a class="opt" href="#compare">Compare</a>

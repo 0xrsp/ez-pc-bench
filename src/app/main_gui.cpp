@@ -179,6 +179,12 @@ static void style_title_bar(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
 }
 
+// App icon (resource 100, gui.rc) at the system's big (Alt+Tab, taskbar) or small (title bar) icon size.
+static HICON app_icon(HINSTANCE inst, bool small_size) {     // not "small": a macro in the Windows headers
+    const int w = GetSystemMetrics(small_size ? SM_CXSMICON : SM_CXICON), h = GetSystemMetrics(small_size ? SM_CYSMICON : SM_CYICON);
+    return (HICON)LoadImageW(inst, MAKEINTRESOURCEW(100), IMAGE_ICON, w, h, LR_DEFAULTCOLOR);
+}
+
 // ---- compare window ------------------------------------------------------------------------------
 
 static LRESULT WINAPI cmp_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -267,8 +273,8 @@ static void compare_open(HINSTANCE inst) {
     }
     static bool registered;
     if (!registered) {
-        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, cmp_wnd_proc, 0, 0, inst, nullptr, LoadCursorW(nullptr, IDC_ARROW),
-                           CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench_compare", nullptr };
+        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, cmp_wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
+                           CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench_compare", app_icon(inst, true) };
         registered = RegisterClassExW(&wc) != 0;
     }
     RECT work = {};
@@ -356,8 +362,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     ui_init();
 
     s_dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, nullptr, LoadCursorW(nullptr, IDC_ARROW),
-                       CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench", nullptr };
+    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
+                       CreateSolidBrush(bg_colorref()), nullptr, L"ezpcbench", app_icon(inst, true) };
     RegisterClassExW(&wc);
     wchar_t title[96];
     swprintf(title, 96, L"ez-pc-bench%s", is_elevated() ? L" (Administrator)" : L"");

@@ -22,6 +22,13 @@ keep it updated (decision log, open questions, measured facts).
   `site/` (it copies the Inter fonts in from `third_party/`). Preview locally with
   `python -m http.server 8765 --directory site` after copying the two Inter TTFs to `site/fonts/` (git-ignored).
 
+## Icon
+
+- Master: `assets/icon.svg` (italic E + lightning-bolt Z). After editing it run
+  `powershell -ExecutionPolicy Bypass -File tools\make_icon.ps1`: regenerates `assets/icon.ico` (16–256 px,
+  embedded in both exes as resource 100 and used for the window icons) and `site/favicon.*` /
+  `site/apple-touch-icon.png`. Commit the generated files.
+
 ## Code style
 
 - C-style C++: procedural, data-oriented. Plain structs + free functions, flat arrays indexed by id,

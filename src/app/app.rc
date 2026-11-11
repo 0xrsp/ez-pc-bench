@@ -1,2 +1,4 @@
 // 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST
 1 24 "app.manifest"
+// App icon (assets/icon.svg -> tools/make_icon.ps1). The lowest icon id is what Explorer shows.
+100 ICON "../../assets/icon.ico"
