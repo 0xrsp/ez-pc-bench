@@ -319,9 +319,9 @@ void score_ui_draw() {
         }
     }
 
-    // Profiles
+    // Profiles (only for complete runs: partial runs have component scores only)
     ImGui::Spacing();
-    for (u32 p = 0; p < SP_COUNT; ++p) {
+    for (u32 p = 0; p < SP_COUNT && s->complete; ++p) {
         if (p) ImGui::SameLine(0.0f, fs * 1.6f);
         score_text(t, sizeof(t), s->profile[p]);
         ImGui::BeginGroup();
