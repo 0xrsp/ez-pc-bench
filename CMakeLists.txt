@@ -103,6 +103,7 @@ add_library(ezbench_core STATIC
     src/core/toon.cpp
     src/core/sysinfo.cpp
     src/core/sysinfo_win.cpp
+    src/core/sysinfo_cpu.cpp
     src/core/physdisk.cpp
     src/core/sensors.cpp
     src/core/monitor.cpp
