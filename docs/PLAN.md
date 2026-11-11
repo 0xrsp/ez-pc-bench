@@ -487,6 +487,20 @@ None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
 
+- 2026-11-11 (tool windows, temperatures, disk health):
+  - Compare, Settings, Temperatures and Disk health are "tool windows" (main_gui.cpp `s_tool_desc`): each its
+    own HWND + swapchain on the shared device + ImGui context; asking for an open one focuses it. Buttons sit
+    right-aligned on the System header row (vector-drawn icons, Inter has none); Settings left the side panel
+    for its own window, every row with a detailed hover description.
+  - Temperatures (`core/sensors.*`, 1 Hz background thread while the window is open): ACPI thermal zones via
+    the "Thermal Zone Information" PDH counters (no admin; on this laptop one zone, TZ01); GPU temperature /
+    fan / power via D3DKMT adapter perf data (what Task Manager uses; both the RTX 5060 and the 780M report);
+    drive temperature via StorageDeviceTemperatureProperty. Per-core CPU and RAM temperatures need a kernel
+    driver (MSR / SMBus) — deliberately not used. Drive polling pauses during disk tests.
+  - Disk health (`core/disk_health.*`): NVMe Health Information log (page 2) via
+    IOCTL_STORAGE_QUERY_PROPERTY / ProtocolTypeNvme; other buses fall back to IOCTL_STORAGE_PREDICT_FAILURE.
+    The Samsung NVMe answers the log query on a query-only handle, i.e. without admin rights.
+
 - 2026-11-11 (run library, save names, 3 disk passes):
   - Reference runs live in `library/*.toon.txt`. At build time `tools/pack_library.cpp` (`ezb_pack`, a host
     exe built in the same tree) concatenates them ("EZBL" v1: count, then name + text per run) and

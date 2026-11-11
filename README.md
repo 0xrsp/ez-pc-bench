@@ -56,6 +56,10 @@ vcvars is needed.
    overall / per-suite summary, system info, raw values and the change vs a reference run.
    **Copy table** puts it on the clipboard for spreadsheets.
 
+The buttons on the System row open **Temperatures** (live CPU zone, GPU and drive temperatures),
+**Disk health** (life used, spare blocks, data written, errors from each drive's health log) and the
+**settings** (gear). Each opens in its own window; hover any setting for a detailed description.
+
 The app asks for admin rights at start. They are optional; without them a few tweaks are skipped.
 
 **CLI:**

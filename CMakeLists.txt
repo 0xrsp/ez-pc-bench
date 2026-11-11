@@ -104,6 +104,7 @@ add_library(ezbench_core STATIC
     src/core/sysinfo.cpp
     src/core/physdisk.cpp
     src/core/sensors.cpp
+    src/core/disk_health.cpp
     src/core/perf.cpp
     src/core/elevation.cpp
     src/core/smoke_bench.cpp
@@ -157,6 +158,7 @@ add_executable(ez-pc-bench WIN32
     src/app/compare_ui.cpp
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
+    src/app/health_ui.cpp
     src/app/library.cpp
     src/app/settings.cpp
     src/app/theme.cpp
