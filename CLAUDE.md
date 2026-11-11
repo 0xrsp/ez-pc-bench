@@ -6,6 +6,10 @@ keep it updated (decision log, open questions, measured facts).
 
 ## Git
 
+- Branches: day-to-day work happens on `dev` (commit and push there). `main` only receives finished work:
+  merge `dev` into `main` with `git merge --no-ff dev` once a milestone (or a self-contained feature) is
+  complete, builds warning-free and passes a CLI run. Never commit directly to `main`. Releases are tagged
+  on `main`; the Pages site deploys from `main` only.
 - Do NOT add yourself as co-author: no `Co-Authored-By` trailer, no "Generated with Claude" lines.
 - Commit messages: short one-line subject. Omit the body/description unless it's genuinely needed; if
   needed, keep it to a few lines.
