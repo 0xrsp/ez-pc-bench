@@ -494,6 +494,8 @@ static void draw_library() {
             ImGui::PushID((int)i);
             bool on = added || s_cu.lib_selected[i];
             ImGui::BeginDisabled(added);
+            // Rows are a frame tall (the name column aligns to frame padding); center the smaller box on that.
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (ImGui::GetFrameHeight() - theme_checkbox_height()) * 0.5f);
             if (theme_checkbox("##pick", &on) && !added) s_cu.lib_selected[i] = on;
             ImGui::EndDisabled();
             if (added && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Already in the comparison");
