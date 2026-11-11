@@ -20,7 +20,8 @@ keep it updated (decision log, open questions, measured facts).
 - `site/` is the GitHub Pages site (https://0xrsp.github.io/ez-pc-bench/), plain HTML/CSS in `site/index.html`
   with screenshots in `site/img/`. `.github/workflows/pages.yml` deploys it on every push to main that touches
   `site/` (it copies the Inter fonts in from `third_party/`). Preview locally with
-  `python -m http.server 8765 --directory site` after copying the two Inter TTFs to `site/fonts/` (git-ignored).
+  `powershell -ExecutionPolicy Bypass -File tools\serve_site.ps1` (copies the fonts to the git-ignored
+  `site/fonts/`, serves http://localhost:8765 with Python).
 
 ## Icon
 

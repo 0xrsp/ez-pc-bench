@@ -83,6 +83,18 @@ so you can add them from **Library...** in the compare window. The main referenc
 RTX 5060 Laptop / Samsung NVMe laptop on AC, Best performance, as admin:
 [library/2026-11-11_r7-250_rtx5060-laptop.toon.txt](library/2026-11-11_r7-250_rtx5060-laptop.toon.txt).
 
+## Website
+
+The site at <https://0xrsp.github.io/ez-pc-bench/> is plain HTML in [site/](site/), deployed by GitHub Actions
+on every push to `main` that touches it. To preview it locally (needs Python 3):
+
+```
+powershell -ExecutionPolicy Bypass -File tools\serve_site.ps1
+```
+
+then open <http://localhost:8765>. The script copies the Inter fonts into `site/fonts/` (git-ignored) and
+runs Python's built-in web server; stop it with Ctrl+C.
+
 Design notes and measurements: [docs/PLAN.md](docs/PLAN.md).
 
 MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1).
