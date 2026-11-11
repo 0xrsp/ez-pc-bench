@@ -282,7 +282,7 @@ static void evaluate_nvme(DiskHealth* h) {
     if (cw & 0x10) add_reason(h, HEALTH_BAD, "the cache backup (power-loss protection) failed");
     if (cw & 0x02) add_reason(h, HEALTH_CAUTION, "the drive is outside its temperature limits");
     if (t->media_errors && h->media_errors >= (i64)t->media_errors)
-        add_reason(h, HEALTH_CAUTION, "%lld unrecovered media errors (Caution from %u)", (long long)h->media_errors, t->media_errors);
+        add_reason(h, HEALTH_CAUTION, "unrecovered media errors: %lld (Caution from %u)", (long long)h->media_errors, t->media_errors);
     if (t->life_left_pct && h->life_left_pct >= 0 && h->life_left_pct <= (i32)t->life_left_pct)
         add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %u %%)", h->life_left_pct, t->life_left_pct);
     for (u32 i = 0; i < h->row_count; ++i) {
@@ -517,11 +517,11 @@ static void evaluate_ata(DiskHealth* h) {
         if (r->unit == SU_LIFE && t->life_left_pct && r->current <= t->life_left_pct && r->level < HEALTH_CAUTION) r->level = HEALTH_CAUTION;
     }
     if (t->reallocated && h->reallocated >= (i64)t->reallocated)
-        add_reason(h, HEALTH_CAUTION, "%lld reallocated sectors (Caution from %u)", (long long)h->reallocated, t->reallocated);
+        add_reason(h, HEALTH_CAUTION, "reallocated sectors: %lld (Caution from %u)", (long long)h->reallocated, t->reallocated);
     if (t->pending && h->pending >= (i64)t->pending)
-        add_reason(h, HEALTH_CAUTION, "%lld sectors pending reallocation (Caution from %u)", (long long)h->pending, t->pending);
+        add_reason(h, HEALTH_CAUTION, "sectors pending reallocation: %lld (Caution from %u)", (long long)h->pending, t->pending);
     if (t->uncorrectable && h->uncorrectable >= (i64)t->uncorrectable)
-        add_reason(h, HEALTH_CAUTION, "%lld uncorrectable sectors (Caution from %u)", (long long)h->uncorrectable, t->uncorrectable);
+        add_reason(h, HEALTH_CAUTION, "uncorrectable sectors: %lld (Caution from %u)", (long long)h->uncorrectable, t->uncorrectable);
     if (t->life_left_pct && h->life_left_pct >= 0 && h->life_left_pct <= (i32)t->life_left_pct)
         add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %u %%)", h->life_left_pct, t->life_left_pct);
     if (!h->have_smart && h->uncorrectable < 0 && h->life_left_pct < 0) {
