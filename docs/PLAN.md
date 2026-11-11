@@ -430,14 +430,38 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
 - **Frame pacing stats**: 0.1% low needs enough frames — at least ~5000 frames per test; extend the
   duration automatically if FPS is low.
 
-## 10. Sanity reference values (fill with measured numbers)
+## 10. Reference run (2026-11-11, AC + "Best performance", default settings, not elevated)
 
-| Metric | Expected ballpark |
-|---|---|
-| DRAM read BW (MT) | below 89.6 GB/s theoretical; single-CCX fabric limit likely ~60–70 GB/s |
-| DRAM latency | ~90–130 ns typical for mobile Zen 4 |
-| NVMe SEQ1M Q8T1 read | several GB/s (PCIe 4.0 x4 class) — measured ~7.0 GB/s on battery |
-| RTX 5060 Laptop FP32 | several TFLOPS (depends on TGP/clock) |
+Full default selection, 3 s phases, 53 tests, 437 s, all done. Raw data (use as the GUI "Compare..."
+baseline): [docs/reference/2026-11-11_ac_best-performance.json](reference/2026-11-11_ac_best-performance.json)
+(+ `.csv`). Numbers are single thread → multi-thread unless noted.
+
+| Area | Result | Sanity check |
+|---|---|---|
+| Int ALU / imul | 16.4 → 138 / 4.7 → 38 Gops/s | 3.4 ops/clk @ ~4.8 GHz; 1 imul/clk |
+| FP32 FMA scalar / AVX2 / AVX-512 | 19.0 → 150 / 155 → 1212 / 155 → 1232 GFLOPS | 32 FLOP/clk @ 4.83 GHz ST, ~4.7 GHz all-core |
+| FP64 AVX2 / AVX-512 | 77 → 605 / 77 → 615 GFLOPS | half of FP32 |
+| SGEMM 1920² | 122 → 872 GFLOPS | 79 % / 72 % of FMA peak |
+| SHA-256 / AES-128 (VAES-512) | 2.4 → 35 / 28 → 217 GB/s | |
+| Sort 16M / sieve 1e9 | 16.3 → 104 Melem/s / 2808 → 18790 Mnum/s | |
+| Core-to-core | SMT siblings 13–16 ns, cross-core 22–33 ns (avg 23.5) | single CCX |
+| FMA scaling 1/2/4/8/16 T | 154 / 306 / 606 / 1181 / 1207 GFLOPS | linear per core, SMT ~+2 % |
+| DRAM read / write / NT write / copy / triad | 47 → 60 / 26 → 26 / 49 → 58 / 29 → 36 / 32 → 41 GB/s | read = 67 % of 89.6 peak |
+| Latency L1 / L2 / L3 / DRAM | 0.9 / 3.0 / 9.5–20 / 98–139 ns (4 KiB pages) | 4 / 14 clk |
+| Read sweep L1 / L2 / L3 / DRAM | 291 / ~150 / ~125 / ~45 GB/s ST; 2133 / ~1115 / — / 60 GB/s MT | 64 B/clk L1 |
+| Disk SEQ1M Q8T1 / Q1T1 | 7049 / 5861, 1338 / 2060 MB/s (read / write) | Q1T1 read after the Q8 writes (~87 GB written) was lower than on battery (2419) — SSD busy flushing |
+| Disk RND4K Q32T1 / Q1T1 | 412 / 704, 59.7 / 123 MB/s | 2x the battery run (CPU-bound submission) |
+| GPU FP32 / FP16 / INT32 | VK 14.6 / 15.9 / 9.2, D3D12 14.5 / 17.4 / 9.1 T(FL)OPS | |
+| GPU VRAM read / LDS / PCIe | 368 GB/s / 8.5–8.6 TB/s / 14.1 GB/s each way (both APIs) | 96 % of ~384 GB/s; Gen4 x8 |
+| GPU tri / fill / texfill | 2.58 Gtri/s / 104.6 Gpix/s / 176 Gtex/s (APIs within 1–2 %) | |
+| GPU draw calls | VK 29.7 M/s, D3D12 63.7 M/s | driver CPU cost per draw |
+| GPU scene / sprites | VK 7351 / D3D12 6910 fps, 78 Msprites/s both | |
+| GPU blit / clear | VK 731 / 2387, D3D12 661 / 3048 GB/s | L2-resident targets, fast clears |
+
+With the APIs run back-to-back after warm-up, Vulkan and D3D12 agree within ~2 % except FP16 (+9 % D3D12),
+draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). A full run writes ~90–100 GB to the
+SSD (CrystalDiskMark-like default: 5 passes x 3 s of sequential writes) — use fewer passes / a smaller
+duration for frequent runs.
 
 ## 11. Open questions
 
