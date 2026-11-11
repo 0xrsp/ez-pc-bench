@@ -16,6 +16,10 @@ const RunPreset g_presets[] = {
     { "extended", "Extended", "Every test, each run 3 times and reported as the median with its spread; one disk "
                               "pass per run (the median of 3 instead of the best of 3). About 35 minutes.",
       PRESET_SEL_ALL, nullptr, 3000, 3, 1, 1024 },
+    { "sustained", "Sustained", "Thermal / power-limit check, like Cinebench's 10-minute run: all-core SGEMM, the LZ77 "
+                                "compressor and the D3D12 scene each loop for 5 minutes (about 15 minutes). Reports "
+                                "the first and last pass, min, median and the drop; the Charts tab plots every pass.",
+      PRESET_SEL_LIST, "cpu.fp.sgemm,cpu.comp.lz77,gpu_d3d12.3d.scene", 3000, 1, 1, 256, 300 },
 };
 const u32 g_preset_count = ARRAY_COUNT(g_presets);
 
@@ -47,13 +51,14 @@ void preset_apply(const RunPreset* pr, BenchParams* p, bool* selected) {
     p->repeat = pr->repeat;
     p->disk_passes = pr->disk_passes;
     p->disk_file_bytes = (u64)pr->disk_file_mib * MiB;
+    p->sustain_s = pr->sustain_s;
 }
 
 const RunPreset* preset_match(const BenchParams* p, const bool* selected) {
     for (u32 k = 0; k < g_preset_count; ++k) {
         const RunPreset* pr = &g_presets[k];
         if (p->duration_ms != pr->duration_ms || p->repeat != pr->repeat || p->disk_passes != pr->disk_passes ||
-            p->disk_file_bytes != (u64)pr->disk_file_mib * MiB)
+            p->disk_file_bytes != (u64)pr->disk_file_mib * MiB || p->sustain_s != pr->sustain_s)
             continue;
         bool same = true;
         for (u32 i = 0; i < g_bench_count && same; ++i)
