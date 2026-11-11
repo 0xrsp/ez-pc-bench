@@ -459,9 +459,9 @@ baseline): [docs/reference/2026-11-11_ac_best-performance.json](reference/2026-1
 | GPU blit / clear | VK 731 / 2387, D3D12 661 / 3048 GB/s | L2-resident targets, fast clears |
 
 With the APIs run back-to-back after warm-up, Vulkan and D3D12 agree within ~2 % except FP16 (+9 % D3D12),
-draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). A full run writes ~90–100 GB to the
-SSD (CrystalDiskMark-like default: 5 passes x 3 s of sequential writes) — use fewer passes / a smaller
-duration for frequent runs.
+draw calls (2.1x D3D12) and blit/clear (different copy/clear paths). A full run writes ~130 GB to the
+SSD (5 write passes x 3 s per disk test: SEQ1M Q8 ~88 GB, Q1 ~31 GB, RND4K Q32 ~10 GB, Q1 ~2 GB, + file
+fill) — use 1–2 passes and a shorter duration for frequent runs.
 
 ## 11. Open questions
 
