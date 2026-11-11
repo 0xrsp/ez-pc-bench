@@ -74,6 +74,9 @@ static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_SIZE:
             if (wp != SIZE_MINIMIZED) { s_gfx.resize_w = LOWORD(lp); s_gfx.resize_h = HIWORD(lp); }
             return 0;
+        case WM_SETTINGCHANGE:      // Windows light/dark app mode toggled
+            if (lp && wcscmp((const wchar_t*)lp, L"ImmersiveColorSet") == 0) theme_system_changed();
+            break;
         case WM_DPICHANGED: {
             s_dpi_scale = HIWORD(wp) / 96.0f;
             s_dpi_changed = true;
@@ -113,6 +116,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     const bool no_elevate = cmdline && wcsstr(cmdline, L"--no-elevate");
     if (!no_elevate && !is_elevated() && relaunch_elevated(L"")) return 0;
 
+    // Theme first: the window class brush and title bar use its colors. Default follows Windows.
+    theme_set_mode(cmdline && wcsstr(cmdline, L"--dark") ? THEME_DARK : cmdline && wcsstr(cmdline, L"--light") ? THEME_LIGHT
+                                                                                                                : THEME_SYSTEM);
+    theme_take_change();
+
     sysinfo_init();
     runner_init();
     ui_init();
@@ -149,7 +157,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     theme_load_fonts();
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
-        if (wcsstr(cmdline, L"--dark")) { theme_request_dark(true); theme_take_change(); ui_apply_style(s_dpi_scale); style_title_bar(hwnd); }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
     }
 

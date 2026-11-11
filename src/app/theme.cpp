@@ -73,9 +73,30 @@ static Palette dark_palette() {
     return p;
 }
 
-bool theme_is_dark() { return s_dark; }
-void theme_request_dark(bool dark) {
+static ThemeMode s_mode = THEME_SYSTEM;
+
+// Windows "Choose your app mode" (Settings > Personalization > Colors). Missing value = light.
+static bool system_prefers_dark() {
+    DWORD light = 1, size = sizeof(light);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return light == 0;
+}
+
+static void set_dark(bool dark) {
     if (dark != s_dark) { s_dark = dark; s_changed = true; }
+}
+
+bool theme_is_dark() { return s_dark; }
+ThemeMode theme_mode() { return s_mode; }
+
+void theme_set_mode(ThemeMode mode) {
+    s_mode = mode;
+    set_dark(mode == THEME_DARK || (mode == THEME_SYSTEM && system_prefers_dark()));
+}
+
+void theme_system_changed() {
+    if (s_mode == THEME_SYSTEM) set_dark(system_prefers_dark());
 }
 bool theme_take_change() {
     const bool c = s_changed;
@@ -130,6 +151,9 @@ void theme_load_fonts() {
     if (!g_fonts.regular) g_fonts.regular = load_system_font(L"segoeui.ttf");
     if (!g_fonts.medium) g_fonts.medium = load_system_font(L"seguisb.ttf");
     if (!g_fonts.medium) g_fonts.medium = g_fonts.regular;
+    g_fonts.mono = load_system_font(L"CascadiaMono.ttf");
+    if (!g_fonts.mono) g_fonts.mono = load_system_font(L"consola.ttf");
+    if (!g_fonts.mono) g_fonts.mono = g_fonts.regular;
 }
 
 f32 theme_font_size(f32 mult) {
@@ -297,30 +321,27 @@ void theme_progress(f32 fraction, f32 height, f32 width) {
 
 bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const char* button_label) {
     if (count == 0) return false;
-    const f32 pad = 10 * s_scale;
-    const f32 line_h = ImGui::GetTextLineHeight() + 4 * s_scale;
-    const f32 button_h = ImGui::GetTextLineHeight() + 8 * s_scale;
-    const f32 h = count * line_h + pad * 2 + (button_line >= 0 ? button_h - line_h : 0.0f);
+    const f32 pad = 12 * s_scale;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.warn_container);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * s_scale, pad));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * s_scale, 4 * s_scale));
-    ImGui::BeginChild("##warnings", ImVec2(0, h), ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * s_scale, 6 * s_scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12 * s_scale, 3 * s_scale));    // button row height
+    // Auto-sized to the content, so top and bottom padding are equal.
+    ImGui::BeginChild("##warnings", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool clicked = false;
     for (u32 i = 0; i < count; ++i) {
         const bool has_button = (i32)i == button_line;
+        if (has_button) ImGui::AlignTextToFramePadding();     // text centered on the button's height
         const ImVec2 c = ImGui::GetCursorScreenPos();
-        const f32 row_h = has_button ? button_h : ImGui::GetTextLineHeight();
-        if (has_button) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (button_h - ImGui::GetTextLineHeight()) * 0.5f);
+        const f32 row_h = has_button ? ImGui::GetFrameHeight() : ImGui::GetTextLineHeight();
         dl->AddCircleFilled(ImVec2(c.x + 3 * s_scale, c.y + row_h * 0.5f), 2.5f * s_scale,
                             ImGui::GetColorU32(g_pal.on_warn_container), 8);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 14 * s_scale);
         ImGui::TextColored(g_pal.on_warn_container, "%s", lines[i]);
         if (has_button) {
             ImGui::SameLine();
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - (button_h - ImGui::GetTextLineHeight()) * 0.5f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12 * s_scale, 4 * s_scale));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(g_pal.warn.x, g_pal.warn.y, g_pal.warn.z, 0.12f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(g_pal.warn.x, g_pal.warn.y, g_pal.warn.z, 0.20f));
@@ -331,14 +352,17 @@ bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const 
             ImGui::PushFont(g_fonts.medium, 0.0f);
             clicked = ImGui::Button(button_label);
             ImGui::PopFont();
-            ImGui::PopStyleVar(3);
+            ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(5);
         }
     }
     ImGui::EndChild();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6 * s_scale);     // breathing room below the card
     return clicked;
 }
+
+f32 theme_checkbox_height() { return ImGui::GetFontSize() + 6.0f * s_scale; }
 
 ImU32 theme_heat(f32 t) { return ImGui::GetColorU32(mix(g_pal.heat_lo, g_pal.heat_hi, t)); }

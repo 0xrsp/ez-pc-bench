@@ -460,6 +460,9 @@ None currently. (All earlier ones resolved — see decision log.)
   Font: Inter 4.1 Regular/Medium embedded as RCDATA (exe 846 KB → 1.7 MB), rasterized sharp: OversampleH/V 1,
   PixelSnapH, font sizes snapped to whole pixels after DPI scaling. Dark mode toggle in Settings
   (`--dark` flag for screenshots). Replaced the earlier violet/starfield theme at the user's request.
+  Follow-up: theme mode System (default, reads `AppsUseLightTheme`, live via WM_SETTINGCHANGE
+  "ImmersiveColorSet") / Light / Dark; `--light` / `--dark` override. Result numbers in Cascadia Mono
+  (system font, 0.92x size), right-aligned in the results table. Warning card auto-sizes (AutoResizeY).
 - 2026-11-11 (M0):
   - Disk target is a drive letter (`BenchParams::disk_drive`); the file path is derived per §6.4.
   - `BenchLive` carries `phase`/`unit` as static-string atomics instead of a phase index table.

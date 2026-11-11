@@ -5,7 +5,8 @@
 
 struct ThemeFonts {
     ImFont* regular;    // Inter Regular (body)
-    ImFont* medium;     // Inter Medium (titles, labels, buttons, numbers)
+    ImFont* medium;     // Inter Medium (titles, labels, buttons)
+    ImFont* mono;       // Cascadia Mono (result numbers), falls back to Consolas / Inter
 };
 extern ThemeFonts g_fonts;
 
@@ -25,13 +26,17 @@ extern Palette g_pal;
 
 void theme_load_fonts();                    // Inter from the exe's resources (Segoe UI fallback)
 void theme_apply_style(f32 dpi_scale);      // uses the current mode
+enum ThemeMode : u8 { THEME_SYSTEM, THEME_LIGHT, THEME_DARK };
 bool theme_is_dark();
-void theme_request_dark(bool dark);         // takes effect between frames
-bool theme_take_change();                   // true once after a mode change was requested
+ThemeMode theme_mode();
+void theme_set_mode(ThemeMode mode);        // System follows Windows' app mode; takes effect between frames
+void theme_system_changed();                // call on WM_SETTINGCHANGE "ImmersiveColorSet"
+bool theme_take_change();                   // true once after the effective light/dark changed
 void theme_bg_rgb(f32 out[3]);              // page color (window clear / title bar)
 
 f32 theme_font_size(f32 mult);              // base font size * mult, snapped to whole pixels
-inline void theme_push_numbers() { ImGui::PushFont(g_fonts.medium, 0.0f); }
+// Result numbers. Cascadia Mono looks larger than Inter at the same size, so it's drawn a bit smaller.
+inline void theme_push_numbers() { ImGui::PushFont(g_fonts.mono, theme_font_size(0.92f)); }
 
 // Outlined card. Always pair with theme_end_panel().
 void theme_begin_panel(const char* id, ImVec2 size, bool scroll = true);
@@ -40,6 +45,7 @@ void theme_end_panel();
 bool theme_button_primary(const char* label);   // filled pill
 bool theme_button(const char* label);           // tonal pill
 bool theme_checkbox(const char* label, bool* v);
+f32 theme_checkbox_height();                    // box height, for centering next to taller items
 bool theme_tab(const char* label, bool selected);  // segmented tab, returns true when clicked
 void theme_progress(f32 fraction, f32 height, f32 width = -FLT_MIN);  // linear indicator (default: full width)
 // One warning banner, one line per warning; line `button_line` (or -1) gets a button. True when clicked.

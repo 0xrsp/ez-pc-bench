@@ -282,7 +282,10 @@ static void draw_tree() {
                                                            ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
                                             "%s", g_suites[s].name);
         ImGui::PopFont();
+        const f32 header_h = ImGui::GetItemRectSize().y;
         ImGui::SameLine(s_status_x);
+        // The header is a full frame tall; center the smaller checkbox (and the count after it) on it.
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (header_h - theme_checkbox_height()) * 0.5f);
         bool all = sel == total;
         if (theme_checkbox("##all", &all) && !running)
             for (u32 i = 0; i < g_bench_count; ++i)
@@ -317,9 +320,12 @@ static void draw_settings() {
     const bool open = ImGui::CollapsingHeader("Settings");
     ImGui::PopFont();
     if (!open) return;
-    bool dark = theme_is_dark();
-    if (theme_checkbox("Dark theme", &dark)) theme_request_dark(dark);
     BenchParams* p = &s_ui.params;
+    ImGui::PushItemWidth(ImGui::GetFontSize() * 12.0f);
+    static const char* const modes[] = { "System", "Light", "Dark" };
+    int mode = (int)theme_mode();
+    if (ImGui::Combo("Theme", &mode, modes, (int)ARRAY_COUNT(modes))) theme_set_mode((ThemeMode)mode);
+    ImGui::PopItemWidth();
     ImGui::BeginDisabled(runner_is_running());
     ImGui::PushItemWidth(ImGui::GetFontSize() * 12.0f);
 
@@ -425,6 +431,17 @@ static void draw_live() {
 
 // ---- results ----------------------------------------------------------------------
 
+// Moves the cursor so an item of width `w` ends at the right edge of the current cell.
+static void align_right(f32 w) {
+    const f32 avail = ImGui::GetContentRegionAvail().x;
+    if (avail > w) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - w);
+}
+
+static void text_right(const char* s) {
+    align_right(ImGui::CalcTextSize(s).x);
+    ImGui::TextUnformatted(s);
+}
+
 static void draw_results() {
     // Material data table: horizontal dividers only, quiet header.
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
@@ -435,9 +452,16 @@ static void draw_results() {
     ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 2.5f);
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.2f);
     ImGui::TableSetupColumn("Unit", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    // Header row by hand so "Value" can be right-aligned over its numbers.
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
     ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TableHeadersRow();
+    ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+    for (int c = 0; c < 4; ++c) {
+        ImGui::TableSetColumnIndex(c);
+        const char* name = ImGui::TableGetColumnName(c);
+        if (c == 2) align_right(ImGui::CalcTextSize(name).x);
+        ImGui::TableHeader(name);
+    }
     ImGui::PopFont();
     ImGui::PopStyleColor();
 
@@ -476,8 +500,10 @@ static void draw_results() {
             ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
             ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
             ImGui::TableNextColumn();
+            char triple[100];
+            snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
             theme_push_numbers();
-            ImGui::Text("%s / %s / %s", vmin, vavg, vmax);
+            text_right(triple);
             ImGui::PopFont();
             ImGui::TableNextColumn(); ImGui::TextDisabled("%s", m[0].unit);
             continue;
@@ -497,7 +523,7 @@ static void draw_results() {
             ImGui::TableNextColumn();
             format_value(v, sizeof(v), m[k].value);
             theme_push_numbers();
-            ImGui::TextUnformatted(v);
+            text_right(v);
             ImGui::PopFont();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", m[k].unit);
