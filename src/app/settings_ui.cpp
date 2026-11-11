@@ -33,7 +33,7 @@ static f64 s_hover_since;
 static void finish_row() {
     if (!s_row_help) return;
     const ImGuiID id = ImGui::GetID(s_row_help);
-    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+    const bool hovered = ImGui::IsWindowHovered() &&     // (AllowWhenDisabled is an item flag; ImGui rejects it here)
                          ImGui::TableGetHoveredRow() == ImGui::TableGetRowIndex() && !ImGui::IsAnyItemActive() &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     if (hovered) {
