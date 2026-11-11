@@ -102,7 +102,7 @@ SceneOut vs_scene(uint vid : SV_VertexID, uint inst : SV_InstanceID) {
     // Camera at (0, 40, -20), pitched down ~35 degrees, 60 degree vertical FOV.
     float3 vp = world - float3(0.0f, 40.0f, -20.0f);
     const float cp = cos(0.6f), sp = sin(0.6f);
-    vp = float3(vp.x, cp * vp.y - sp * vp.z, sp * vp.y + cp * vp.z);
+    vp = float3(vp.x, cp * vp.y + sp * vp.z, -sp * vp.y + cp * vp.z);
     const float f = 1.0f / tan(0.5236f), zn = 0.5f, zf = 1000.0f;
 
     SceneOut o;
