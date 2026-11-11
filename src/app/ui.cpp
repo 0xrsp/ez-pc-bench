@@ -443,7 +443,23 @@ static void draw_tree() {
                 if (!group || strcmp(group, g_benches[i].group) != 0) {
                     if (group_open) ImGui::TreePop();
                     group = g_benches[i].group;
-                    group_open = ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+                    // Group checkbox in the status column, like the suite's: dash when partly selected.
+                    u32 gtotal = 0, gsel = 0;
+                    for (u32 k = i; k < g_bench_count && g_benches[k].suite == s && !strcmp(g_benches[k].group, group); ++k) {
+                        ++gtotal;
+                        gsel += s_ui.selected[k];
+                    }
+                    ImGui::AlignTextToFramePadding();
+                    group_open = ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth |
+                                                              ImGuiTreeNodeFlags_AllowOverlap);
+                    const f32 row_h = ImGui::GetItemRectSize().y;
+                    ImGui::SameLine(s_status_x);
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row_h - theme_checkbox_height()) * 0.5f);
+                    bool gall = gsel == gtotal;
+                    ImGui::PushID(group);
+                    if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gtotal) && !running)
+                        for (u32 k = i; k < i + gtotal; ++k) s_ui.selected[k] = gall;
+                    ImGui::PopID();
                 }
                 if (group_open) draw_test_row(i, running);
             }
