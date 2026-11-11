@@ -19,6 +19,8 @@ void res_fail(BenchResult* r, const char* fmt, ...);
 void res_skip(BenchResult* r, const char* fmt, ...);
 
 inline const Metric* res_metrics(const BenchResult* r) { return &g_metrics[r->first]; }
+// Min / average / max over a matrix result's cells, skipping the diagonal of square matrices.
+void res_matrix_stats(const BenchResult* r, f64* lo, f64* avg, f64* hi);
 const char* status_name(BenchStatus s);
 
 // Formats a value with sensible precision ("12.34", "1234", "0.0123").
@@ -26,6 +28,9 @@ void format_value(char* buf, u32 size, f64 v);
 // Formats a series x value using its unit ("16 KiB" for bytes).
 void format_x(char* buf, u32 size, f64 x, const char* x_unit);
 
-// Plain-text report of all results (sysinfo header + table). Returns length written (truncated to size).
+// Plain-text report of all results (sysinfo header + table, baseline deltas when one is loaded).
+// Returns length written (truncated to size).
 u32 results_format_text(char* buf, u32 size, const BenchParams* p);
 bool results_write_json(const wchar_t* path, const BenchParams* p);
+// One row per metric: suite,group,test,id,status,metric,x,value,unit (UTF-8 with BOM, RFC 4180 quoting).
+bool results_write_csv(const wchar_t* path, const BenchParams* p);

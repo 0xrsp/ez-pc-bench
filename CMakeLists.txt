@@ -43,6 +43,7 @@ add_library(ezbench_core STATIC
     src/core/registry.cpp
     src/core/runner.cpp
     src/core/results.cpp
+    src/core/baseline.cpp
     src/core/sysinfo.cpp
     src/core/perf.cpp
     src/core/elevation.cpp
@@ -65,9 +66,10 @@ target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings
 add_executable(ez-pc-bench WIN32
     src/app/main_gui.cpp
     src/app/ui.cpp
+    src/app/settings.cpp
     src/app/theme.cpp
     src/app/gui.rc)
-target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi)
+target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32 shell32)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

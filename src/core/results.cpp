@@ -1,4 +1,5 @@
 #include "core/results.h"
+#include "core/baseline.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include <stdarg.h>
@@ -54,6 +55,22 @@ void res_skip(BenchResult* r, const char* fmt, ...) {
     vsnprintf(r->error, sizeof(r->error), fmt, args);
     va_end(args);
     r->skipped = true;
+}
+
+void res_matrix_stats(const BenchResult* r, f64* lo, f64* avg, f64* hi) {
+    const Metric* m = res_metrics(r);
+    f64 sum = 0.0;
+    u32 n = 0;
+    *lo = *avg = *hi = 0.0;
+    for (u32 k = 0; k < r->count; ++k) {
+        if (r->rows == r->cols && r->cols && k / r->cols == k % r->cols) continue;
+        const f64 v = m[k].value;
+        *lo = n == 0 || v < *lo ? v : *lo;
+        *hi = n == 0 || v > *hi ? v : *hi;
+        sum += v;
+        ++n;
+    }
+    if (n) *avg = sum / n;
 }
 
 const char* status_name(BenchStatus s) {
@@ -124,8 +141,10 @@ u32 results_format_text(char* buf, u32 size, const BenchParams* p) {
         tb_printf(&tb, "Disk %c: %s%s\n", s->drives[i].letter, d, s->drives[i].letter == (char)p->disk_drive ? "  [target]" : "");
     }
     tb_printf(&tb, "OS:    %s, %s\n", s->os, s->elevated ? "elevated" : "not elevated");
-    tb_printf(&tb, "Power: %s, plan \"%s\", mode \"%s\"\n\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
+    tb_printf(&tb, "Power: %s, plan \"%s\", mode \"%s\"\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
               power_mode_name(s->power.mode));
+    if (g_baseline.loaded) tb_printf(&tb, "Baseline: %s (%s), change in %%\n", g_baseline.file, g_baseline.timestamp);
+    tb_printf(&tb, "\n");
 
     for (u32 i = 0; i < g_bench_count; ++i) {
         BenchStatus st = (BenchStatus)g_status[i].load(std::memory_order_acquire);
@@ -148,15 +167,33 @@ u32 results_format_text(char* buf, u32 size, const BenchParams* p) {
                 }
                 tb_printf(&tb, "\n");
             }
+            f64 lo, avg, hi, blo, bavg, bhi;
+            if (baseline_matrix(b->cli_id, r, &blo, &bavg, &bhi)) {
+                res_matrix_stats(r, &lo, &avg, &hi);
+                char bv[32], d[16];
+                format_value(v, sizeof(v), avg);
+                format_value(bv, sizeof(bv), bavg);
+                format_delta(d, sizeof(d), delta_pct(avg, bavg));
+                tb_printf(&tb, "    average %s, baseline %s, %s\n", v, bv, d);
+            }
         } else {
+            const int uw = g_baseline.loaded ? 8 : 0;    // pad the unit only when a baseline column follows
             for (u32 k = 0; k < r->count; ++k) {
                 format_value(v, sizeof(v), m[k].value);
                 if (r->kind == RESULT_SERIES) {
                     format_x(x, sizeof(x), m[k].x, r->x_unit);
-                    tb_printf(&tb, "    %-12s %-20s %12s %s\n", x, m[k].name, v, m[k].unit);
+                    tb_printf(&tb, "    %-12s %-20s %12s %-*s", x, m[k].name, v, uw, m[k].unit);
                 } else {
-                    tb_printf(&tb, "    %-33s %12s %s\n", m[k].name, v, m[k].unit);
+                    tb_printf(&tb, "    %-33s %12s %-*s", m[k].name, v, uw, m[k].unit);
                 }
+                f64 base;
+                if (baseline_metric(b->cli_id, r, k, &base)) {
+                    char bv[32], d[16];
+                    format_value(bv, sizeof(bv), base);
+                    format_delta(d, sizeof(d), delta_pct(m[k].value, base));
+                    tb_printf(&tb, " %12s %8s", bv, d);
+                }
+                tb_printf(&tb, "\n");
             }
         }
     }
@@ -304,6 +341,69 @@ bool results_write_json(const wchar_t* path, const BenchParams* p) {
     }
     fprintf(f, "\n  ]\n}\n");
     bool ok = ferror(f) == 0;
+    fclose(f);
+    return ok;
+}
+
+// ---- CSV ---------------------------------------------------------------------
+
+// RFC 4180: quote fields containing a separator, quote or line break; double embedded quotes.
+static void csv_field(FILE* f, const char* s, bool last = false) {
+    if (!s) s = "";
+    if (strpbrk(s, ",\"\r\n")) {
+        fputc('"', f);
+        for (; *s; ++s) {
+            if (*s == '"') fputc('"', f);
+            fputc(*s, f);
+        }
+        fputc('"', f);
+    } else {
+        fputs(s, f);
+    }
+    fputs(last ? "\r\n" : ",", f);
+}
+
+static void csv_num(FILE* f, f64 v) {
+    if (isfinite(v)) fprintf(f, "%.15g", v);
+    fputc(',', f);
+}
+
+bool results_write_csv(const wchar_t* path, const BenchParams*) {
+    FILE* f = _wfopen(path, L"wb");
+    if (!f) return false;
+    fputs("\xEF\xBB\xBF", f);     // UTF-8 BOM so spreadsheets read "µs" correctly
+    fputs("suite,group,test,id,status,metric,x,value,unit\r\n", f);
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const BenchStatus st = (BenchStatus)g_status[i].load(std::memory_order_acquire);
+        if (st == ST_NOT_RUN) continue;
+        const BenchDesc* b = &g_benches[i];
+        const BenchResult* r = &g_results[i];
+        const u32 rows = st == ST_DONE ? r->count : 0;
+        const Metric* m = res_metrics(r);
+        for (u32 k = 0; k < rows || (k == 0 && rows == 0); ++k) {
+            csv_field(f, g_suites[b->suite].name);
+            csv_field(f, b->group);
+            csv_field(f, b->name);
+            csv_field(f, b->cli_id);
+            csv_field(f, status_name(st));
+            if (rows == 0) {    // failed / skipped / cancelled: the reason goes in the metric column
+                csv_field(f, r->error);
+                fputs(",,\r\n", f);
+                continue;
+            }
+            char name[160];
+            if (r->kind == RESULT_MATRIX && r->cols)
+                snprintf(name, sizeof(name), "%s [%u,%u]", m[k].name, k / r->cols, k % r->cols);
+            else
+                snprintf(name, sizeof(name), "%s", m[k].name);
+            csv_field(f, name);
+            if (r->kind == RESULT_SERIES) csv_num(f, m[k].x);
+            else fputc(',', f);
+            csv_num(f, m[k].value);
+            csv_field(f, m[k].unit, true);
+        }
+    }
+    const bool ok = ferror(f) == 0;
     fclose(f);
     return ok;
 }

@@ -396,7 +396,9 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
 - **M4 GPU infra + Compute**: shader build (DXIL + SPIR-V), adapter selection, D3D12 + Vulkan devices,
   timestamps, compute tests.
 - **M5 GPU 3D + 2D**: benchmark window, swapchains (tearing), frame-time stats, 3D and 2D tests.
-- **M6 Polish**: CSV, copy to clipboard, settings persistence (ini), compare against a saved JSON.
+- **M6 Polish** — ✅ done 2026-11-11 (subagent in a worktree): CSV export (GUI "Save CSV", CLI `--csv`),
+  settings persistence (`%APPDATA%\ez-pc-bench\settings.ini`), compare against a saved JSON (GUI
+  "Compare...", CLI `--compare`), baseline deltas also in "Copy text". Details in the decision log.
 
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).
 
@@ -468,6 +470,21 @@ None currently. (All earlier ones resolved — see decision log.)
   - `BenchLive` carries `phase`/`unit` as static-string atomics instead of a phase index table.
   - Smoke suite kept as a permanent runner self-test (`smoke.*`).
   - GUI verification: launch with `--no-elevate --autorun` and capture the window with `PrintWindow`.
+- 2026-11-11 (M6):
+  - CSV: `suite,group,test,id,status,metric,x,value,unit`, one row per metric, UTF-8 with BOM (Excel reads
+    "µs"), RFC 4180 quoting, CRLF. Series fill `x` (raw, e.g. bytes); matrix cells are `Name [row,col]`;
+    failed/skipped/cancelled tests get one row with the reason in `metric`.
+  - Settings ini via the profile API, file created with a UTF-16 BOM so it is written as Unicode.
+    `[settings]` theme (system/light/dark), duration_ms, threads, gpu (adapter *name*: indices can change),
+    gpu_width, gpu_height, gpu_fullscreen, disk_drive, disk_file_mib, disk_passes, disk_write_through;
+    `[tests]` `<cli_id>=0|1` (unknown ids kept on save, ignored on load; missing ids keep the default).
+    Saved 1 s after the last change (UI thread, not during a run) and at exit. `--duration`, `--light`,
+    `--dark` apply to the session only; the ini keeps its value unless the user changes that setting.
+  - Baseline (`core/baseline.*`): hand-written JSON reader for our own export format, results kept in a
+    fixed table + open-addressing hash keyed by (test id, metric name, x); x = series x, matrix cell
+    index, 0 for plain values (matched by name). Δ = (value − base) / |base| in %. Units ns, µs, us, ms, s
+    are lower-is-better, all others higher-is-better; |Δ| < 1% is shown dim. Matrices compare the
+    off-diagonal average.
 
 ## 13. Measured notes
 

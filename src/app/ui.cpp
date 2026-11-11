@@ -1,6 +1,8 @@
 // Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
+#include "app/settings.h"
 #include "app/theme.h"
+#include "core/baseline.h"
 #include "core/elevation.h"
 #include "core/results.h"
 #include "core/runner.h"
@@ -8,6 +10,8 @@
 #include "core/timer.h"
 #include "imgui.h"
 #include <windows.h>
+#include <commdlg.h>
+#include <objbase.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,7 +35,10 @@ static UiState s_ui;
 void ui_init() {
     for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
     s_ui.params.gpu_adapter = sysinfo_default_gpu();
+    settings_load(&s_ui.params, s_ui.selected);
 }
+
+void ui_shutdown() { settings_flush(&s_ui.params, s_ui.selected); }
 
 bool ui_wants_quit() { return s_ui.quit; }
 
@@ -149,23 +156,49 @@ static void draw_sysinfo() {
 
 // ---- toolbar --------------------------------------------------------------------
 
-static void save_json() {
-    wchar_t dir[MAX_PATH];
+// "results" folder next to the exe (created on demand).
+static void results_dir(wchar_t* dir) {
     GetModuleFileNameW(nullptr, dir, MAX_PATH);
     if (wchar_t* slash = wcsrchr(dir, L'\\')) *slash = 0;
-    wcscat_s(dir, L"\\results");
+    wcscat_s(dir, MAX_PATH, L"\\results");
     CreateDirectoryW(dir, nullptr);
+}
 
+static void save_results(bool csv) {
+    wchar_t dir[MAX_PATH];
+    results_dir(dir);
     time_t now = time(nullptr);
     struct tm t;
     localtime_s(&t, &now);
     wchar_t path[MAX_PATH];
-    swprintf(path, MAX_PATH, L"%s\\ezbench_%04d%02d%02d_%02d%02d%02d.json", dir, t.tm_year + 1900, t.tm_mon + 1,
-             t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    swprintf(path, MAX_PATH, L"%s\\ezbench_%04d%02d%02d_%02d%02d%02d.%s", dir, t.tm_year + 1900, t.tm_mon + 1,
+             t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, csv ? L"csv" : L"json");
     char path8[MAX_PATH * 3];
     WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
-    if (results_write_json(path, &g_run.params)) snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Saved %s", path8);
-    else snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Failed to write %s", path8);
+    const bool ok = csv ? results_write_csv(path, &g_run.params) : results_write_json(path, &g_run.params);
+    snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), ok ? "Saved %s" : "Failed to write %s", path8);
+}
+
+static void compare_dialog() {
+    wchar_t dir[MAX_PATH], path[MAX_PATH] = {};
+    results_dir(dir);
+    OPENFILENAMEW ofn = { sizeof(ofn) };
+    ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
+    ofn.lpstrFilter = L"ez-pc-bench results (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrInitialDir = dir;
+    ofn.lpstrTitle = L"Compare against saved results";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool picked = GetOpenFileNameW(&ofn) != 0;
+    if (SUCCEEDED(co)) CoUninitialize();
+    if (!picked) return;
+    char err[160];
+    if (baseline_load(path, err, sizeof(err)))
+        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Baseline: %u metrics from %s", g_baseline.count, g_baseline.file);
+    else
+        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Cannot load baseline: %s", err);
 }
 
 static void copy_text() {
@@ -198,9 +231,15 @@ static void draw_toolbar() {
     const bool have_results = g_run.total > 0 && !running;
     ImGui::SameLine();
     ImGui::BeginDisabled(!have_results);
-    if (theme_button("Save JSON")) save_json();
+    if (theme_button("Save JSON")) save_results(false);
+    ImGui::SameLine();
+    if (theme_button("Save CSV")) save_results(true);
     ImGui::SameLine();
     if (theme_button("Copy text")) copy_text();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(running);      // the file dialog would load shell extensions mid-benchmark
+    if (theme_button("Compare...")) compare_dialog();
     ImGui::EndDisabled();
 
     ImGui::SameLine();
@@ -442,24 +481,48 @@ static void text_right(const char* s) {
     ImGui::TextUnformatted(s);
 }
 
+// Baseline value + colored change for one row (the two compare columns).
+static void compare_cells(const char* base_text, f64 value, f64 base, const char* unit) {
+    ImGui::TableNextColumn();
+    theme_push_numbers();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_DIM);
+    text_right(base_text);
+    ImGui::PopStyleColor();
+    ImGui::TableNextColumn();
+    const f64 pct = delta_pct(value, base);
+    const i32 rating = delta_rating(pct, unit);
+    char d[16];
+    format_delta(d, sizeof(d), pct);
+    ImGui::PushStyleColor(ImGuiCol_Text, rating > 0 ? COL_OK : rating < 0 ? COL_BAD : COL_DIM);
+    text_right(d);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+}
+
 static void draw_results() {
-    // Material data table: horizontal dividers only, quiet header.
+    // Material data table: horizontal dividers only, quiet header. Two more columns with a baseline loaded.
+    const bool cmp = g_baseline.loaded;
+    const int cols = cmp ? 6 : 4;
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable("results", 4, flags)) return;
+    if (!ImGui::BeginTable(cmp ? "results_cmp" : "results", cols, flags)) return;
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 3.0f);
     ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 2.5f);
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.2f);
     ImGui::TableSetupColumn("Unit", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-    // Header row by hand so "Value" can be right-aligned over its numbers.
+    if (cmp) {
+        ImGui::TableSetupColumn("Baseline", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("\xCE\x94", ImGuiTableColumnFlags_WidthStretch, 0.8f);     // Δ
+    }
+    // Header row by hand so the number columns can be right-aligned over their numbers.
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
     ImGui::PushFont(g_fonts.medium, 0.0f);
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-    for (int c = 0; c < 4; ++c) {
+    for (int c = 0; c < cols; ++c) {
         ImGui::TableSetColumnIndex(c);
         const char* name = ImGui::TableGetColumnName(c);
-        if (c == 2) align_right(ImGui::CalcTextSize(name).x);
+        if (c == 2 || c >= 4) align_right(ImGui::CalcTextSize(name).x);
         ImGui::TableHeader(name);
     }
     ImGui::PopFont();
@@ -482,30 +545,29 @@ static void draw_results() {
         const Metric* m = res_metrics(r);
         if (r->kind == RESULT_MATRIX && r->count) {
             // One summary row; the full grid is on the Charts tab.
-            f64 lo = 0.0, hi = 0.0, sum = 0.0;
-            u32 n = 0;
-            for (u32 k = 0; k < r->count; ++k) {
-                if (r->rows == r->cols && k / r->cols == k % r->cols) continue;    // skip diagonal
-                const f64 val = m[k].value;
-                lo = n == 0 || val < lo ? val : lo;
-                hi = n == 0 || val > hi ? val : hi;
-                sum += val;
-                ++n;
-            }
-            char vmin[32], vavg[32], vmax[32];
+            f64 lo, avg, hi;
+            res_matrix_stats(r, &lo, &avg, &hi);
+            char vmin[32], vavg[32], vmax[32], triple[100];
             format_value(vmin, sizeof(vmin), lo);
-            format_value(vavg, sizeof(vavg), n ? sum / n : 0.0);
+            format_value(vavg, sizeof(vavg), avg);
             format_value(vmax, sizeof(vmax), hi);
             ImGui::TableNextRow();
             ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
             ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
             ImGui::TableNextColumn();
-            char triple[100];
             snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
             theme_push_numbers();
             text_right(triple);
             ImGui::PopFont();
             ImGui::TableNextColumn(); ImGui::TextDisabled("%s", m[0].unit);
+            f64 blo, bavg, bhi;
+            if (cmp && baseline_matrix(b->cli_id, r, &blo, &bavg, &bhi)) {     // change of the average
+                format_value(vmin, sizeof(vmin), blo);
+                format_value(vavg, sizeof(vavg), bavg);
+                format_value(vmax, sizeof(vmax), bhi);
+                snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
+                compare_cells(triple, avg, bavg, m[0].unit);
+            }
             continue;
         }
         for (u32 k = 0; k < r->count; ++k) {
@@ -527,6 +589,11 @@ static void draw_results() {
             ImGui::PopFont();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", m[k].unit);
+            f64 base;
+            if (cmp && baseline_metric(b->cli_id, r, k, &base)) {
+                format_value(v, sizeof(v), base);
+                compare_cells(v, m[k].value, base, m[k].unit);
+            }
         }
     }
     ImGui::EndTable();
@@ -669,6 +736,21 @@ void ui_draw() {
         if (theme_tab("Results", tab == 0)) tab = 0;
         ImGui::SameLine(0.0f, 4.0f);
         if (theme_tab("Charts", tab == 1)) tab = 1;
+        if (g_baseline.loaded) {
+            // Baseline file at the right end of the tab row, with a quiet button to drop it.
+            char label[400];
+            snprintf(label, sizeof(label), "vs %s  \xC2\xB7  %s", g_baseline.file, g_baseline.timestamp);
+            const f32 clear_w = ImGui::CalcTextSize("Clear").x + ImGui::GetFontSize() * 2.0f;
+            ImGui::SameLine();
+            const f32 avail = ImGui::GetContentRegionAvail().x - clear_w;
+            const f32 label_w = ImGui::CalcTextSize(label).x;
+            ImGui::AlignTextToFramePadding();
+            if (avail > label_w) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - label_w);
+            ImGui::TextDisabled("%s", label);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Baseline: %u metrics. Green = better, red = worse (> 1%%).", g_baseline.count);
+            ImGui::SameLine();
+            if (theme_tab("Clear", false)) baseline_clear();
+        }
         if (tab == 0) {
             draw_results();
         } else {
@@ -680,4 +762,5 @@ void ui_draw() {
         ImGui::EndTable();
     }
     ImGui::End();
+    if (!runner_is_running()) settings_tick(&s_ui.params, s_ui.selected);
 }

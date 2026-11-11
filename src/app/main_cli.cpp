@@ -1,4 +1,5 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
+#include "core/baseline.h"
 #include "core/bench.h"
 #include "core/elevation.h"
 #include "core/results.h"
@@ -16,6 +17,8 @@ static void print_usage() {
         "  --list                 List all test ids\n"
         "  --run <patterns>       Comma-separated test ids or patterns (cpu, mem.*, *.latency). Default: all\n"
         "  --json <file>          Write results as JSON\n"
+        "  --csv <file>           Write results as CSV (one row per metric)\n"
+        "  --compare <file.json>  Show the change against a saved JSON result\n"
         "  --duration <ms>        Measured duration per phase (default 3000)\n"
         "  --threads <n>          Thread count for MT tests (default: all logical)\n"
         "  --gpu <index>          GPU adapter index (default 0 = most powerful)\n"
@@ -74,6 +77,7 @@ static void print_result(u32 id) {
     printf("%-9s %s  (%.1f s)%s%s\n", status_name(st), g_benches[id].cli_id, r->seconds, r->error[0] ? "  " : "", r->error);
     if (st != ST_DONE) return;
     const Metric* m = res_metrics(r);
+    const char* id_str = g_benches[id].cli_id;
     char v[32], x[32];
     if (r->kind == RESULT_MATRIX) {
         printf("          %s [%s] %ux%u\n", m[0].name, m[0].unit, r->rows, r->cols);
@@ -85,16 +89,34 @@ static void print_result(u32 id) {
             }
             printf("\n");
         }
+        f64 lo, avg, hi, blo, bavg, bhi;
+        if (baseline_matrix(id_str, r, &blo, &bavg, &bhi)) {
+            res_matrix_stats(r, &lo, &avg, &hi);
+            char bv[32], d[16];
+            format_value(v, sizeof(v), avg);
+            format_value(bv, sizeof(bv), bavg);
+            format_delta(d, sizeof(d), delta_pct(avg, bavg));
+            printf("          average %s, baseline %s, %s\n", v, bv, d);
+        }
         return;
     }
+    const int uw = g_baseline.loaded ? 8 : 0;   // pad the unit only when baseline columns follow
     for (u32 k = 0; k < r->count; ++k) {
         format_value(v, sizeof(v), m[k].value);
         if (r->kind == RESULT_SERIES) {
             format_x(x, sizeof(x), m[k].x, r->x_unit);
-            printf("          %-10s %-16s %12s %s\n", x, m[k].name, v, m[k].unit);
+            printf("          %-10s %-16s %12s %-*s", x, m[k].name, v, uw, m[k].unit);
         } else {
-            printf("          %-27s %12s %s\n", m[k].name, v, m[k].unit);
+            printf("          %-27s %12s %-*s", m[k].name, v, uw, m[k].unit);
         }
+        f64 base;
+        if (baseline_metric(id_str, r, k, &base)) {
+            char bv[32], d[16];
+            format_value(bv, sizeof(bv), base);
+            format_delta(d, sizeof(d), delta_pct(m[k].value, base));
+            printf(" base %10s %8s", bv, d);
+        }
+        printf("\n");
     }
 }
 
@@ -150,6 +172,8 @@ int wmain(int argc, wchar_t** argv) {
     bool selected[MAX_BENCHES] = {};
     bool any_run = false, list = false, pause = false, elevate = false;
     const wchar_t* json_path = nullptr;
+    const wchar_t* csv_path = nullptr;
+    const wchar_t* compare_path = nullptr;
     BenchParams params;
     params.gpu_adapter = sysinfo_default_gpu();
 
@@ -165,6 +189,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--run") && has_val) { any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--json") && has_val) json_path = argv[++i];
+        else if (!wcscmp(a, L"--csv") && has_val) csv_path = argv[++i];
+        else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--threads") && has_val) { params.thread_count = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--gpu") && has_val) { params.gpu_adapter = (u32)atoi(val); ++i; }
@@ -189,7 +215,19 @@ int wmain(int argc, wchar_t** argv) {
     if (!any_run)
         for (u32 i = 0; i < g_bench_count; ++i) selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
 
+    if (compare_path) {
+        char err[160];
+        if (!baseline_load(compare_path, err, sizeof(err))) {
+            fwprintf(stderr, L"Cannot load baseline %s: ", compare_path);
+            fprintf(stderr, "%s\n", err);
+            return 3;
+        }
+    }
+
     print_sysinfo(&params, selected);
+    if (g_baseline.loaded)
+        printf("Baseline %s (%s), %u metrics; change in %% (+ = larger value)\n\n", g_baseline.file, g_baseline.timestamp,
+               g_baseline.count);
     SetConsoleCtrlHandler(on_ctrl, TRUE);
     if (!runner_start(selected, &params)) { fprintf(stderr, "Nothing to run.\n"); return 3; }
 
@@ -221,6 +259,10 @@ int wmain(int argc, wchar_t** argv) {
     if (json_path) {
         if (results_write_json(json_path, &g_run.params)) wprintf(L"Wrote %s\n", json_path);
         else { fwprintf(stderr, L"Failed to write %s\n", json_path); exit_code = 1; }
+    }
+    if (csv_path) {
+        if (results_write_csv(csv_path, &g_run.params)) wprintf(L"Wrote %s\n", csv_path);
+        else { fwprintf(stderr, L"Failed to write %s\n", csv_path); exit_code = 1; }
     }
     if (pause) {
         printf("Press Enter to exit...");
