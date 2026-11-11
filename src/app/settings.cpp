@@ -3,6 +3,7 @@
 #include "app/settings.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
+#include "disk/disk.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <stdarg.h>
@@ -28,6 +29,7 @@ static ThemeMode s_start_theme;
 static bool s_start_selected[MAX_BENCHES];
 
 static const wchar_t* const THEME_NAMES[] = { L"system", L"light", L"dark" };
+static const wchar_t* const DISK_UNIT_NAMES[] = { L"MB/s", L"GB/s", L"IOPS", L"us" };     // DiskUnit order
 
 static const wchar_t* ini_path() {
     if (!s_path[0]) {
@@ -100,6 +102,29 @@ void settings_load(BenchParams* p, bool* selected) {
         p->disk_write_through = read_u32(L"disk_write_through", p->disk_write_through, 0, 1) != 0;
         p->repeat = read_u32(L"repeat", p->repeat, 1, MAX_REPEAT);
 
+        // Disk options (DiskOptions, disk/disk.h); rows that don't parse are left empty.
+        DiskOptions* o = &p->disk;
+        if (read_str(L"disk_mode", w, ARRAY_COUNT(w))) {
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
+            disk_mode_parse(name, &o->mode);
+        }
+        o->mix_read_pct = (u8)read_u32(L"disk_mix_read_pct", o->mix_read_pct, 0, 100);
+        if (read_str(L"disk_data", w, ARRAY_COUNT(w))) o->data = !_wcsicmp(w, L"zero") ? DISK_DATA_ZERO : DISK_DATA_RANDOM;
+        if (read_str(L"disk_unit", w, ARRAY_COUNT(w)))
+            for (u32 i = 0; i < ARRAY_COUNT(DISK_UNIT_NAMES); ++i)
+                if (!_wcsicmp(w, DISK_UNIT_NAMES[i])) o->unit = (u8)i;
+        o->buffered = read_u32(L"disk_buffered", o->buffered, 0, 1) != 0;
+        o->interval_ms = read_u32(L"disk_interval_ms", o->interval_ms, 0, 600000);
+        o->sustained_gib = read_u32(L"disk_sustained_gib", o->sustained_gib, 1, 65536);
+        read_str(L"disk_folder", o->folder, ARRAY_COUNT(o->folder));
+        for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
+            wchar_t key[16];
+            swprintf(key, ARRAY_COUNT(key), L"disk_custom%u", i + 1);
+            if (!read_str(key, w, ARRAY_COUNT(w))) continue;
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
+            if (!disk_row_parse(name, &o->custom[i])) o->custom[i] = {};
+        }
+
         // [tests] id=0|1; ids this build doesn't know are ignored, missing ids keep the registry default.
         static wchar_t buf[32768];
         const DWORD n = GetPrivateProfileSectionW(L"tests", buf, ARRAY_COUNT(buf), ini_path());
@@ -123,13 +148,28 @@ static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
     memcpy(s->selected, selected, g_bench_count);
 }
 
+static bool disk_same(const DiskOptions* x, const DiskOptions* y) {
+    if (x->mode != y->mode || x->mix_read_pct != y->mix_read_pct || x->data != y->data || x->unit != y->unit ||
+        x->buffered != y->buffered || x->interval_ms != y->interval_ms || x->sustained_gib != y->sustained_gib ||
+        wcscmp(x->folder, y->folder) != 0)
+        return false;
+    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
+        const DiskRow *a = &x->custom[i], *b = &y->custom[i];
+        if (a->block != b->block || a->qd != b->qd || a->threads != b->threads || a->read_pct != b->read_pct ||
+            a->random != b->random)
+            return false;
+    }
+    return true;
+}
+
 static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
     return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
            x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
-           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && !memcmp(a->selected, b->selected, g_bench_count);
+           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && disk_same(&x->disk, &y->disk) &&
+           !memcmp(a->selected, b->selected, g_bench_count);
 }
 
 // Appends "key=value\0" to a profile section buffer (double-null terminated by the caller).
@@ -177,6 +217,24 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);
     sec_add(&s, L"repeat=%u", p->repeat);
+    const DiskOptions* o = &p->disk;
+    wchar_t mode[16];
+    MultiByteToWideChar(CP_UTF8, 0, disk_mode_name(o->mode), -1, mode, ARRAY_COUNT(mode));
+    sec_add(&s, L"disk_mode=%s", mode);
+    sec_add(&s, L"disk_mix_read_pct=%u", (u32)o->mix_read_pct);
+    sec_add(&s, L"disk_data=%s", o->data == DISK_DATA_ZERO ? L"zero" : L"random");
+    sec_add(&s, L"disk_unit=%s", DISK_UNIT_NAMES[o->unit < ARRAY_COUNT(DISK_UNIT_NAMES) ? o->unit : 0]);
+    sec_add(&s, L"disk_buffered=%u", o->buffered ? 1u : 0u);
+    sec_add(&s, L"disk_interval_ms=%u", o->interval_ms);
+    sec_add(&s, L"disk_sustained_gib=%u", o->sustained_gib);
+    sec_add(&s, L"disk_folder=%s", o->folder);
+    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
+        char row[48];
+        wchar_t wrow[48];
+        disk_row_format(&o->custom[i], row, sizeof(row));
+        MultiByteToWideChar(CP_UTF8, 0, row, -1, wrow, ARRAY_COUNT(wrow));
+        sec_add(&s, L"disk_custom%u=%s", i + 1, wrow);
+    }
     buf[s.len] = 0;
     WritePrivateProfileSectionW(L"settings", buf, s_path);
 
