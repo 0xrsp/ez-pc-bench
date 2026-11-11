@@ -428,6 +428,12 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             dl->AddLine(ImVec2(c.x - r * 0.62f, c.y + r * 0.36f), ImVec2(c.x + r * 0.05f, c.y + r * 0.36f), col, line);
             break;
         }
+        case ICON_HISTORY: {        // clock face
+            dl->AddCircle(c, r * 0.92f, col, 24, line);
+            dl->AddLine(c, ImVec2(c.x, c.y - r * 0.55f), col, line);
+            dl->AddLine(c, ImVec2(c.x + r * 0.42f, c.y + r * 0.22f), col, line);
+            break;
+        }
     }
 }
 

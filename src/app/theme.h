@@ -54,7 +54,7 @@ ImU32 theme_heat(f32 t);                        // 0 = low (green) .. 1 = high (
 
 // Small tonal pill with a drawn icon and an optional label, `h` tall (fits in a header row). The icons are
 // vector-drawn (Inter has no icon glyphs). `tooltip` shows on hover.
-enum ThemeIcon : u8 { ICON_GEAR, ICON_THERMOMETER, ICON_DRIVE };
+enum ThemeIcon : u8 { ICON_GEAR, ICON_THERMOMETER, ICON_DRIVE, ICON_HISTORY };
 f32 theme_icon_button_width(const char* label, f32 h);
 bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip);
 // Wrapped tooltip for the item just drawn (also when it is disabled), after a short hover delay.

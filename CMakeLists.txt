@@ -169,12 +169,15 @@ add_executable(ez-pc-bench WIN32
     src/app/temps_ui.cpp
     src/app/health_ui.cpp
     src/app/library.cpp
+    src/app/score_ui.cpp
+    src/app/history_ui.cpp
+    src/app/snapshot.cpp
     src/app/settings.cpp
     src/app/theme.cpp
     src/app/gui.rc
     ${CMAKE_BINARY_DIR}/library.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet)
+    shell32 cabinet windowscodecs)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

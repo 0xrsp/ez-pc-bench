@@ -4,6 +4,8 @@
 #include "app/settings.h"
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
+#include "app/history_ui.h"
+#include "app/snapshot.h"
 #include "app/temps_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
@@ -55,6 +57,7 @@ static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
     { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 980, 720, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
 };
 
 struct ToolWin {
@@ -379,6 +382,7 @@ static void tool_frame(u32 id, bool vsync) {
     s_gfx.ctx->OMSetRenderTargets(1, &t->rtv, nullptr);
     s_gfx.ctx->ClearRenderTargetView(t->rtv, clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    snapshot_capture(id, s_gfx.device, s_gfx.ctx, t->swapchain);
     t->occluded = t->swapchain->Present(vsync ? 1 : 0, 0) == DXGI_STATUS_OCCLUDED;
     g_fonts = s_main_fonts;
     ImGui::SetCurrentContext(s_main_ctx);
@@ -437,6 +441,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
+        if (const wchar_t* t = wcsstr(cmdline, L"--tab ")) {       // dev: open the output panel on this tab
+            char name[16] = {};
+            for (u32 n = 0, i = 6; t[i] && t[i] != L' ' && n + 1 < sizeof(name); ++i) name[n++] = (char)t[i];
+            ui_set_tab(name);
+        }
         if (const wchar_t* o = wcsstr(cmdline, L"--only ")) {      // dev: select only these test ids
             char ids[512] = {};
             u32 n = 0;
@@ -448,7 +457,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health",
+                                                                          L"history" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
@@ -525,6 +535,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         s_gfx.ctx->OMSetRenderTargets(1, &s_gfx.rtv, nullptr);
         s_gfx.ctx->ClearRenderTargetView(s_gfx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        snapshot_capture(SNAP_MAIN, s_gfx.device, s_gfx.ctx, s_gfx.swapchain);
         s_gfx.occluded = s_gfx.swapchain->Present(1, 0) == DXGI_STATUS_OCCLUDED;
 
         const u32 requests = ui_take_tool_requests();
