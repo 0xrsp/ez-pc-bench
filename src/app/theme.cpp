@@ -428,6 +428,13 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             dl->AddLine(ImVec2(c.x - r * 0.62f, c.y + r * 0.36f), ImVec2(c.x + r * 0.05f, c.y + r * 0.36f), col, line);
             break;
         }
+        case ICON_PULSE: {      // heartbeat line
+            const ImVec2 pts[] = { ImVec2(c.x - r, c.y), ImVec2(c.x - r * 0.45f, c.y), ImVec2(c.x - r * 0.2f, c.y - r * 0.8f),
+                                   ImVec2(c.x + r * 0.15f, c.y + r * 0.8f), ImVec2(c.x + r * 0.4f, c.y),
+                                   ImVec2(c.x + r, c.y) };
+            dl->AddPolyline(pts, (int)ARRAY_COUNT(pts), col, line);
+            break;
+        }
     }
 }
 

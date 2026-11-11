@@ -4,6 +4,7 @@
 #include "app/settings.h"
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
+#include "app/stability_ui.h"
 #include "app/temps_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
@@ -12,6 +13,7 @@
 #include "core/sysinfo.h"
 #include "core/timer.h"
 #include "gpu/gpu_common.h"
+#include "stability/stability.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -55,6 +57,7 @@ static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
     { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 980, 720, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - Stability", 1400, 900, stability_ui_draw, stability_ui_on_open, nullptr, false },
 };
 
 struct ToolWin {
@@ -448,7 +451,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health", L"stability" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
@@ -481,7 +484,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (s_tools[i].close) tool_close(i);
 
         const f64 now = timer_now();
-        const bool running = runner_is_running();
+        const bool running = runner_is_running() || stab_is_running();
         const f64 interval = running ? 1.0 / 15.0 : (now - last_input < 1.0 ? 0.0 : 0.25);
         const bool occluded = s_gfx.occluded && s_gfx.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED;
         bool tool_vis[TOOL_COUNT], any_tool = false;
@@ -536,6 +539,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
 
     if (runner_is_running()) runner_cancel();
     runner_wait();
+    if (stab_is_running()) stab_stop("stopped: the app was closed");
+    stab_wait();     // frees locked memory, GPU and the disk test file
     ui_shutdown();
     for (u32 i = 0; i < TOOL_COUNT; ++i) tool_close(i);
 
