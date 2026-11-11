@@ -87,9 +87,13 @@ void settings_load(BenchParams* p, bool* selected) {
         p->gpu_width = read_u32(L"gpu_width", p->gpu_width, 64, 16384);
         p->gpu_height = read_u32(L"gpu_height", p->gpu_height, 64, 16384);
         p->gpu_fullscreen = read_u32(L"gpu_fullscreen", p->gpu_fullscreen, 0, 1) != 0;
-        if (read_str(L"disk_drive", w, ARRAY_COUNT(w))) {
-            const wchar_t root[4] = { towupper(w[0]), L':', L'\\', 0 };
-            if (root[0] >= L'A' && root[0] <= L'Z' && GetDriveTypeW(root) == DRIVE_FIXED) p->disk_drive = root[0];
+        if (read_str(L"disk_drives", w, ARRAY_COUNT(w))) {      // "C,D"; drives that aren't fixed any more are dropped
+            u32 mask = 0;
+            for (const wchar_t* c = w; *c; ++c) {
+                const wchar_t root[4] = { towupper(*c), L':', L'\\', 0 };
+                if (root[0] >= L'A' && root[0] <= L'Z' && GetDriveTypeW(root) == DRIVE_FIXED) mask |= 1u << (root[0] - L'A');
+            }
+            if (mask) p->disk_drives = mask;
         }
         p->disk_file_bytes = read_u32(L"disk_file_mib", (u32)(p->disk_file_bytes / MiB), 16, 1024 * 1024) * MiB;
         p->disk_passes = read_u32(L"disk_passes", p->disk_passes, 1, 99);
@@ -122,7 +126,7 @@ static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
     return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
            x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
-           x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drive == y->disk_drive &&
+           x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
            x->disk_write_through == y->disk_write_through && !memcmp(a->selected, b->selected, g_bench_count);
 }
@@ -161,7 +165,13 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"gpu_width=%u", p->gpu_width);
     sec_add(&s, L"gpu_height=%u", p->gpu_height);
     sec_add(&s, L"gpu_fullscreen=%u", p->gpu_fullscreen ? 1u : 0u);
-    sec_add(&s, L"disk_drive=%c", p->disk_drive);
+    wchar_t drives[64] = {};
+    for (u32 d = 0, n = 0; d < 26; ++d)
+        if ((p->disk_drives >> d) & 1) {
+            if (n) drives[n++] = L',';
+            drives[n++] = (wchar_t)(L'A' + d);
+        }
+    sec_add(&s, L"disk_drives=%s", drives);
     sec_add(&s, L"disk_file_mib=%llu", p->disk_file_bytes / MiB);
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);

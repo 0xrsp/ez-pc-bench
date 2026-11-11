@@ -1,0 +1,642 @@
+app: ez-pc-bench
+format: 1
+timestamp: "2026-11-11T10:00:00"
+system:
+  cpu:
+    brand: AMD Ryzen 7 250 w/ Radeon 780M Graphics
+    vendor: AuthenticAMD
+    family: 25
+    model: 117
+    stepping: 2
+    cores: 8
+    threads: 16
+    l1d_kib: 32
+    l2_kib: 1024
+    l3_kib: 16384
+    avx2: true
+    avx512f: true
+  ram:
+    total_bytes: 33615630336
+    installed_bytes: 34359738368
+    modules[2]{type,size_bytes,speed_mts,configured_mts,manufacturer,part,locator}:
+      DDR5,17179869184,5600,5600,Samsung,M425R2GA3EB0-CWMOL,P0 CHANNEL A DIMM 0
+      DDR5,17179869184,5600,5600,Samsung,M425R2GA3EB0-CWMOL,P0 CHANNEL B DIMM 0
+  gpus[2]{name,dedicated_vram,vendor_id,device_id}:
+    NVIDIA GeForce RTX 5060 Laptop GPU,8282701824,4318,11609
+    AMD Radeon 780M Graphics,536870912,4098,6400
+  drives[2]{letter,model,bus,fs,total_bytes,logical_sector,physical_sector,virtual_disk,dev_drive,bitlocker}:
+    C,SAMSUNG MZAL81T0HFLB-00BL2,NVMe,NTFS,1021821579264,512,4096,false,false,true
+    K,Msft Virtual Disk,File-backed virtual,ReFS,268368347136,512,4096,true,true,false
+  os: Windows 11 (10.0.26300)
+  elevated: false
+  power:
+    on_ac: true
+    plan: Balanced
+    mode: Best performance
+params:
+  duration_ms: 3000
+  thread_count: 0
+  gpu: NVIDIA GeForce RTX 5060 Laptop GPU
+  gpu_width: 1920
+  gpu_height: 1080
+  disk_drives[1]: C
+  disk_file_bytes: 1073741824
+  disk_passes: 5
+  disk_write_through: false
+tests[53]{id,suite,group,name,status,seconds,kind,rows,cols,x_name,x_unit,error}:
+  cpu.int.alu,CPU,Integer,ALU add/xor,done,6.6909476,values,0,0,"","",""
+  cpu.int.mul,CPU,Integer,Multiply (imul),done,6.7167268,values,0,0,"","",""
+  cpu.fp.scalar,CPU,Floating point,FP32 FMA scalar,done,6.6887337,values,0,0,"","",""
+  cpu.fp.avx2_f32,CPU,Floating point,FP32 FMA AVX2,done,6.8140976,values,0,0,"","",""
+  cpu.fp.avx2_f64,CPU,Floating point,FP64 FMA AVX2,done,6.7228708,values,0,0,"","",""
+  cpu.fp.avx512_f32,CPU,Floating point,FP32 FMA AVX-512,done,6.6976267,values,0,0,"","",""
+  cpu.fp.avx512_f64,CPU,Floating point,FP64 FMA AVX-512,done,6.7243907,values,0,0,"","",""
+  cpu.fp.sgemm,CPU,Floating point,SGEMM 1920x1920 (AVX2),done,6.8252619,values,0,0,"","",""
+  cpu.crypto.sha256,CPU,Crypto,SHA-256 (SHA-NI),done,6.7132233,values,0,0,"","",""
+  cpu.crypto.aes,CPU,Crypto,AES-128-CTR,done,6.689335,values,0,0,"","",""
+  cpu.work.sort,CPU,Workloads,Sort 16M u32,done,6.3234657,values,0,0,"","",""
+  cpu.work.sieve,CPU,Workloads,Prime sieve to 1e9,done,6.2389738,values,0,0,"","",""
+  cpu.topo.c2c,CPU,Topology,Core-to-core latency,done,0.1342787,matrix,16,16,"","",""
+  cpu.topo.scaling,CPU,Topology,Thread scaling (AVX2 FMA),done,8.3657217,series,0,0,Threads,threads,""
+  mem.bw.read,Memory,DRAM bandwidth,Read,done,6.7130705,values,0,0,"","",""
+  mem.bw.write,Memory,DRAM bandwidth,Write,done,13.4460172,values,0,0,"","",""
+  mem.bw.copy,Memory,DRAM bandwidth,Copy,done,13.5271963,values,0,0,"","",""
+  mem.bw.triad,Memory,DRAM bandwidth,Triad (a = b + s*c),done,6.8031402,values,0,0,"","",""
+  mem.lat.chase,Memory,Latency,Random access latency,done,8.1566112,series,0,0,Working set,bytes,""
+  mem.sweep.st,Memory,Cache sweep,"Read sweep, one thread",done,6.6667775,series,0,0,Working set,bytes,""
+  mem.sweep.mt,Memory,Cache sweep,"Read sweep, all threads",done,6.4326978,series,0,0,Working set per thread,bytes,""
+  disk.seq1m_q8t1,Disk,Sequential,SEQ1M Q8T1,done,37.2376075,values,0,0,"","",""
+  disk.seq1m_q1t1,Disk,Sequential,SEQ1M Q1T1,done,37.2060014,values,0,0,"","",""
+  disk.rnd4k_q32t1,Disk,Random,RND4K Q32T1,done,37.2088373,values,0,0,"","",""
+  disk.rnd4k_q1t1,Disk,Random,RND4K Q1T1,done,37.1989939,values,0,0,"","",""
+  gpu_vk.compute.fp32,GPU (Vulkan),Compute,FP32 throughput,done,4.0411174,values,0,0,"","",""
+  gpu_vk.compute.fp16,GPU (Vulkan),Compute,FP16 throughput (packed),done,4.0221755,values,0,0,"","",""
+  gpu_vk.compute.int32,GPU (Vulkan),Compute,INT32 throughput,done,4.0387612,values,0,0,"","",""
+  gpu_vk.compute.vram,GPU (Vulkan),Compute,VRAM bandwidth,done,10.2551268,values,0,0,"","",""
+  gpu_vk.compute.lds,GPU (Vulkan),Compute,Shared memory (LDS) bandwidth,done,4.0449798,values,0,0,"","",""
+  gpu_vk.compute.transfer,GPU (Vulkan),Compute,Host <-> GPU transfer,done,7.1038745,values,0,0,"","",""
+  gpu_vk.3d.triangles,GPU (Vulkan),3D,Triangle throughput,done,4.0041708,values,0,0,"","",""
+  gpu_vk.3d.fill,GPU (Vulkan),3D,Pixel fill rate,done,4.0055856,values,0,0,"","",""
+  gpu_vk.3d.texfill,GPU (Vulkan),3D,Texture fill rate,done,4.0166707,values,0,0,"","",""
+  gpu_vk.3d.drawcalls,GPU (Vulkan),3D,Draw calls,done,4.0030893,values,0,0,"","",""
+  gpu_vk.3d.scene,GPU (Vulkan),3D,Lit scene,done,4.004412,values,0,0,"","",""
+  gpu_vk.2d.sprites,GPU (Vulkan),2D,Sprite batch,done,4.005129,values,0,0,"","",""
+  gpu_vk.2d.blit,GPU (Vulkan),2D,Blit / copy,done,4.0078525,values,0,0,"","",""
+  gpu_vk.2d.clear,GPU (Vulkan),2D,Clear,done,4.0028977,values,0,0,"","",""
+  gpu_d3d12.compute.fp32,GPU (D3D12),Compute,FP32 throughput,done,4.018305,values,0,0,"","",""
+  gpu_d3d12.compute.fp16,GPU (D3D12),Compute,FP16 throughput (packed),done,4.0107245,values,0,0,"","",""
+  gpu_d3d12.compute.int32,GPU (D3D12),Compute,INT32 throughput,done,4.0154339,values,0,0,"","",""
+  gpu_d3d12.compute.vram,GPU (D3D12),Compute,VRAM bandwidth,done,12.0779783,values,0,0,"","",""
+  gpu_d3d12.compute.lds,GPU (D3D12),Compute,Shared memory (LDS) bandwidth,done,4.0239779,values,0,0,"","",""
+  gpu_d3d12.compute.transfer,GPU (D3D12),Compute,Host <-> GPU transfer,done,8.0821936,values,0,0,"","",""
+  gpu_d3d12.3d.triangles,GPU (D3D12),3D,Triangle throughput,done,4.0143006,values,0,0,"","",""
+  gpu_d3d12.3d.fill,GPU (D3D12),3D,Pixel fill rate,done,4.0041354,values,0,0,"","",""
+  gpu_d3d12.3d.texfill,GPU (D3D12),3D,Texture fill rate,done,4.0366339,values,0,0,"","",""
+  gpu_d3d12.3d.drawcalls,GPU (D3D12),3D,Draw calls,done,4.0042932,values,0,0,"","",""
+  gpu_d3d12.3d.scene,GPU (D3D12),3D,Lit scene,done,4.0050799,values,0,0,"","",""
+  gpu_d3d12.2d.sprites,GPU (D3D12),2D,Sprite batch,done,4.0074702,values,0,0,"","",""
+  gpu_d3d12.2d.blit,GPU (D3D12),2D,Blit / copy,done,4.0121265,values,0,0,"","",""
+  gpu_d3d12.2d.clear,GPU (D3D12),2D,Clear,done,4.0037614,values,0,0,"","",""
+metrics[542]{id,name,unit,value,x}:
+  cpu.int.alu,Single thread,Gops/s,16.368584085,0
+  cpu.int.alu,Multi-thread,Gops/s,137.714650071,0
+  cpu.int.alu,MT / ST,x,8.413351415,0
+  cpu.int.mul,Single thread,Gops/s,4.651407452,0
+  cpu.int.mul,Multi-thread,Gops/s,38.247657801,0
+  cpu.int.mul,MT / ST,x,8.222813889,0
+  cpu.fp.scalar,Single thread,GFLOPS,19.022766131,0
+  cpu.fp.scalar,Multi-thread,GFLOPS,149.90715741,0
+  cpu.fp.scalar,MT / ST,x,7.880407948,0
+  cpu.fp.avx2_f32,Single thread,GFLOPS,154.661837683,0
+  cpu.fp.avx2_f32,Multi-thread,GFLOPS,1211.63816411,0
+  cpu.fp.avx2_f32,MT / ST,x,7.834112036,0
+  cpu.fp.avx2_f64,Single thread,GFLOPS,77.384341358,0
+  cpu.fp.avx2_f64,Multi-thread,GFLOPS,604.92501683,0
+  cpu.fp.avx2_f64,MT / ST,x,7.817150165,0
+  cpu.fp.avx512_f32,Single thread,GFLOPS,154.713315257,0
+  cpu.fp.avx512_f32,Multi-thread,GFLOPS,1231.685823142,0
+  cpu.fp.avx512_f32,MT / ST,x,7.961084804,0
+  cpu.fp.avx512_f64,Single thread,GFLOPS,77.051419793,0
+  cpu.fp.avx512_f64,Multi-thread,GFLOPS,614.516390065,0
+  cpu.fp.avx512_f64,MT / ST,x,7.975406446,0
+  cpu.fp.sgemm,Single thread,GFLOPS,122.248127542,0
+  cpu.fp.sgemm,Multi-thread,GFLOPS,871.555420593,0
+  cpu.fp.sgemm,MT / ST,x,7.129396892,0
+  cpu.crypto.sha256,Single thread,GB/s,2.355603953,0
+  cpu.crypto.sha256,Multi-thread,GB/s,35.213193155,0
+  cpu.crypto.sha256,MT / ST,x,14.948689956,0
+  cpu.crypto.aes,Single thread (VAES-512),GB/s,28.436047463,0
+  cpu.crypto.aes,Multi-thread (VAES-512),GB/s,216.840805291,0
+  cpu.crypto.aes,MT / ST,x,7.625560675,0
+  cpu.work.sort,Single thread,Melem/s,16.287701088,0
+  cpu.work.sort,Multi-thread,Melem/s,104.127491596,0
+  cpu.work.sort,MT / ST,x,6.393013417,0
+  cpu.work.sieve,Single thread,Mnum/s,2808.380895085,0
+  cpu.work.sieve,Multi-thread,Mnum/s,18789.473345909,0
+  cpu.work.sieve,MT / ST,x,6.690500344,0
+  cpu.topo.c2c,One-way latency,ns,0,0
+  cpu.topo.c2c,One-way latency,ns,16.190000008,1
+  cpu.topo.c2c,One-way latency,ns,22.332499998,2
+  cpu.topo.c2c,One-way latency,ns,22.432500009,3
+  cpu.topo.c2c,One-way latency,ns,22.304999993,4
+  cpu.topo.c2c,One-way latency,ns,22.839999997,5
+  cpu.topo.c2c,One-way latency,ns,22.465000006,6
+  cpu.topo.c2c,One-way latency,ns,25.377499992,7
+  cpu.topo.c2c,One-way latency,ns,25.174999996,8
+  cpu.topo.c2c,One-way latency,ns,27.075000003,9
+  cpu.topo.c2c,One-way latency,ns,23.297500002,10
+  cpu.topo.c2c,One-way latency,ns,22.072499996,11
+  cpu.topo.c2c,One-way latency,ns,22.415000001,12
+  cpu.topo.c2c,One-way latency,ns,27.134999993,13
+  cpu.topo.c2c,One-way latency,ns,23.775000011,14
+  cpu.topo.c2c,One-way latency,ns,24.882500009,15
+  cpu.topo.c2c,One-way latency,ns,16.190000008,16
+  cpu.topo.c2c,One-way latency,ns,0,17
+  cpu.topo.c2c,One-way latency,ns,22.097499993,18
+  cpu.topo.c2c,One-way latency,ns,22.230000002,19
+  cpu.topo.c2c,One-way latency,ns,21.674999994,20
+  cpu.topo.c2c,One-way latency,ns,23.275000001,21
+  cpu.topo.c2c,One-way latency,ns,22.910000007,22
+  cpu.topo.c2c,One-way latency,ns,22.610000008,23
+  cpu.topo.c2c,One-way latency,ns,23.73750001,24
+  cpu.topo.c2c,One-way latency,ns,24.659999997,25
+  cpu.topo.c2c,One-way latency,ns,24.644999996,26
+  cpu.topo.c2c,One-way latency,ns,23.049999993,27
+  cpu.topo.c2c,One-way latency,ns,23.505000001,28
+  cpu.topo.c2c,One-way latency,ns,24.005,29
+  cpu.topo.c2c,One-way latency,ns,25.00999999,30
+  cpu.topo.c2c,One-way latency,ns,23.514999998,31
+  cpu.topo.c2c,One-way latency,ns,22.332499998,32
+  cpu.topo.c2c,One-way latency,ns,22.097499993,33
+  cpu.topo.c2c,One-way latency,ns,0,34
+  cpu.topo.c2c,One-way latency,ns,13.7075,35
+  cpu.topo.c2c,One-way latency,ns,23.847500006,36
+  cpu.topo.c2c,One-way latency,ns,23.210000006,37
+  cpu.topo.c2c,One-way latency,ns,22.397499993,38
+  cpu.topo.c2c,One-way latency,ns,22.772500006,39
+  cpu.topo.c2c,One-way latency,ns,23.914999997,40
+  cpu.topo.c2c,One-way latency,ns,26.1325,41
+  cpu.topo.c2c,One-way latency,ns,24.304999999,42
+  cpu.topo.c2c,One-way latency,ns,23.09250001,43
+  cpu.topo.c2c,One-way latency,ns,25.694999999,44
+  cpu.topo.c2c,One-way latency,ns,23.334999992,45
+  cpu.topo.c2c,One-way latency,ns,25.167499996,46
+  cpu.topo.c2c,One-way latency,ns,23.5825,47
+  cpu.topo.c2c,One-way latency,ns,22.432500009,48
+  cpu.topo.c2c,One-way latency,ns,22.230000002,49
+  cpu.topo.c2c,One-way latency,ns,13.7075,50
+  cpu.topo.c2c,One-way latency,ns,0,51
+  cpu.topo.c2c,One-way latency,ns,27.835000003,52
+  cpu.topo.c2c,One-way latency,ns,23.649999991,53
+  cpu.topo.c2c,One-way latency,ns,23.320000003,54
+  cpu.topo.c2c,One-way latency,ns,23.825000005,55
+  cpu.topo.c2c,One-way latency,ns,24.029999997,56
+  cpu.topo.c2c,One-way latency,ns,24.135000001,57
+  cpu.topo.c2c,One-way latency,ns,23.620000002,58
+  cpu.topo.c2c,One-way latency,ns,23.047500008,59
+  cpu.topo.c2c,One-way latency,ns,24.345000008,60
+  cpu.topo.c2c,One-way latency,ns,25.264999999,61
+  cpu.topo.c2c,One-way latency,ns,23.972500003,62
+  cpu.topo.c2c,One-way latency,ns,23.157499993,63
+  cpu.topo.c2c,One-way latency,ns,22.304999993,64
+  cpu.topo.c2c,One-way latency,ns,21.674999994,65
+  cpu.topo.c2c,One-way latency,ns,23.847500006,66
+  cpu.topo.c2c,One-way latency,ns,27.835000003,67
+  cpu.topo.c2c,One-way latency,ns,0,68
+  cpu.topo.c2c,One-way latency,ns,13.442500006,69
+  cpu.topo.c2c,One-way latency,ns,23.575,70
+  cpu.topo.c2c,One-way latency,ns,23.347499996,71
+  cpu.topo.c2c,One-way latency,ns,23.157500004,72
+  cpu.topo.c2c,One-way latency,ns,22.097500005,73
+  cpu.topo.c2c,One-way latency,ns,24.995000001,74
+  cpu.topo.c2c,One-way latency,ns,22.945000001,75
+  cpu.topo.c2c,One-way latency,ns,23.065000005,76
+  cpu.topo.c2c,One-way latency,ns,22.037499991,77
+  cpu.topo.c2c,One-way latency,ns,22.902500007,78
+  cpu.topo.c2c,One-way latency,ns,22.172499996,79
+  cpu.topo.c2c,One-way latency,ns,22.839999997,80
+  cpu.topo.c2c,One-way latency,ns,23.275000001,81
+  cpu.topo.c2c,One-way latency,ns,23.210000006,82
+  cpu.topo.c2c,One-way latency,ns,23.649999991,83
+  cpu.topo.c2c,One-way latency,ns,13.442500006,84
+  cpu.topo.c2c,One-way latency,ns,0,85
+  cpu.topo.c2c,One-way latency,ns,21.845000003,86
+  cpu.topo.c2c,One-way latency,ns,23.685000008,87
+  cpu.topo.c2c,One-way latency,ns,21.585000002,88
+  cpu.topo.c2c,One-way latency,ns,22.307500001,89
+  cpu.topo.c2c,One-way latency,ns,22.915,90
+  cpu.topo.c2c,One-way latency,ns,23.632500006,91
+  cpu.topo.c2c,One-way latency,ns,23.295000005,92
+  cpu.topo.c2c,One-way latency,ns,23.54500001,93
+  cpu.topo.c2c,One-way latency,ns,21.909999998,94
+  cpu.topo.c2c,One-way latency,ns,21.817499999,95
+  cpu.topo.c2c,One-way latency,ns,22.465000006,96
+  cpu.topo.c2c,One-way latency,ns,22.910000007,97
+  cpu.topo.c2c,One-way latency,ns,22.397499993,98
+  cpu.topo.c2c,One-way latency,ns,23.320000003,99
+  cpu.topo.c2c,One-way latency,ns,23.575,100
+  cpu.topo.c2c,One-way latency,ns,21.845000003,101
+  cpu.topo.c2c,One-way latency,ns,0,102
+  cpu.topo.c2c,One-way latency,ns,12.944999992,103
+  cpu.topo.c2c,One-way latency,ns,21.82500001,104
+  cpu.topo.c2c,One-way latency,ns,22.899999999,105
+  cpu.topo.c2c,One-way latency,ns,21.712499995,106
+  cpu.topo.c2c,One-way latency,ns,22.622500001,107
+  cpu.topo.c2c,One-way latency,ns,24.7575,108
+  cpu.topo.c2c,One-way latency,ns,23.935000002,109
+  cpu.topo.c2c,One-way latency,ns,23.010000007,110
+  cpu.topo.c2c,One-way latency,ns,22.225000009,111
+  cpu.topo.c2c,One-way latency,ns,25.377499992,112
+  cpu.topo.c2c,One-way latency,ns,22.610000008,113
+  cpu.topo.c2c,One-way latency,ns,22.772500006,114
+  cpu.topo.c2c,One-way latency,ns,23.825000005,115
+  cpu.topo.c2c,One-way latency,ns,23.347499996,116
+  cpu.topo.c2c,One-way latency,ns,23.685000008,117
+  cpu.topo.c2c,One-way latency,ns,12.944999992,118
+  cpu.topo.c2c,One-way latency,ns,0,119
+  cpu.topo.c2c,One-way latency,ns,23.412500002,120
+  cpu.topo.c2c,One-way latency,ns,23.6675,121
+  cpu.topo.c2c,One-way latency,ns,23.71999999,122
+  cpu.topo.c2c,One-way latency,ns,22.947499997,123
+  cpu.topo.c2c,One-way latency,ns,23.837499998,124
+  cpu.topo.c2c,One-way latency,ns,23.577499996,125
+  cpu.topo.c2c,One-way latency,ns,22.675000002,126
+  cpu.topo.c2c,One-way latency,ns,23.70499999,127
+  cpu.topo.c2c,One-way latency,ns,25.174999996,128
+  cpu.topo.c2c,One-way latency,ns,23.73750001,129
+  cpu.topo.c2c,One-way latency,ns,23.914999997,130
+  cpu.topo.c2c,One-way latency,ns,24.029999997,131
+  cpu.topo.c2c,One-way latency,ns,23.157500004,132
+  cpu.topo.c2c,One-way latency,ns,21.585000002,133
+  cpu.topo.c2c,One-way latency,ns,21.82500001,134
+  cpu.topo.c2c,One-way latency,ns,23.412500002,135
+  cpu.topo.c2c,One-way latency,ns,0,136
+  cpu.topo.c2c,One-way latency,ns,13.712499992,137
+  cpu.topo.c2c,One-way latency,ns,32.544999999,138
+  cpu.topo.c2c,One-way latency,ns,23.677499996,139
+  cpu.topo.c2c,One-way latency,ns,22.352499991,140
+  cpu.topo.c2c,One-way latency,ns,23.842499991,141
+  cpu.topo.c2c,One-way latency,ns,21.664999997,142
+  cpu.topo.c2c,One-way latency,ns,22.485,143
+  cpu.topo.c2c,One-way latency,ns,27.075000003,144
+  cpu.topo.c2c,One-way latency,ns,24.659999997,145
+  cpu.topo.c2c,One-way latency,ns,26.1325,146
+  cpu.topo.c2c,One-way latency,ns,24.135000001,147
+  cpu.topo.c2c,One-way latency,ns,22.097500005,148
+  cpu.topo.c2c,One-way latency,ns,22.307500001,149
+  cpu.topo.c2c,One-way latency,ns,22.899999999,150
+  cpu.topo.c2c,One-way latency,ns,23.6675,151
+  cpu.topo.c2c,One-way latency,ns,13.712499992,152
+  cpu.topo.c2c,One-way latency,ns,0,153
+  cpu.topo.c2c,One-way latency,ns,22.112499994,154
+  cpu.topo.c2c,One-way latency,ns,22.875000002,155
+  cpu.topo.c2c,One-way latency,ns,23.5825,156
+  cpu.topo.c2c,One-way latency,ns,23.002500006,157
+  cpu.topo.c2c,One-way latency,ns,28.655000006,158
+  cpu.topo.c2c,One-way latency,ns,22.642499994,159
+  cpu.topo.c2c,One-way latency,ns,23.297500002,160
+  cpu.topo.c2c,One-way latency,ns,24.644999996,161
+  cpu.topo.c2c,One-way latency,ns,24.304999999,162
+  cpu.topo.c2c,One-way latency,ns,23.620000002,163
+  cpu.topo.c2c,One-way latency,ns,24.995000001,164
+  cpu.topo.c2c,One-way latency,ns,22.915,165
+  cpu.topo.c2c,One-way latency,ns,21.712499995,166
+  cpu.topo.c2c,One-way latency,ns,23.71999999,167
+  cpu.topo.c2c,One-way latency,ns,32.544999999,168
+  cpu.topo.c2c,One-way latency,ns,22.112499994,169
+  cpu.topo.c2c,One-way latency,ns,0,170
+  cpu.topo.c2c,One-way latency,ns,13.512500004,171
+  cpu.topo.c2c,One-way latency,ns,23.814999997,172
+  cpu.topo.c2c,One-way latency,ns,22.767500002,173
+  cpu.topo.c2c,One-way latency,ns,25.467499995,174
+  cpu.topo.c2c,One-way latency,ns,22.445000002,175
+  cpu.topo.c2c,One-way latency,ns,22.072499996,176
+  cpu.topo.c2c,One-way latency,ns,23.049999993,177
+  cpu.topo.c2c,One-way latency,ns,23.09250001,178
+  cpu.topo.c2c,One-way latency,ns,23.047500008,179
+  cpu.topo.c2c,One-way latency,ns,22.945000001,180
+  cpu.topo.c2c,One-way latency,ns,23.632500006,181
+  cpu.topo.c2c,One-way latency,ns,22.622500001,182
+  cpu.topo.c2c,One-way latency,ns,22.947499997,183
+  cpu.topo.c2c,One-way latency,ns,23.677499996,184
+  cpu.topo.c2c,One-way latency,ns,22.875000002,185
+  cpu.topo.c2c,One-way latency,ns,13.512500004,186
+  cpu.topo.c2c,One-way latency,ns,0,187
+  cpu.topo.c2c,One-way latency,ns,22.952500001,188
+  cpu.topo.c2c,One-way latency,ns,22.450000006,189
+  cpu.topo.c2c,One-way latency,ns,23.005000003,190
+  cpu.topo.c2c,One-way latency,ns,22.1775,191
+  cpu.topo.c2c,One-way latency,ns,22.415000001,192
+  cpu.topo.c2c,One-way latency,ns,23.505000001,193
+  cpu.topo.c2c,One-way latency,ns,25.694999999,194
+  cpu.topo.c2c,One-way latency,ns,24.345000008,195
+  cpu.topo.c2c,One-way latency,ns,23.065000005,196
+  cpu.topo.c2c,One-way latency,ns,23.295000005,197
+  cpu.topo.c2c,One-way latency,ns,24.7575,198
+  cpu.topo.c2c,One-way latency,ns,23.837499998,199
+  cpu.topo.c2c,One-way latency,ns,22.352499991,200
+  cpu.topo.c2c,One-way latency,ns,23.5825,201
+  cpu.topo.c2c,One-way latency,ns,23.814999997,202
+  cpu.topo.c2c,One-way latency,ns,22.952500001,203
+  cpu.topo.c2c,One-way latency,ns,0,204
+  cpu.topo.c2c,One-way latency,ns,13.739999997,205
+  cpu.topo.c2c,One-way latency,ns,23.750000003,206
+  cpu.topo.c2c,One-way latency,ns,22.527499993,207
+  cpu.topo.c2c,One-way latency,ns,27.134999993,208
+  cpu.topo.c2c,One-way latency,ns,24.005,209
+  cpu.topo.c2c,One-way latency,ns,23.334999992,210
+  cpu.topo.c2c,One-way latency,ns,25.264999999,211
+  cpu.topo.c2c,One-way latency,ns,22.037499991,212
+  cpu.topo.c2c,One-way latency,ns,23.54500001,213
+  cpu.topo.c2c,One-way latency,ns,23.935000002,214
+  cpu.topo.c2c,One-way latency,ns,23.577499996,215
+  cpu.topo.c2c,One-way latency,ns,23.842499991,216
+  cpu.topo.c2c,One-way latency,ns,23.002500006,217
+  cpu.topo.c2c,One-way latency,ns,22.767500002,218
+  cpu.topo.c2c,One-way latency,ns,22.450000006,219
+  cpu.topo.c2c,One-way latency,ns,13.739999997,220
+  cpu.topo.c2c,One-way latency,ns,0,221
+  cpu.topo.c2c,One-way latency,ns,22.812500004,222
+  cpu.topo.c2c,One-way latency,ns,22.402499997,223
+  cpu.topo.c2c,One-way latency,ns,23.775000011,224
+  cpu.topo.c2c,One-way latency,ns,25.00999999,225
+  cpu.topo.c2c,One-way latency,ns,25.167499996,226
+  cpu.topo.c2c,One-way latency,ns,23.972500003,227
+  cpu.topo.c2c,One-way latency,ns,22.902500007,228
+  cpu.topo.c2c,One-way latency,ns,21.909999998,229
+  cpu.topo.c2c,One-way latency,ns,23.010000007,230
+  cpu.topo.c2c,One-way latency,ns,22.675000002,231
+  cpu.topo.c2c,One-way latency,ns,21.664999997,232
+  cpu.topo.c2c,One-way latency,ns,28.655000006,233
+  cpu.topo.c2c,One-way latency,ns,25.467499995,234
+  cpu.topo.c2c,One-way latency,ns,23.005000003,235
+  cpu.topo.c2c,One-way latency,ns,23.750000003,236
+  cpu.topo.c2c,One-way latency,ns,22.812500004,237
+  cpu.topo.c2c,One-way latency,ns,0,238
+  cpu.topo.c2c,One-way latency,ns,13.757499994,239
+  cpu.topo.c2c,One-way latency,ns,24.882500009,240
+  cpu.topo.c2c,One-way latency,ns,23.514999998,241
+  cpu.topo.c2c,One-way latency,ns,23.5825,242
+  cpu.topo.c2c,One-way latency,ns,23.157499993,243
+  cpu.topo.c2c,One-way latency,ns,22.172499996,244
+  cpu.topo.c2c,One-way latency,ns,21.817499999,245
+  cpu.topo.c2c,One-way latency,ns,22.225000009,246
+  cpu.topo.c2c,One-way latency,ns,23.70499999,247
+  cpu.topo.c2c,One-way latency,ns,22.485,248
+  cpu.topo.c2c,One-way latency,ns,22.642499994,249
+  cpu.topo.c2c,One-way latency,ns,22.445000002,250
+  cpu.topo.c2c,One-way latency,ns,22.1775,251
+  cpu.topo.c2c,One-way latency,ns,22.527499993,252
+  cpu.topo.c2c,One-way latency,ns,22.402499997,253
+  cpu.topo.c2c,One-way latency,ns,13.757499994,254
+  cpu.topo.c2c,One-way latency,ns,0,255
+  cpu.topo.scaling,AVX2 FP32 FMA,GFLOPS,153.775879277,1
+  cpu.topo.scaling,AVX2 FP32 FMA,GFLOPS,305.699945087,2
+  cpu.topo.scaling,AVX2 FP32 FMA,GFLOPS,605.521408696,4
+  cpu.topo.scaling,AVX2 FP32 FMA,GFLOPS,1181.188964504,8
+  cpu.topo.scaling,AVX2 FP32 FMA,GFLOPS,1206.83196304,16
+  mem.bw.read,Single thread,GB/s,47.019589652,0
+  mem.bw.read,Multi-thread,GB/s,59.680712759,0
+  mem.bw.read,Theoretical DRAM peak,GB/s,89.6,0
+  mem.bw.read,Multi-thread / peak,%,66.607938347,0
+  mem.bw.write,Single thread,GB/s,25.853374632,0
+  mem.bw.write,Multi-thread,GB/s,25.828297602,0
+  mem.bw.write,"Single thread, non-temporal",GB/s,48.600416192,0
+  mem.bw.write,"Multi-thread, non-temporal",GB/s,58.052152217,0
+  mem.bw.copy,Single thread,GB/s,29.405431851,0
+  mem.bw.copy,Multi-thread,GB/s,35.510938299,0
+  mem.bw.copy,"Single thread, non-temporal",GB/s,53.210170218,0
+  mem.bw.copy,"Multi-thread, non-temporal",GB/s,57.320460911,0
+  mem.bw.triad,Single thread,GB/s,31.928014507,0
+  mem.bw.triad,Multi-thread,GB/s,40.753868958,0
+  mem.lat.chase,Latency (4 KiB pages),ns,0.86056151,4096
+  mem.lat.chase,Latency (4 KiB pages),ns,0.838896502,8192
+  mem.lat.chase,Latency (4 KiB pages),ns,0.833899938,16384
+  mem.lat.chase,Latency (4 KiB pages),ns,0.947610347,32768
+  mem.lat.chase,Latency (4 KiB pages),ns,2.959864898,65536
+  mem.lat.chase,Latency (4 KiB pages),ns,2.946697671,131072
+  mem.lat.chase,Latency (4 KiB pages),ns,2.953136938,262144
+  mem.lat.chase,Latency (4 KiB pages),ns,3.027751458,524288
+  mem.lat.chase,Latency (4 KiB pages),ns,3.77764402,1048576
+  mem.lat.chase,Latency (4 KiB pages),ns,9.477491568,2097152
+  mem.lat.chase,Latency (4 KiB pages),ns,13.170290048,4194304
+  mem.lat.chase,Latency (4 KiB pages),ns,19.563755133,8388608
+  mem.lat.chase,Latency (4 KiB pages),ns,75.443789833,16777216
+  mem.lat.chase,Latency (4 KiB pages),ns,97.467041016,33554432
+  mem.lat.chase,Latency (4 KiB pages),ns,99.057217302,67108864
+  mem.lat.chase,Latency (4 KiB pages),ns,107.933911247,134217728
+  mem.lat.chase,Latency (4 KiB pages),ns,121.178908575,268435456
+  mem.lat.chase,Latency (4 KiB pages),ns,118.223084125,536870912
+  mem.lat.chase,Latency (4 KiB pages),ns,138.777521307,1073741824
+  mem.sweep.st,Read,GB/s,291.132234724,16384
+  mem.sweep.st,Read,GB/s,280.50255134,32768
+  mem.sweep.st,Read,GB/s,145.994468154,65536
+  mem.sweep.st,Read,GB/s,152.737132307,131072
+  mem.sweep.st,Read,GB/s,150.969843514,262144
+  mem.sweep.st,Read,GB/s,150.028673275,524288
+  mem.sweep.st,Read,GB/s,146.83395913,1048576
+  mem.sweep.st,Read,GB/s,124.262111333,2097152
+  mem.sweep.st,Read,GB/s,125.464996496,4194304
+  mem.sweep.st,Read,GB/s,125.793010055,8388608
+  mem.sweep.st,Read,GB/s,71.47804667,16777216
+  mem.sweep.st,Read,GB/s,68.421426095,33554432
+  mem.sweep.st,Read,GB/s,42.836748649,67108864
+  mem.sweep.st,Read,GB/s,45.130260982,134217728
+  mem.sweep.st,Read,GB/s,50.017910655,268435456
+  mem.sweep.mt,Read,GB/s,2133.219069256,16384
+  mem.sweep.mt,Read,GB/s,1121.522877979,32768
+  mem.sweep.mt,Read,GB/s,1112.115468356,65536
+  mem.sweep.mt,Read,GB/s,1116.503360542,131072
+  mem.sweep.mt,Read,GB/s,1118.753364925,262144
+  mem.sweep.mt,Read,GB/s,1060.276218888,524288
+  mem.sweep.mt,Read,GB/s,327.061973142,1048576
+  mem.sweep.mt,Read,GB/s,123.989459407,2097152
+  mem.sweep.mt,Read,GB/s,75.855072088,4194304
+  mem.sweep.mt,Read,GB/s,60.293549989,8388608
+  mem.sweep.mt,Read,GB/s,59.848371741,16777216
+  mem.sweep.mt,Read,GB/s,59.763380295,33554432
+  mem.sweep.mt,Read,GB/s,59.830761657,67108864
+  disk.seq1m_q8t1,"C: Read",MB/s,7048.853327489,0
+  disk.seq1m_q8t1,"C: Read IOPS",IOPS,6722.310378541,0
+  disk.seq1m_q8t1,"C: Read latency",µs,1188.944951461,0
+  disk.seq1m_q8t1,"C: Write",MB/s,5861.231015124,0
+  disk.seq1m_q8t1,"C: Write IOPS",IOPS,5589.705481647,0
+  disk.seq1m_q8t1,"C: Write latency",µs,1428.787602963,0
+  disk.seq1m_q1t1,"C: Read",MB/s,1337.761476769,0
+  disk.seq1m_q1t1,"C: Read IOPS",IOPS,1275.788761873,0
+  disk.seq1m_q1t1,"C: Read latency",µs,783.585602911,0
+  disk.seq1m_q1t1,"C: Write",MB/s,2060.129834064,0
+  disk.seq1m_q1t1,"C: Write IOPS",IOPS,1964.692911209,0
+  disk.seq1m_q1t1,"C: Write latency",µs,508.818634064,0
+  disk.rnd4k_q32t1,"C: Read",MB/s,412.369782152,0
+  disk.rnd4k_q32t1,"C: Read IOPS",IOPS,100676.216345674,0
+  disk.rnd4k_q32t1,"C: Read latency",µs,206.138785274,0
+  disk.rnd4k_q32t1,"C: Write",MB/s,704.017647581,0
+  disk.rnd4k_q32t1,"C: Write IOPS",IOPS,171879.308491333,0
+  disk.rnd4k_q32t1,"C: Write latency",µs,114.101408904,0
+  disk.rnd4k_q1t1,"C: Read",MB/s,59.683398889,0
+  disk.rnd4k_q1t1,"C: Read IOPS",IOPS,14571.14230692,0
+  disk.rnd4k_q1t1,"C: Read latency",µs,68.58580313,0
+  disk.rnd4k_q1t1,"C: Write",MB/s,123.360188516,0
+  disk.rnd4k_q1t1,"C: Write IOPS",IOPS,30117.233524415,0
+  disk.rnd4k_q1t1,"C: Write latency",µs,33.167395254,0
+  gpu_vk.compute.fp32,Throughput,TFLOPS,14.632068316,0
+  gpu_vk.compute.fp32,Throughput (fastest dispatch),TFLOPS,15.596624625,0
+  gpu_vk.compute.fp32,Dispatch time min,ms,4.406048,0
+  gpu_vk.compute.fp32,Dispatch time avg,ms,4.696497806,0
+  gpu_vk.compute.fp32,Dispatch time max,ms,5.243904,0
+  gpu_vk.compute.fp16,Throughput,TFLOPS,15.883147225,0
+  gpu_vk.compute.fp16,Throughput (fastest dispatch),TFLOPS,16.040242066,0
+  gpu_vk.compute.fp16,Dispatch time min,ms,4.284192,0
+  gpu_vk.compute.fp16,Dispatch time avg,ms,4.326565495,0
+  gpu_vk.compute.fp16,Dispatch time max,ms,4.366816,0
+  gpu_vk.compute.int32,Throughput,TIOPS,9.166349684,0
+  gpu_vk.compute.int32,Throughput (fastest dispatch),TIOPS,9.218527548,0
+  gpu_vk.compute.int32,Dispatch time min,ms,7.454496,0
+  gpu_vk.compute.int32,Dispatch time avg,ms,7.496929433,0
+  gpu_vk.compute.int32,Dispatch time max,ms,7.546464,0
+  gpu_vk.compute.vram,Read,GB/s,368.383614717,0
+  gpu_vk.compute.vram,Write,GB/s,347.112605095,0
+  gpu_vk.compute.vram,Copy,GB/s,337.971347473,0
+  gpu_vk.compute.lds,Throughput,GB/s,8637.114808794,0
+  gpu_vk.compute.lds,Throughput (fastest dispatch),GB/s,8731.809025039,0
+  gpu_vk.compute.lds,Dispatch time min,ms,3.935008,0
+  gpu_vk.compute.lds,Dispatch time avg,ms,3.978150011,0
+  gpu_vk.compute.lds,Dispatch time max,ms,4.000672,0
+  gpu_vk.compute.transfer,Upload,GB/s,14.160394197,0
+  gpu_vk.compute.transfer,Readback,GB/s,13.994962973,0
+  gpu_vk.3d.triangles,Average FPS,fps,1288.09151672,0
+  gpu_vk.3d.triangles,1% low,fps,888.967921372,0
+  gpu_vk.3d.triangles,0.1% low,fps,187.444941481,0
+  gpu_vk.3d.triangles,Avg frame time,ms,0.776342354,0
+  gpu_vk.3d.triangles,p99 frame time,ms,1.124899983,0
+  gpu_vk.3d.triangles,p99.9 frame time,ms,5.334899902,0
+  gpu_vk.3d.triangles,Triangles,Mtri/s,2576.18303344,0
+  gpu_vk.3d.fill,Average FPS,fps,3151.850392426,0
+  gpu_vk.3d.fill,1% low,fps,1888.930897116,0
+  gpu_vk.3d.fill,0.1% low,fps,246.487542644,0
+  gpu_vk.3d.fill,Avg frame time,ms,0.317273942,0
+  gpu_vk.3d.fill,p99 frame time,ms,0.529399991,0
+  gpu_vk.3d.fill,p99.9 frame time,ms,4.05700016,0
+  gpu_vk.3d.fill,Pixel fill,Gpix/s,104.57083158,0
+  gpu_vk.3d.texfill,Average FPS,fps,5306.162296782,0
+  gpu_vk.3d.texfill,1% low,fps,2848.191416643,0
+  gpu_vk.3d.texfill,0.1% low,fps,328.49353477,0
+  gpu_vk.3d.texfill,Avg frame time,ms,0.188460123,0
+  gpu_vk.3d.texfill,p99 frame time,ms,0.351099998,0
+  gpu_vk.3d.texfill,p99.9 frame time,ms,3.044199944,0
+  gpu_vk.3d.texfill,Texel rate,Gtex/s,176.045730218,0
+  gpu_vk.3d.drawcalls,Average FPS,fps,2970.897405306,0
+  gpu_vk.3d.drawcalls,1% low,fps,1655.355103977,0
+  gpu_vk.3d.drawcalls,0.1% low,fps,448.169205485,0
+  gpu_vk.3d.drawcalls,Avg frame time,ms,0.336598631,0
+  gpu_vk.3d.drawcalls,p99 frame time,ms,0.604099989,0
+  gpu_vk.3d.drawcalls,p99.9 frame time,ms,2.231300116,0
+  gpu_vk.3d.drawcalls,Draw calls,K draws/s,29708.974053058,0
+  gpu_vk.3d.scene,Average FPS,fps,7350.809615342,0
+  gpu_vk.3d.scene,1% low,fps,3485.534863366,0
+  gpu_vk.3d.scene,0.1% low,fps,429.092490147,0
+  gpu_vk.3d.scene,Avg frame time,ms,0.136039437,0
+  gpu_vk.3d.scene,p99 frame time,ms,0.286900014,0
+  gpu_vk.3d.scene,p99.9 frame time,ms,2.330499887,0
+  gpu_vk.2d.sprites,Average FPS,fps,780.260196642,0
+  gpu_vk.2d.sprites,1% low,fps,621.774555906,0
+  gpu_vk.2d.sprites,0.1% low,fps,62.970310134,0
+  gpu_vk.2d.sprites,Avg frame time,ms,1.281623751,0
+  gpu_vk.2d.sprites,p99 frame time,ms,1.608299971,0
+  gpu_vk.2d.sprites,p99.9 frame time,ms,15.88049984,0
+  gpu_vk.2d.sprites,Sprites,Msprites/s,78.026019664,0
+  gpu_vk.2d.blit,Average FPS,fps,5505.402224075,0
+  gpu_vk.2d.blit,1% low,fps,2970.885274165,0
+  gpu_vk.2d.blit,0.1% low,fps,406.272847559,0
+  gpu_vk.2d.blit,Avg frame time,ms,0.181639771,0
+  gpu_vk.2d.blit,p99 frame time,ms,0.336600006,0
+  gpu_vk.2d.blit,p99.9 frame time,ms,2.461400032,0
+  gpu_vk.2d.blit,Copy bandwidth,GB/s,730.624131318,0
+  gpu_vk.2d.clear,Average FPS,fps,8993.939784386,0
+  gpu_vk.2d.clear,1% low,fps,4055.150006834,0
+  gpu_vk.2d.clear,0.1% low,fps,431.760308663,0
+  gpu_vk.2d.clear,Avg frame time,ms,0.111185979,0
+  gpu_vk.2d.clear,p99 frame time,ms,0.246600002,0
+  gpu_vk.2d.clear,p99.9 frame time,ms,2.316099882,0
+  gpu_vk.2d.clear,Clear bandwidth,GB/s,2387.178692723,0
+  gpu_d3d12.compute.fp32,Throughput,TFLOPS,14.485576991,0
+  gpu_d3d12.compute.fp32,Throughput (fastest dispatch),TFLOPS,15.137835699,0
+  gpu_d3d12.compute.fp32,Dispatch time min,ms,4.539584,0
+  gpu_d3d12.compute.fp32,Dispatch time avg,ms,4.743993061,0
+  gpu_d3d12.compute.fp32,Dispatch time max,ms,5.287168,0
+  gpu_d3d12.compute.fp16,Throughput,TFLOPS,17.411284817,0
+  gpu_d3d12.compute.fp16,Throughput (fastest dispatch),TFLOPS,17.485088896,0
+  gpu_d3d12.compute.fp16,Dispatch time min,ms,3.930176,0
+  gpu_d3d12.compute.fp16,Dispatch time avg,ms,3.946835484,0
+  gpu_d3d12.compute.fp16,Dispatch time max,ms,4.113088,0
+  gpu_d3d12.compute.int32,Throughput,TIOPS,9.143304252,0
+  gpu_d3d12.compute.int32,Throughput (fastest dispatch),TIOPS,9.190044498,0
+  gpu_d3d12.compute.int32,Dispatch time min,ms,7.4776,0
+  gpu_d3d12.compute.int32,Dispatch time avg,ms,7.515825224,0
+  gpu_d3d12.compute.int32,Dispatch time max,ms,7.583872,0
+  gpu_d3d12.compute.vram,Read,GB/s,368.9426765,0
+  gpu_d3d12.compute.vram,Write,GB/s,368.26563257,0
+  gpu_d3d12.compute.vram,Copy,GB/s,337.61304025,0
+  gpu_d3d12.compute.lds,Throughput,GB/s,8514.001858284,0
+  gpu_d3d12.compute.lds,Throughput (fastest dispatch),GB/s,8603.217960531,0
+  gpu_d3d12.compute.lds,Dispatch time min,ms,3.993824,0
+  gpu_d3d12.compute.lds,Dispatch time avg,ms,4.035674286,0
+  gpu_d3d12.compute.lds,Dispatch time max,ms,4.343264,0
+  gpu_d3d12.compute.transfer,Upload,GB/s,14.134525652,0
+  gpu_d3d12.compute.transfer,Readback,GB/s,14.025938306,0
+  gpu_d3d12.3d.triangles,Average FPS,fps,1272.657673483,0
+  gpu_d3d12.3d.triangles,1% low,fps,856.89798852,0
+  gpu_d3d12.3d.triangles,0.1% low,fps,619.386789499,0
+  gpu_d3d12.3d.triangles,Avg frame time,ms,0.785757255,0
+  gpu_d3d12.3d.triangles,p99 frame time,ms,1.167000055,0
+  gpu_d3d12.3d.triangles,p99.9 frame time,ms,1.614500046,0
+  gpu_d3d12.3d.triangles,Triangles,Mtri/s,2545.315346967,0
+  gpu_d3d12.3d.fill,Average FPS,fps,3154.283705059,0
+  gpu_d3d12.3d.fill,1% low,fps,2076.843199367,0
+  gpu_d3d12.3d.fill,0.1% low,fps,973.804604504,0
+  gpu_d3d12.3d.fill,Avg frame time,ms,0.317029187,0
+  gpu_d3d12.3d.fill,p99 frame time,ms,0.4815,0
+  gpu_d3d12.3d.fill,p99.9 frame time,ms,1.026900053,0
+  gpu_d3d12.3d.fill,Pixel fill,Gpix/s,104.651563053,0
+  gpu_d3d12.3d.texfill,Average FPS,fps,5309.705666696,0
+  gpu_d3d12.3d.texfill,1% low,fps,2930.832407179,0
+  gpu_d3d12.3d.texfill,0.1% low,fps,1143.249101143,0
+  gpu_d3d12.3d.texfill,Avg frame time,ms,0.188334357,0
+  gpu_d3d12.3d.texfill,p99 frame time,ms,0.341199994,0
+  gpu_d3d12.3d.texfill,p99.9 frame time,ms,0.87470001,0
+  gpu_d3d12.3d.texfill,Texel rate,Gtex/s,176.163290727,0
+  gpu_d3d12.3d.drawcalls,Average FPS,fps,6372.441081409,0
+  gpu_d3d12.3d.drawcalls,1% low,fps,2816.901493583,0
+  gpu_d3d12.3d.drawcalls,0.1% low,fps,985.707223636,0
+  gpu_d3d12.3d.drawcalls,Avg frame time,ms,0.156925735,0
+  gpu_d3d12.3d.drawcalls,p99 frame time,ms,0.354999989,0
+  gpu_d3d12.3d.drawcalls,p99.9 frame time,ms,1.014500022,0
+  gpu_d3d12.3d.drawcalls,Draw calls,K draws/s,63724.410814091,0
+  gpu_d3d12.3d.scene,Average FPS,fps,6909.806754631,0
+  gpu_d3d12.3d.scene,1% low,fps,3356.831249722,0
+  gpu_d3d12.3d.scene,0.1% low,fps,1340.123246298,0
+  gpu_d3d12.3d.scene,Avg frame time,ms,0.144721848,0
+  gpu_d3d12.3d.scene,p99 frame time,ms,0.297899991,0
+  gpu_d3d12.3d.scene,p99.9 frame time,ms,0.746200025,0
+  gpu_d3d12.2d.sprites,Average FPS,fps,782.321103722,0
+  gpu_d3d12.2d.sprites,1% low,fps,630.040304485,0
+  gpu_d3d12.2d.sprites,0.1% low,fps,490.220093336,0
+  gpu_d3d12.2d.sprites,Avg frame time,ms,1.278247506,0
+  gpu_d3d12.2d.sprites,p99 frame time,ms,1.587200046,0
+  gpu_d3d12.2d.sprites,p99.9 frame time,ms,2.039900064,0
+  gpu_d3d12.2d.sprites,Sprites,Msprites/s,78.232110372,0
+  gpu_d3d12.2d.blit,Average FPS,fps,4978.843331541,0
+  gpu_d3d12.2d.blit,1% low,fps,2526.528585081,0
+  gpu_d3d12.2d.blit,0.1% low,fps,1194.029884738,0
+  gpu_d3d12.2d.blit,Avg frame time,ms,0.200849863,0
+  gpu_d3d12.2d.blit,p99 frame time,ms,0.395799994,0
+  gpu_d3d12.2d.blit,p99.9 frame time,ms,0.837499976,0
+  gpu_d3d12.2d.blit,Copy bandwidth,GB/s,660.744290066,0
+  gpu_d3d12.2d.clear,Average FPS,fps,11482.273243863,0
+  gpu_d3d12.2d.clear,1% low,fps,4152.824036217,0
+  gpu_d3d12.2d.clear,0.1% low,fps,1772.421177292,0
+  gpu_d3d12.2d.clear,Avg frame time,ms,0.087090768,0
+  gpu_d3d12.2d.clear,p99 frame time,ms,0.240799993,0
+  gpu_d3d12.2d.clear,p99.9 frame time,ms,0.564199984,0
+  gpu_d3d12.2d.clear,Clear bandwidth,GB/s,3047.634150205,0

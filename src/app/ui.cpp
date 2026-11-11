@@ -23,8 +23,13 @@ struct UiState {
     char status_msg[300];
     f64 last_power_refresh;
     bool quit;
+    bool dev;           // --dev: show the smoke-test suite (runner / UI self-tests)
 };
 static UiState s_ui;
+
+static bool suite_visible(u32 suite) { return suite != SUITE_SMOKE || s_ui.dev; }
+
+void ui_set_dev(bool dev) { s_ui.dev = dev; }
 
 #define COL_DIM  g_pal.on_surface_variant
 #define COL_OK   g_pal.ok
@@ -62,7 +67,9 @@ void ui_select_only(const char* ids) {
 
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
-    runner_start(s_ui.selected, &s_ui.params);
+    bool run[MAX_BENCHES];      // hidden suites never run, whatever the saved selection says
+    for (u32 i = 0; i < g_bench_count; ++i) run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
+    runner_start(run, &s_ui.params);
 }
 
 void ui_apply_style(f32 scale) { theme_apply_style(scale); }
@@ -102,7 +109,7 @@ static void result_summary(u32 id, char* buf, u32 size) {
 
 static void draw_warnings() {
     const SysInfo* s = &g_sys;
-    const char* lines[6];
+    const char* lines[12];
     u32 n = 0;
     i32 admin_line = -1;
     if (!s->elevated) {
@@ -118,9 +125,12 @@ static void draw_warnings() {
     }
     bool disk_selected = false;
     for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && s_ui.selected[i];
-    static char drive[2][192];
-    const u32 nd = disk_selected ? drive_target_warnings(s_ui.params.disk_drive, drive) : 0;
-    for (u32 i = 0; i < nd; ++i) lines[n++] = drive[i];
+    static char drive[26][2][192];
+    for (u32 d = 0; d < 26 && disk_selected; ++d) {
+        if (!((s_ui.params.disk_drives >> d) & 1)) continue;
+        const u32 nd = drive_target_warnings((wchar_t)(L'A' + d), drive[d]);
+        for (u32 i = 0; i < nd && n < ARRAY_COUNT(lines); ++i) lines[n++] = drive[d][i];
+    }
     if (theme_warnings(lines, n, admin_line, "Restart as admin") && !runner_is_running() && relaunch_elevated(L""))
         s_ui.quit = true;
 }
@@ -178,18 +188,18 @@ static void results_dir(wchar_t* dir) {
     CreateDirectoryW(dir, nullptr);
 }
 
-static void save_results(bool csv) {
+static void save_results() {
     wchar_t dir[MAX_PATH];
     results_dir(dir);
     time_t now = time(nullptr);
     struct tm t;
     localtime_s(&t, &now);
     wchar_t path[MAX_PATH];
-    swprintf(path, MAX_PATH, L"%s\\ezbench_%04d%02d%02d_%02d%02d%02d.%s", dir, t.tm_year + 1900, t.tm_mon + 1,
-             t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, csv ? L"csv" : L"json");
+    swprintf(path, MAX_PATH, L"%s\\ezbench_%04d%02d%02d_%02d%02d%02d.toon.txt", dir, t.tm_year + 1900, t.tm_mon + 1,
+             t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
     char path8[MAX_PATH * 3];
     WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
-    const bool ok = csv ? results_write_csv(path, &g_run.params) : results_write_json(path, &g_run.params);
+    const bool ok = results_write_toon(path, &g_run.params);
     snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), ok ? "Saved %s" : "Failed to write %s", path8);
 }
 
@@ -198,7 +208,7 @@ static void compare_dialog() {
     results_dir(dir);
     OPENFILENAMEW ofn = { sizeof(ofn) };
     ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
-    ofn.lpstrFilter = L"ez-pc-bench results (*.json)\0*.json\0All files\0*.*\0";
+    ofn.lpstrFilter = L"ez-pc-bench results (*.toon.txt)\0*.toon.txt\0All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrInitialDir = dir;
@@ -222,10 +232,55 @@ static void copy_text() {
     snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Results copied to clipboard");
 }
 
+// What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
+static void draw_targets() {
+    BenchParams* p = &s_ui.params;
+    ImGui::BeginDisabled(runner_is_running());
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("GPU");
+    ImGui::SameLine();
+    if (g_sys.gpu_count > 0) {
+        if (p->gpu_adapter >= g_sys.gpu_count) p->gpu_adapter = 0;
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize(g_sys.gpus[p->gpu_adapter].name).x + ImGui::GetFrameHeight() * 2.0f);
+        if (ImGui::BeginCombo("##gpu", g_sys.gpus[p->gpu_adapter].name)) {
+            for (u32 i = 0; i < g_sys.gpu_count; ++i) {
+                char label[192];
+                snprintf(label, sizeof(label), "%s  (%llu MiB)", g_sys.gpus[i].name, g_sys.gpus[i].dedicated_vram / MiB);
+                if (ImGui::Selectable(label, i == p->gpu_adapter)) p->gpu_adapter = i;
+            }
+            ImGui::EndCombo();
+        }
+    } else {
+        ImGui::TextDisabled("none found");
+    }
+
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+    ImGui::TextDisabled("Disks");
+    for (u32 i = 0; i < g_sys.drive_count; ++i) {
+        const DriveInfo* d = &g_sys.drives[i];
+        const u32 bit = 1u << (d->letter - 'A');
+        char label[8];
+        snprintf(label, sizeof(label), "%c:", d->letter);
+        ImGui::SameLine(0.0f, i ? 4.0f : -1.0f);
+        ImGui::PushID((int)i);
+        if (theme_tab(label, (p->disk_drives & bit) != 0)) {
+            const u32 next = p->disk_drives ^ bit;
+            if (next) p->disk_drives = next;    // at least one drive stays selected
+        }
+        ImGui::PopID();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            char desc[192];
+            drive_describe(d, desc, sizeof(desc));
+            ImGui::SetTooltip("%s", desc);
+        }
+    }
+    ImGui::EndDisabled();
+}
+
 static void draw_toolbar() {
     const bool running = runner_is_running();
     u32 selected = 0;
-    for (u32 i = 0; i < g_bench_count; ++i) selected += s_ui.selected[i];
+    for (u32 i = 0; i < g_bench_count; ++i) selected += s_ui.selected[i] && suite_visible(g_benches[i].suite);
 
     ImGui::BeginDisabled(running || selected == 0);
     if (theme_button_primary("Run")) ui_start_run();
@@ -237,7 +292,8 @@ static void draw_toolbar() {
 
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
-    if (theme_button("All")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = true;
+    if (theme_button("All"))
+        for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = suite_visible(g_benches[i].suite);
     ImGui::SameLine();
     if (theme_button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
     ImGui::EndDisabled();
@@ -245,9 +301,7 @@ static void draw_toolbar() {
     const bool have_results = g_run.total > 0 && !running;
     ImGui::SameLine();
     ImGui::BeginDisabled(!have_results);
-    if (theme_button("Save JSON")) save_results(false);
-    ImGui::SameLine();
-    if (theme_button("Save CSV")) save_results(true);
+    if (theme_button("Save results")) save_results();
     ImGui::SameLine();
     if (theme_button("Copy text")) copy_text();
     ImGui::EndDisabled();
@@ -318,6 +372,7 @@ static void draw_tree() {
     const bool running = runner_is_running();
     s_status_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x * 0.55f;
     for (u32 s = 0; s < SUITE_COUNT; ++s) {
+        if (!suite_visible(s)) continue;
         u32 total = 0, sel = 0, in_run = 0, done = 0;
         for (u32 i = 0; i < g_bench_count; ++i) {
             if (g_benches[i].suite != s) continue;
@@ -387,34 +442,10 @@ static void draw_settings() {
     int threads = (int)p->thread_count;
     if (ImGui::SliderInt("Threads (0 = all)", &threads, 0, (int)g_sys.cpu.threads)) p->thread_count = (u32)threads;
 
-    if (g_sys.gpu_count > 0) {
-        if (p->gpu_adapter >= g_sys.gpu_count) p->gpu_adapter = 0;
-        if (ImGui::BeginCombo("GPU", g_sys.gpus[p->gpu_adapter].name)) {
-            for (u32 i = 0; i < g_sys.gpu_count; ++i)
-                if (ImGui::Selectable(g_sys.gpus[i].name, i == p->gpu_adapter)) p->gpu_adapter = i;
-            ImGui::EndCombo();
-        }
-    }
     int res[2] = { (int)p->gpu_width, (int)p->gpu_height };
-    if (ImGui::InputInt2("GPU resolution", res)) {
+    if (ImGui::InputInt2("GPU render resolution", res)) {
         p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0]);
         p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1]);
-    }
-    theme_checkbox("GPU fullscreen (borderless)", &p->gpu_fullscreen);
-
-    char drive_label[8];
-    snprintf(drive_label, sizeof(drive_label), "%c:", (char)p->disk_drive);
-    if (ImGui::BeginCombo("Disk target", drive_label)) {
-        const DWORD drives = GetLogicalDrives();
-        for (int d = 0; d < 26; ++d) {
-            if (!(drives & (1u << d))) continue;
-            wchar_t root[4] = { (wchar_t)(L'A' + d), L':', L'\\', 0 };
-            if (GetDriveTypeW(root) != DRIVE_FIXED) continue;
-            char label[8];
-            snprintf(label, sizeof(label), "%c:", 'A' + d);
-            if (ImGui::Selectable(label, p->disk_drive == (wchar_t)(L'A' + d))) p->disk_drive = (wchar_t)(L'A' + d);
-        }
-        ImGui::EndCombo();
     }
     static const u32 sizes_mib[] = { 64, 256, 512, 1024, 2048, 4096, 8192 };
     char size_label[16];
@@ -755,6 +786,7 @@ void ui_draw() {
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
     draw_warnings();
     draw_sysinfo();
+    draw_targets();
     draw_toolbar();
     ImGui::Spacing();
 

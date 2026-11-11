@@ -208,7 +208,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     theme_load_fonts();
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
         if (const wchar_t* o = wcsstr(cmdline, L"--only ")) {      // dev: select only these test ids
+            ui_set_dev(true);
             char ids[512] = {};
             u32 n = 0;
             for (o += 7; *o && *o != L' ' && n + 1 < sizeof(ids); ++o) ids[n++] = (char)*o;

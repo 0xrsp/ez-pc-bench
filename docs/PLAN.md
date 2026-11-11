@@ -433,8 +433,9 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
 ## 10. Reference run (2026-11-11, AC + "Best performance", default settings, not elevated)
 
 Full default selection, 3 s phases, 53 tests, 437 s, all done. Raw data (use as the GUI "Compare..."
-baseline): [docs/reference/2026-11-11_ac_best-performance.json](reference/2026-11-11_ac_best-performance.json)
-(+ `.csv`). Numbers are single thread → multi-thread unless noted.
+baseline): [docs/reference/2026-11-11_ac_best-performance.toon.txt](reference/2026-11-11_ac_best-performance.toon.txt)
+(converted from the original JSON export; disk metrics renamed to the per-drive form `C: Read`).
+Numbers are single thread → multi-thread unless noted.
 
 | Area | Result | Sanity check |
 |---|---|---|
@@ -469,6 +470,18 @@ None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
 
+- 2026-11-11 (results format + targets):
+  - JSON and CSV export removed; the only results file is TOON text, `*.toon.txt`, written and read by our
+    own ~350-line subset (`core/toon.*`): `key: value`, nested objects by 2-space indent, tabular arrays
+    `name[N]{fields}:` with comma rows, inline arrays, quoting only when needed. Layout: system / params
+    objects + flat `tests[N]{...}` and `metrics[M]{id,name,unit,value,x}` tables (x = series x / matrix cell
+    / 0). The reference run is 34 KB as TOON vs 51 KB JSON / 50 KB CSV. GUI "Save results"; CLI `--out`,
+    `--compare <file.toon.txt>`.
+  - Disk suite runs on several drives: `BenchParams::disk_drives` bitmask (CLI `--disk-drives C,K`, ini
+    `disk_drives=C,K`); one test file per drive, metrics named per drive (`C: Read`, `K: Read IOPS`, ...).
+  - GPU and disk targets moved from Settings to a bar above the toolbar (GPU combo, drive toggle chips).
+  - Smoke-test suite hidden in the GUI unless `--dev` (or `--only`); hidden suites never run.
+  - Scrolling panels nest the scroll region inside the rounded card so the scrollbar stays off the corners.
 - 2026-11-11: UI = Dear ImGui (Win32 + D3D11), vendored. Build = CMake + Ninja + clang-cl.
   GPU benches = Vulkan + D3D12 from shared HLSL. C-style, data-oriented; no exceptions/RTTI.
 - 2026-11-11 (plan review):

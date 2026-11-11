@@ -1,5 +1,5 @@
 #pragma once
-// Baseline for comparisons: results read back from one of our own JSON exports.
+// Baseline for comparisons: results read back from one of our own TOON result files (*.toon.txt).
 #include "core/bench.h"
 
 struct Baseline {

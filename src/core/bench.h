@@ -31,7 +31,8 @@ struct BenchParams {
     u32 gpu_adapter = 0;            // index into SysInfo::gpus
     u32 gpu_width = 1920, gpu_height = 1080;
     bool gpu_fullscreen = true;
-    wchar_t disk_drive = L'C';
+    u32 disk_drives = 1u << ('C' - 'A');    // bit n = drive letter 'A' + n; the disk suite runs on each
+
     u64 disk_file_bytes = 1 * 1024ull * 1024 * 1024;
     u32 disk_passes = 5;
     bool disk_write_through = false;

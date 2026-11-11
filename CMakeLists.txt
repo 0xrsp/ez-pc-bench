@@ -99,6 +99,7 @@ add_library(ezbench_core STATIC
     src/core/runner.cpp
     src/core/results.cpp
     src/core/baseline.cpp
+    src/core/toon.cpp
     src/core/sysinfo.cpp
     src/core/perf.cpp
     src/core/elevation.cpp

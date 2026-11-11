@@ -29,6 +29,11 @@ keep it updated (decision log, open questions, measured facts).
 - CMake + Ninja + clang-cl + lld (see PLAN.md §3), no vcvars needed:
   `cmake --preset release` then `cmake --build --preset release -- -j 6` (or `debug`). Keep `-j 6` and
   never run two heavy builds/benchmarks at once (the PC froze once; see PLAN.md §13).
-- Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --json out.json` (`--list` shows ids).
-- GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`. Keep the build warning-free.
+- Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --out out.toon.txt` (`--list` shows ids,
+  `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
+- GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
+  suite), `--only <ids>` (implies `--dev`), `--light` / `--dark`. Keep the build warning-free.
+- Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
+  non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
+  escapes for non-ASCII string literals.
 - New tests: add the function in the suite's file and one row in `src/core/registry.cpp`.

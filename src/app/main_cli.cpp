@@ -16,13 +16,12 @@ static void print_usage() {
         "Usage: ez-pc-bench-cli [options]\n"
         "  --list                 List all test ids\n"
         "  --run <patterns>       Comma-separated test ids or patterns (cpu, mem.*, *.latency). Default: all\n"
-        "  --json <file>          Write results as JSON\n"
-        "  --csv <file>           Write results as CSV (one row per metric)\n"
-        "  --compare <file.json>  Show the change against a saved JSON result\n"
+        "  --out <file.toon.txt>  Write the results file (TOON text format)\n"
+        "  --compare <file>       Show the change against a saved results file\n"
         "  --duration <ms>        Measured duration per phase (default 3000)\n"
         "  --threads <n>          Thread count for MT tests (default: all logical)\n"
         "  --gpu <index>          GPU adapter index (default 0 = most powerful)\n"
-        "  --disk-drive <letter>  Disk test target drive (default C)\n"
+        "  --disk-drives <list>   Disk test target drive(s), e.g. C or C,D (default C)\n"
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
         "  --passes <n>           Disk passes (default 5)\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
@@ -155,9 +154,12 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
     if (!power_is_best_performance(&s->power)) printf("WARNING: power mode is not \"Best performance\".\n");
     bool disk_selected = false;
     for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && selected[i];
-    char lines[2][192];
-    const u32 n = disk_selected ? drive_target_warnings(p->disk_drive, lines) : 0;
-    for (u32 i = 0; i < n; ++i) printf("WARNING: %s\n", lines[i]);
+    for (u32 d = 0; d < 26 && disk_selected; ++d) {
+        if (!((p->disk_drives >> d) & 1)) continue;
+        char lines[2][192];
+        const u32 n = drive_target_warnings((wchar_t)(L'A' + d), lines);
+        for (u32 i = 0; i < n; ++i) printf("WARNING: %s\n", lines[i]);
+    }
 }
 
 static void to_utf8(const wchar_t* w, char* out, int size) {
@@ -171,8 +173,7 @@ int wmain(int argc, wchar_t** argv) {
 
     bool selected[MAX_BENCHES] = {};
     bool any_run = false, list = false, pause = false, elevate = false;
-    const wchar_t* json_path = nullptr;
-    const wchar_t* csv_path = nullptr;
+    const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     BenchParams params;
     params.gpu_adapter = sysinfo_default_gpu();
@@ -188,13 +189,17 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--run") && has_val) { any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
-        else if (!wcscmp(a, L"--json") && has_val) json_path = argv[++i];
-        else if (!wcscmp(a, L"--csv") && has_val) csv_path = argv[++i];
+        else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--threads") && has_val) { params.thread_count = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--gpu") && has_val) { params.gpu_adapter = (u32)atoi(val); ++i; }
-        else if (!wcscmp(a, L"--disk-drive") && has_val) { params.disk_drive = towupper(argv[++i][0]); }
+        else if (!wcscmp(a, L"--disk-drives") && has_val) {
+            params.disk_drives = 0;
+            for (const char* d = val; *d; ++d)
+                if (towupper(*d) >= L'A' && towupper(*d) <= L'Z') params.disk_drives |= 1u << (towupper(*d) - L'A');
+            ++i;
+        }
         else if (!wcscmp(a, L"--disk-size") && has_val) { params.disk_file_bytes = (u64)atoi(val) * MiB; ++i; }
         else if (!wcscmp(a, L"--passes") && has_val) { params.disk_passes = (u32)atoi(val); ++i; }
         else { print_usage(); return a[0] == L'-' && a[1] == L'h' ? 0 : 3; }
@@ -256,13 +261,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     printf("\r%-79s\rFinished in %.1f s\n", "", g_run.end_time - g_run.start_time);
 
-    if (json_path) {
-        if (results_write_json(json_path, &g_run.params)) wprintf(L"Wrote %s\n", json_path);
-        else { fwprintf(stderr, L"Failed to write %s\n", json_path); exit_code = 1; }
-    }
-    if (csv_path) {
-        if (results_write_csv(csv_path, &g_run.params)) wprintf(L"Wrote %s\n", csv_path);
-        else { fwprintf(stderr, L"Failed to write %s\n", csv_path); exit_code = 1; }
+    if (out_path) {
+        if (results_write_toon(out_path, &g_run.params)) wprintf(L"Wrote %s\n", out_path);
+        else { fwprintf(stderr, L"Failed to write %s\n", out_path); exit_code = 1; }
     }
     if (pause) {
         printf("Press Enter to exit...");

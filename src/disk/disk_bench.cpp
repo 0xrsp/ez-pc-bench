@@ -1,4 +1,4 @@
-// Disk suite (CrystalDiskMark-style): sequential / random reads and writes on one test file with
+﻿// Disk suite (CrystalDiskMark-style): sequential / random reads and writes on one test file with
 // unbuffered overlapped I/O. Queue depth = outstanding requests per thread, completed through a
 // per-thread I/O completion port and resubmitted immediately. Best of N passes is reported.
 #include "core/bench.h"
@@ -22,15 +22,28 @@ constexpr u64 FILL_CHUNK = 1 * MiB;
 constexpr u64 FREE_MARGIN = 64 * MiB;    // keep this much free on the volume after creating the file
 constexpr u32 SHARE_ALL = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
-struct DiskState {
+// One test file per selected drive. Metric and phase names live in letter-indexed static tables because
+// results keep pointing at them after the suite has shut down.
+struct DiskTarget {
+    char letter;
     wchar_t path[MAX_PATH];
     wchar_t dir[MAX_PATH];      // folder to remove at shutdown ("" = none)
     HANDLE hold;                // fill handle, kept open; DELETE_ON_CLOSE also cleans up after a crash
-    u64 file_bytes;
     u32 sector;
+};
+
+struct DiskSuite {
+    DiskTarget targets[26];
+    u32 count;
+    u64 file_bytes;
     bool write_through;
 };
-static DiskState s_disk;
+static DiskSuite s_disk;
+
+enum DiskMetric : u8 { DM_READ, DM_READ_IOPS, DM_READ_LAT, DM_WRITE, DM_WRITE_IOPS, DM_WRITE_LAT, DM_COUNT };
+static const char* const METRIC_SUFFIX[DM_COUNT] = { "Read", "Read IOPS", "Read latency", "Write", "Write IOPS", "Write latency" };
+static char s_metric_names[26][DM_COUNT][24];   // "C: Read", ...
+static char s_prepare_phase[26][40];            // "C: preparing test file"
 
 static u64 rng_next(u64* s) {     // xorshift64*
     u64 x = *s;
@@ -47,9 +60,11 @@ static void fill_random(u8* buf, u64 bytes, u64 seed) {
     for (u64 i = 0; i < bytes / 8; ++i) p[i] = rng_next(&s);
 }
 
-// ---- suite: test file -------------------------------------------------------------------
+// ---- suite: test files -------------------------------------------------------------------
+// Location per drive: <drive>:\ezbench.tmp when elevated (like CrystalDiskMark), else <drive>:\ezbench\ezbench.tmp
+// (users may create folders but not files in a drive root), else %TEMP% when it is on the same drive.
 
-// Creates the folder of `path` if needed. Sets *created when this call made it.
+// Creates the folder if needed. Sets *created when this call made it.
 static bool ensure_dir(const wchar_t* dir, bool* created) {
     *created = false;
     if (CreateDirectoryW(dir, nullptr)) { *created = true; return true; }
@@ -57,48 +72,47 @@ static bool ensure_dir(const wchar_t* dir, bool* created) {
 }
 
 // Tries one candidate location: deletes a stale file, checks free space, creates the file.
-static bool try_create(const wchar_t* dir, const wchar_t* path, u64 bytes, char* error, u32 error_size) {
+static bool try_create(DiskTarget* t, const wchar_t* dir, const wchar_t* path, char* error, u32 error_size) {
     DeleteFileW(path);      // stale file from a crashed run
     ULARGE_INTEGER free_user;
-    if (GetDiskFreeSpaceExW(dir, &free_user, nullptr, nullptr) && free_user.QuadPart < bytes + FREE_MARGIN) {
+    if (GetDiskFreeSpaceExW(dir, &free_user, nullptr, nullptr) && free_user.QuadPart < s_disk.file_bytes + FREE_MARGIN) {
         snprintf(error, error_size, "not enough free space (%llu MiB needed, %llu MiB free)",
-                 (bytes + FREE_MARGIN) / MiB, free_user.QuadPart / MiB);
+                 (s_disk.file_bytes + FREE_MARGIN) / MiB, free_user.QuadPart / MiB);
         return false;
     }
     HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE | DELETE, SHARE_ALL, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_FLAG_NO_BUFFERING |
-                               FILE_FLAG_DELETE_ON_CLOSE,
+                           FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_FLAG_NO_BUFFERING | FILE_FLAG_DELETE_ON_CLOSE,
                            nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         snprintf(error, error_size, "cannot create test file (error %lu)", GetLastError());
         return false;
     }
-    s_disk.hold = h;
-    wcscpy_s(s_disk.path, path);
+    t->hold = h;
+    wcscpy_s(t->path, path);
     return true;
 }
 
 // Writes the whole file sequentially with incompressible data (unbuffered, synchronous).
-static bool fill_file(char* error, u32 error_size) {
+static bool fill_file(DiskTarget* t, char* error, u32 error_size) {
     LARGE_INTEGER size;
     size.QuadPart = (LONGLONG)s_disk.file_bytes;
     LARGE_INTEGER zero = {};
-    if (!SetFilePointerEx(s_disk.hold, size, nullptr, FILE_BEGIN) || !SetEndOfFile(s_disk.hold) ||
-        !SetFilePointerEx(s_disk.hold, zero, nullptr, FILE_BEGIN)) {
+    if (!SetFilePointerEx(t->hold, size, nullptr, FILE_BEGIN) || !SetEndOfFile(t->hold) ||
+        !SetFilePointerEx(t->hold, zero, nullptr, FILE_BEGIN)) {
         snprintf(error, error_size, "cannot size test file (error %lu)", GetLastError());
         return false;
     }
     u8* buf = (u8*)VirtualAlloc(nullptr, FILL_CHUNK, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!buf) { snprintf(error, error_size, "out of memory"); return false; }
 
-    live_phase(&g_live, "Preparing test file", "MB/s");
+    live_phase(&g_live, s_prepare_phase[t->letter - 'A'], "MB/s");
     const f64 t0 = timer_now();
     f64 last = t0;
     bool ok = true;
     for (u64 off = 0; off < s_disk.file_bytes; off += FILL_CHUNK) {
         fill_random(buf, FILL_CHUNK, off * 0x9E3779B97F4A7C15ull + 12345);
         DWORD written = 0;
-        if (!WriteFile(s_disk.hold, buf, (DWORD)FILL_CHUNK, &written, nullptr) || written != FILL_CHUNK) {
+        if (!WriteFile(t->hold, buf, (DWORD)FILL_CHUNK, &written, nullptr) || written != FILL_CHUNK) {
             snprintf(error, error_size, "writing test file failed (error %lu)", GetLastError());
             ok = false;
             break;
@@ -111,49 +125,34 @@ static bool fill_file(char* error, u32 error_size) {
         }
     }
     VirtualFree(buf, 0, MEM_RELEASE);
-    if (ok && !FlushFileBuffers(s_disk.hold)) {
+    if (ok && !FlushFileBuffers(t->hold)) {
         snprintf(error, error_size, "flushing test file failed (error %lu)", GetLastError());
         ok = false;
     }
     return ok;
 }
 
+static void close_target(DiskTarget* t) {
+    if (t->hold && t->hold != INVALID_HANDLE_VALUE) CloseHandle(t->hold);   // DELETE_ON_CLOSE removes the file
+    if (t->path[0]) DeleteFileW(t->path);
+    if (t->dir[0]) RemoveDirectoryW(t->dir);    // only succeeds when empty
+    memset(t, 0, sizeof(*t));
+}
+
 void disk_shutdown(void*) {
-    if (s_disk.hold && s_disk.hold != INVALID_HANDLE_VALUE) CloseHandle(s_disk.hold);   // deletes the file
-    if (s_disk.path[0]) DeleteFileW(s_disk.path);
-    if (s_disk.dir[0]) RemoveDirectoryW(s_disk.dir);    // only succeeds when empty
+    for (u32 i = 0; i < s_disk.count; ++i) close_target(&s_disk.targets[i]);
     memset(&s_disk, 0, sizeof(s_disk));
 }
 
-// The runner only calls shutdown after a successful init, so clean up here on failure.
-static bool prepare_file(char* error, u32 error_size) {
-    if (fill_file(error, error_size)) return true;
-    disk_shutdown(nullptr);
-    return false;
-}
-
-bool disk_init(const BenchParams* p, void** state, char* error, u32 error_size) {
-    memset(&s_disk, 0, sizeof(s_disk));
-    *state = &s_disk;
-    const wchar_t drive = p->disk_drive;
+static bool open_target(DiskTarget* t, wchar_t drive, char* error, u32 error_size) {
+    t->letter = (char)drive;
     DriveInfo info;
-    if (!drive_query(drive, &info)) {
-        snprintf(error, error_size, "drive %c: not found", (char)drive);
-        return false;
-    }
-    u64 bytes = p->disk_file_bytes / MiB * MiB;
-    if (bytes < 16 * MiB) bytes = 16 * MiB;
-    s_disk.file_bytes = bytes;
-    s_disk.sector = info.physical_sector > info.logical_sector ? info.physical_sector : info.logical_sector;
-    if (s_disk.sector == 0) s_disk.sector = 4096;
-    s_disk.write_through = p->disk_write_through;
+    if (!drive_query(drive, &info)) { snprintf(error, error_size, "drive not found"); return false; }
+    t->sector = info.physical_sector > info.logical_sector ? info.physical_sector : info.logical_sector;
+    if (t->sector == 0) t->sector = 4096;
 
-    // Candidates: drive root (admin only, like CDM), <drive>:\ezbench\, %TEMP% if it's on the same drive.
-    wchar_t root[4] = { drive, L':', L'\\', 0 };
-    wchar_t path[MAX_PATH];
-    bool created = false;
-    char why[96] = "no usable location";
-    wchar_t dir[MAX_PATH], sub_path[MAX_PATH];
+    const wchar_t root[4] = { drive, L':', L'\\', 0 };
+    wchar_t dir[MAX_PATH], sub_path[MAX_PATH], path[MAX_PATH];
     swprintf(dir, MAX_PATH, L"%sezbench", root);
     swprintf(sub_path, MAX_PATH, L"%s\\ezbench.tmp", dir);
     // Leftovers of a crashed run: the file, then the folder (RemoveDirectoryW only succeeds when empty).
@@ -161,23 +160,47 @@ bool disk_init(const BenchParams* p, void** state, char* error, u32 error_size) 
     RemoveDirectoryW(dir);
     if (is_elevated()) {
         swprintf(path, MAX_PATH, L"%sezbench.tmp", root);
-        if (try_create(root, path, bytes, why, sizeof(why))) return prepare_file(error, error_size);
+        if (try_create(t, root, path, error, error_size)) return fill_file(t, error, error_size);
     }
-    wcscpy_s(path, sub_path);
+    bool created = false;
     if (ensure_dir(dir, &created)) {
-        if (created) wcscpy_s(s_disk.dir, dir);
-        if (try_create(dir, path, bytes, why, sizeof(why))) return prepare_file(error, error_size);
+        if (created) wcscpy_s(t->dir, dir);
+        if (try_create(t, dir, sub_path, error, error_size)) return fill_file(t, error, error_size);
         if (created) RemoveDirectoryW(dir);
-        s_disk.dir[0] = 0;
+        t->dir[0] = 0;
     }
     wchar_t temp[MAX_PATH];
     const DWORD n = GetTempPathW(MAX_PATH, temp);
     if (n > 0 && n < MAX_PATH - 16 && towupper(temp[0]) == towupper(drive)) {
         swprintf(path, MAX_PATH, L"%sezbench.tmp", temp);
-        if (try_create(temp, path, bytes, why, sizeof(why))) return prepare_file(error, error_size);
+        if (try_create(t, temp, path, error, error_size)) return fill_file(t, error, error_size);
     }
-    snprintf(error, error_size, "%c: %s", (char)drive, why);
+    if (!error[0]) snprintf(error, error_size, "no writable location");
     return false;
+}
+
+bool disk_init(const BenchParams* p, void** state, char* error, u32 error_size) {
+    memset(&s_disk, 0, sizeof(s_disk));
+    *state = &s_disk;
+    if ((p->disk_drives & ((1u << 26) - 1)) == 0) { snprintf(error, error_size, "no drive selected"); return false; }
+    u64 bytes = p->disk_file_bytes / MiB * MiB;
+    s_disk.file_bytes = bytes < 16 * MiB ? 16 * MiB : bytes;
+    s_disk.write_through = p->disk_write_through;
+
+    for (u32 d = 0; d < 26; ++d) {
+        if (!((p->disk_drives >> d) & 1)) continue;
+        const char letter = (char)('A' + d);
+        for (u32 m = 0; m < DM_COUNT; ++m) snprintf(s_metric_names[d][m], sizeof(s_metric_names[d][m]), "%c: %s", letter, METRIC_SUFFIX[m]);
+        snprintf(s_prepare_phase[d], sizeof(s_prepare_phase[d]), "%c: preparing test file", letter);
+        char why[96] = {};
+        DiskTarget* t = &s_disk.targets[s_disk.count++];
+        if (!open_target(t, (wchar_t)(L'A' + d), why, sizeof(why))) {
+            snprintf(error, error_size, "%c: %s", letter, why);
+            disk_shutdown(nullptr);     // the runner only calls shutdown after a successful init
+            return false;
+        }
+    }
+    return true;
 }
 
 // ---- I/O engine ---------------------------------------------------------------------------
@@ -373,7 +396,7 @@ static void close_workers(IoPass* pass) {
 }
 
 // Opens one handle + completion port per thread; buffers come from `buf` (threads * qd * block).
-static bool open_workers(const DiskTest* t, u8* buf, char* error, u32 error_size) {
+static bool open_workers(const DiskTest* t, const DiskTarget* target, u8* buf, char* error, u32 error_size) {
     IoPass* pass = &s_pass;
     pass->threads = t->threads;
     pass->start = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -387,7 +410,7 @@ static bool open_workers(const DiskTest* t, u8* buf, char* error, u32 error_size
         w->blocks = s_disk.file_bytes / t->block;
         w->buf = buf + (u64)i * t->qd * t->block;
         w->thread = nullptr;
-        w->file = CreateFileW(s_disk.path, GENERIC_READ | GENERIC_WRITE, SHARE_ALL, nullptr, OPEN_EXISTING, flags, nullptr);
+        w->file = CreateFileW(target->path, GENERIC_READ | GENERIC_WRITE, SHARE_ALL, nullptr, OPEN_EXISTING, flags, nullptr);
         if (w->file == INVALID_HANDLE_VALUE) {
             w->file = nullptr;
             snprintf(error, error_size, "cannot open test file (error %lu)", GetLastError());
@@ -407,56 +430,76 @@ static void pause_ms(u32 ms, const CancelFlag* cancel) {
     for (u32 t = 0; t < ms && !cancel->load(std::memory_order_relaxed); t += 20) Sleep(20);
 }
 
-static char s_phase_names[2][MAX_PASSES][24];   // static storage: BenchLive keeps the pointer
+static char s_phase_names[26][2][MAX_PASSES][32];   // static storage: BenchLive keeps the pointer
 
-static void run_test(const DiskTest* t, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {
-    if (!s_disk.hold) { res_fail(out, "no test file"); return; }
-    if (t->block % s_disk.sector) { res_fail(out, "block size not a multiple of the %u B sector", s_disk.sector); return; }
-    if (s_disk.file_bytes < (u64)t->block * t->qd * t->threads) { res_fail(out, "test file too small"); return; }
-
+// Best read and write pass on one drive. False on an I/O error (message in `error`).
+static bool run_target(const DiskTest* t, const DiskTarget* target, const BenchParams* p, BenchLive* live,
+                       const CancelFlag* cancel, f32 prog_from, f32 prog_to, PassResult best[2], char* error, u32 error_size) {
     const u64 buf_bytes = (u64)t->threads * t->qd * t->block;    // at most 8 MiB (SEQ1M Q8)
     u8* buf = (u8*)VirtualAlloc(nullptr, buf_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!buf) { res_fail(out, "out of memory"); return; }
+    if (!buf) { snprintf(error, error_size, "out of memory"); return false; }
     fill_random(buf, buf_bytes, timer_ticks());
-
-    char error[96] = {};
-    if (!open_workers(t, buf, error, sizeof(error))) {
+    if (!open_workers(t, target, buf, error, error_size)) {
         close_workers(&s_pass);
         VirtualFree(buf, 0, MEM_RELEASE);
-        res_fail(out, "%s", error);
-        return;
+        return false;
     }
 
     const u32 passes = p->disk_passes < 1 ? 1 : p->disk_passes > MAX_PASSES ? MAX_PASSES : p->disk_passes;
     const f64 seconds = p->duration_ms / 1000.0;
     const u32 interval_ms = p->duration_ms / 4 < 1000 ? p->duration_ms / 4 : 1000;
-    const f32 phase_count = (f32)(2 * passes);
-    PassResult best[2] = {};
+    const f32 span = (prog_to - prog_from) / (2.0f * passes);
     bool ok = true;
     for (u32 dir = 0; dir < 2 && ok; ++dir) {
         for (u32 k = 0; k < passes && ok && !cancel->load(std::memory_order_relaxed); ++k) {
-            char* name = s_phase_names[dir][k];
-            snprintf(name, sizeof(s_phase_names[dir][k]), "%s pass %u/%u", dir ? "Write" : "Read", k + 1, passes);
+            char* name = s_phase_names[target->letter - 'A'][dir][k];
+            snprintf(name, sizeof(s_phase_names[0][0][0]), "%c: %s pass %u/%u", target->letter, dir ? "Write" : "Read", k + 1, passes);
             live_phase(live, name, "MB/s");
             if (dir || k) pause_ms(interval_ms, cancel);
-            const f32 from = (dir * passes + k) / phase_count, to = (dir * passes + k + 1) / phase_count;
+            const f32 from = prog_from + (dir * passes + k) * span;
             PassResult r = {};
-            ok = run_pass(t, dir == 1, seconds, live, cancel, from, to, &r, error, sizeof(error));
+            ok = run_pass(t, dir == 1, seconds, live, cancel, from, from + span, &r, error, error_size);
             if (ok && r.mbps > best[dir].mbps) best[dir] = r;
         }
     }
     close_workers(&s_pass);
     VirtualFree(buf, 0, MEM_RELEASE);
-    if (!ok) { res_fail(out, "%s", error); return; }
+    return ok;
+}
+
+// Runs the test on every selected drive; metrics are named per drive ("C: Read", "D: Read", ...).
+static void run_test(const DiskTest* t, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {
+    if (s_disk.count == 0) { res_fail(out, "no test file"); return; }
+    if (s_disk.file_bytes < (u64)t->block * t->qd * t->threads) { res_fail(out, "test file too small"); return; }
+    for (u32 i = 0; i < s_disk.count; ++i) {
+        const DiskTarget* target = &s_disk.targets[i];
+        if (t->block % target->sector) {
+            res_fail(out, "%c: block size not a multiple of the %u B sector", target->letter, target->sector);
+            return;
+        }
+    }
+
+    static PassResult best[26][2];
+    memset(best, 0, sizeof(best));
+    char error[96] = {};
+    for (u32 i = 0; i < s_disk.count && !cancel->load(std::memory_order_relaxed); ++i) {
+        const DiskTarget* target = &s_disk.targets[i];
+        const f32 from = (f32)i / s_disk.count, to = (f32)(i + 1) / s_disk.count;
+        if (!run_target(t, target, p, live, cancel, from, to, best[i], error, sizeof(error))) {
+            res_fail(out, "%c: %s", target->letter, error);
+            return;
+        }
+    }
     if (cancel->load(std::memory_order_relaxed)) return;
 
     res_begin(out, RESULT_VALUES);
-    res_add(out, "Read", "MB/s", best[0].mbps);
-    res_add(out, "Read IOPS", "IOPS", best[0].iops);
-    res_add(out, "Read latency", "µs", best[0].lat_us);
-    res_add(out, "Write", "MB/s", best[1].mbps);
-    res_add(out, "Write IOPS", "IOPS", best[1].iops);
-    res_add(out, "Write latency", "µs", best[1].lat_us);
+    static const char* const UNITS[DM_COUNT] = { "MB/s", "IOPS", "\xC2\xB5s", "MB/s", "IOPS", "\xC2\xB5s" };
+    for (u32 i = 0; i < s_disk.count; ++i) {
+        const u32 d =(u32)(s_disk.targets[i].letter - 'A');
+        const f64 v[DM_COUNT] = { best[i][0].mbps, best[i][0].iops, best[i][0].lat_us,
+                                  best[i][1].mbps, best[i][1].iops, best[i][1].lat_us };
+        for (u32 m = 0; m < DM_COUNT; ++m) res_add(out, s_metric_names[d][m], UNITS[m], v[m]);
+    }
 }
 
 // ---- tests (CrystalDiskMark 8 "Default" and "NVMe" profiles) ----------------------------------

@@ -31,6 +31,5 @@ void format_x(char* buf, u32 size, f64 x, const char* x_unit);
 // Plain-text report of all results (sysinfo header + table, baseline deltas when one is loaded).
 // Returns length written (truncated to size).
 u32 results_format_text(char* buf, u32 size, const BenchParams* p);
-bool results_write_json(const wchar_t* path, const BenchParams* p);
-// One row per metric: suite,group,test,id,status,metric,x,value,unit (UTF-8 with BOM, RFC 4180 quoting).
-bool results_write_csv(const wchar_t* path, const BenchParams* p);
+// Results file in TOON (see toon.h for the subset, results.cpp for the layout). Saved as *.toon.txt.
+bool results_write_toon(const wchar_t* path, const BenchParams* p);

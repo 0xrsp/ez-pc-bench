@@ -2,6 +2,7 @@
 #include "core/baseline.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/toon.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -138,7 +139,7 @@ u32 results_format_text(char* buf, u32 size, const BenchParams* p) {
     for (u32 i = 0; i < s->drive_count; ++i) {
         char d[192];
         drive_describe(&s->drives[i], d, sizeof(d));
-        tb_printf(&tb, "Disk %c: %s%s\n", s->drives[i].letter, d, s->drives[i].letter == (char)p->disk_drive ? "  [target]" : "");
+        tb_printf(&tb, "Disk %c: %s%s\n", s->drives[i].letter, d, ((p->disk_drives >> (s->drives[i].letter - 'A')) & 1) ? "  [target]" : "");
     }
     tb_printf(&tb, "OS:    %s, %s\n", s->os, s->elevated ? "elevated" : "not elevated");
     tb_printf(&tb, "Power: %s, plan \"%s\", mode \"%s\"\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
@@ -200,207 +201,163 @@ u32 results_format_text(char* buf, u32 size, const BenchParams* p) {
     return tb.len;
 }
 
-// ---- JSON --------------------------------------------------------------------
-
-static void json_str(FILE* f, const char* s) {
-    fputc('"', f);
-    for (; s && *s; ++s) {
-        unsigned char c = (unsigned char)*s;
-        if (c == '"' || c == '\\') { fputc('\\', f); fputc(c, f); }
-        else if (c < 0x20) fprintf(f, "\\u%04x", c);
-        else fputc(c, f);
-    }
-    fputc('"', f);
-}
-
-static void json_num(FILE* f, f64 v) {
-    if (isfinite(v)) fprintf(f, "%.17g", v);
-    else fputs("null", f);
-}
+// ---- TOON export -------------------------------------------------------------
+// Layout: app / format / timestamp, `system:` and `params:` objects, then two flat tables:
+// tests[N]{id,suite,group,name,status,seconds,kind,rows,cols,x_name,x_unit,error} and
+// metrics[M]{id,name,unit,value,x}. x = series x, matrix cell index, 0 for plain values
+// (the key the baseline uses, see baseline_key_x).
 
 static const char* kind_name(ResultKind k) {
     return k == RESULT_SERIES ? "series" : k == RESULT_MATRIX ? "matrix" : "values";
 }
 
-bool results_write_json(const wchar_t* path, const BenchParams* p) {
+static void write_system(FILE* f) {
+    const SysInfo* s = &g_sys;
+    toon_key(f, 0, "system");
+    toon_key(f, 1, "cpu");
+    toon_str(f, 2, "brand", s->cpu.brand);
+    toon_str(f, 2, "vendor", s->cpu.vendor);
+    toon_num(f, 2, "family", s->cpu.family);
+    toon_num(f, 2, "model", s->cpu.model);
+    toon_num(f, 2, "stepping", s->cpu.stepping);
+    toon_num(f, 2, "cores", s->cpu.cores);
+    toon_num(f, 2, "threads", s->cpu.threads);
+    toon_num(f, 2, "l1d_kib", s->cpu.l1d_kib);
+    toon_num(f, 2, "l2_kib", s->cpu.l2_kib);
+    toon_num(f, 2, "l3_kib", s->cpu.l3_kib);
+    toon_bool(f, 2, "avx2", s->cpu.avx2);
+    toon_bool(f, 2, "avx512f", s->cpu.avx512f);
+
+    toon_key(f, 1, "ram");
+    toon_num(f, 2, "total_bytes", (f64)s->ram.total_bytes);
+    toon_num(f, 2, "installed_bytes", (f64)s->ram.installed_bytes);
+    toon_table(f, 2, "modules", s->ram.module_count, "type,size_bytes,speed_mts,configured_mts,manufacturer,part,locator");
+    for (u32 i = 0; i < s->ram.module_count; ++i) {
+        const RamModule* m = &s->ram.modules[i];
+        ToonRow r = toon_row(f, 3);
+        toon_cell_str(&r, m->type);
+        toon_cell_num(&r, (f64)m->size_bytes);
+        toon_cell_num(&r, m->speed_mts);
+        toon_cell_num(&r, m->configured_mts);
+        toon_cell_str(&r, m->manufacturer);
+        toon_cell_str(&r, m->part);
+        toon_cell_str(&r, m->locator);
+        toon_row_end(&r);
+    }
+
+    toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id");
+    for (u32 i = 0; i < s->gpu_count; ++i) {
+        ToonRow r = toon_row(f, 2);
+        toon_cell_str(&r, s->gpus[i].name);
+        toon_cell_num(&r, (f64)s->gpus[i].dedicated_vram);
+        toon_cell_num(&r, s->gpus[i].vendor_id);
+        toon_cell_num(&r, s->gpus[i].device_id);
+        toon_row_end(&r);
+    }
+
+    toon_table(f, 1, "drives", s->drive_count,
+               "letter,model,bus,fs,total_bytes,logical_sector,physical_sector,virtual_disk,dev_drive,bitlocker");
+    for (u32 i = 0; i < s->drive_count; ++i) {
+        const DriveInfo* d = &s->drives[i];
+        const char letter[2] = { d->letter, 0 };
+        ToonRow r = toon_row(f, 2);
+        toon_cell_str(&r, letter);
+        toon_cell_str(&r, d->model);
+        toon_cell_str(&r, d->bus);
+        toon_cell_str(&r, d->fs);
+        toon_cell_num(&r, (f64)d->total_bytes);
+        toon_cell_num(&r, d->logical_sector);
+        toon_cell_num(&r, d->physical_sector);
+        toon_cell_bool(&r, d->virtual_disk);
+        toon_cell_bool(&r, d->dev_drive);
+        toon_cell_bool(&r, d->bitlocker_on);
+        toon_row_end(&r);
+    }
+
+    toon_str(f, 1, "os", s->os);
+    toon_bool(f, 1, "elevated", s->elevated);
+    toon_key(f, 1, "power");
+    toon_bool(f, 2, "on_ac", s->power.on_ac);
+    toon_str(f, 2, "plan", s->power.scheme_name);
+    toon_str(f, 2, "mode", power_mode_name(s->power.mode));
+}
+
+static void write_params(FILE* f, const BenchParams* p) {
+    toon_key(f, 0, "params");
+    toon_num(f, 1, "duration_ms", p->duration_ms);
+    toon_num(f, 1, "thread_count", p->thread_count);
+    toon_str(f, 1, "gpu", p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "");
+    toon_num(f, 1, "gpu_width", p->gpu_width);
+    toon_num(f, 1, "gpu_height", p->gpu_height);
+    u32 drives = 0;
+    for (u32 d = 0; d < 26; ++d) drives += (p->disk_drives >> d) & 1;
+    fprintf(f, "  disk_drives[%u]: ", drives);
+    for (u32 d = 0, n = 0; d < 26; ++d)
+        if ((p->disk_drives >> d) & 1) fprintf(f, "%s%c", n++ ? "," : "", 'A' + d);
+    fputc('\n', f);
+    toon_num(f, 1, "disk_file_bytes", (f64)p->disk_file_bytes);
+    toon_num(f, 1, "disk_passes", p->disk_passes);
+    toon_bool(f, 1, "disk_write_through", p->disk_write_through);
+}
+
+bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     FILE* f = _wfopen(path, L"wb");
     if (!f) return false;
-    const SysInfo* s = &g_sys;
 
     char stamp[32];
     time_t now = time(nullptr);
     struct tm tm_local;
     localtime_s(&tm_local, &now);
     strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S", &tm_local);
+    toon_str(f, 0, "app", "ez-pc-bench");
+    toon_num(f, 0, "format", 1);
+    toon_str(f, 0, "timestamp", stamp);
+    write_system(f);
+    write_params(f, p);
 
-    fprintf(f, "{\n  \"app\": \"ez-pc-bench\",\n  \"timestamp\": ");
-    json_str(f, stamp);
-    fprintf(f, ",\n  \"system\": {\n    \"cpu\": { \"brand\": ");
-    json_str(f, s->cpu.brand);
-    fprintf(f, ", \"vendor\": ");
-    json_str(f, s->cpu.vendor);
-    fprintf(f, ", \"family\": %u, \"model\": %u, \"stepping\": %u, \"cores\": %u, \"threads\": %u, "
-               "\"l1d_kib\": %u, \"l2_kib\": %u, \"l3_kib\": %u, \"avx2\": %s, \"avx512f\": %s },\n",
-            s->cpu.family, s->cpu.model, s->cpu.stepping, s->cpu.cores, s->cpu.threads, s->cpu.l1d_kib,
-            s->cpu.l2_kib, s->cpu.l3_kib, s->cpu.avx2 ? "true" : "false", s->cpu.avx512f ? "true" : "false");
-    fprintf(f, "    \"ram\": { \"total_bytes\": %llu, \"installed_bytes\": %llu, \"modules\": [",
-            s->ram.total_bytes, s->ram.installed_bytes);
-    for (u32 i = 0; i < s->ram.module_count; ++i) {
-        const RamModule* m = &s->ram.modules[i];
-        fprintf(f, "%s\n      { \"type\": ", i ? "," : "");
-        json_str(f, m->type);
-        fprintf(f, ", \"size_bytes\": %llu, \"speed_mts\": %u, \"configured_mts\": %u, \"manufacturer\": ",
-                m->size_bytes, m->speed_mts, m->configured_mts);
-        json_str(f, m->manufacturer);
-        fprintf(f, ", \"part\": ");
-        json_str(f, m->part);
-        fprintf(f, ", \"locator\": ");
-        json_str(f, m->locator);
-        fprintf(f, " }");
-    }
-    fprintf(f, " ] },\n    \"gpus\": [");
-    for (u32 i = 0; i < s->gpu_count; ++i) {
-        fprintf(f, "%s\n      { \"name\": ", i ? "," : "");
-        json_str(f, s->gpus[i].name);
-        fprintf(f, ", \"dedicated_vram\": %llu, \"vendor_id\": %u, \"device_id\": %u }", s->gpus[i].dedicated_vram,
-                s->gpus[i].vendor_id, s->gpus[i].device_id);
-    }
-    fprintf(f, " ],\n    \"drives\": [");
-    for (u32 i = 0; i < s->drive_count; ++i) {
-        const DriveInfo* d = &s->drives[i];
-        fprintf(f, "%s\n      { \"letter\": \"%c\", \"model\": ", i ? "," : "", d->letter);
-        json_str(f, d->model);
-        fprintf(f, ", \"bus\": ");
-        json_str(f, d->bus);
-        fprintf(f, ", \"fs\": ");
-        json_str(f, d->fs);
-        fprintf(f, ", \"total_bytes\": %llu, \"logical_sector\": %u, \"physical_sector\": %u, \"virtual_disk\": %s, "
-                   "\"dev_drive\": %s, \"bitlocker\": %d }",
-                d->total_bytes, d->logical_sector, d->physical_sector, d->virtual_disk ? "true" : "false",
-                d->dev_drive ? "true" : "false", d->bitlocker);
-    }
-    fprintf(f, " ],\n    \"os\": ");
-    json_str(f, s->os);
-    fprintf(f, ",\n    \"elevated\": %s,\n    \"power\": { \"on_ac\": %s, \"plan\": ", s->elevated ? "true" : "false",
-            s->power.on_ac ? "true" : "false");
-    json_str(f, s->power.scheme_name);
-    fprintf(f, ", \"mode\": ");
-    json_str(f, power_mode_name(s->power.mode));
-    fprintf(f, " }\n  },\n");
-
-    fprintf(f, "  \"params\": { \"duration_ms\": %u, \"thread_count\": %u, \"gpu_adapter\": %u, \"gpu_width\": %u, "
-               "\"gpu_height\": %u, \"disk_drive\": \"%c\", \"disk_file_bytes\": %llu, \"disk_passes\": %u, "
-               "\"disk_write_through\": %s },\n",
-            p->duration_ms, p->thread_count, p->gpu_adapter, p->gpu_width, p->gpu_height, (char)p->disk_drive,
-            p->disk_file_bytes, p->disk_passes, p->disk_write_through ? "true" : "false");
-
-    fprintf(f, "  \"results\": [");
-    bool first = true;
+    u32 tests = 0, metrics = 0;
     for (u32 i = 0; i < g_bench_count; ++i) {
-        BenchStatus st = (BenchStatus)g_status[i].load(std::memory_order_acquire);
+        const BenchStatus st = (BenchStatus)g_status[i].load(std::memory_order_acquire);
         if (st == ST_NOT_RUN) continue;
-        const BenchDesc* b = &g_benches[i];
-        const BenchResult* r = &g_results[i];
-        fprintf(f, "%s\n    { \"id\": ", first ? "" : ",");
-        first = false;
-        json_str(f, b->cli_id);
-        fprintf(f, ", \"suite\": ");
-        json_str(f, g_suites[b->suite].name);
-        fprintf(f, ", \"group\": ");
-        json_str(f, b->group);
-        fprintf(f, ", \"name\": ");
-        json_str(f, b->name);
-        fprintf(f, ", \"status\": ");
-        json_str(f, status_name(st));
-        fprintf(f, ", \"seconds\": ");
-        json_num(f, r->seconds);
-        fprintf(f, ", \"error\": ");
-        json_str(f, r->error);
-        fprintf(f, ", \"kind\": ");
-        json_str(f, kind_name(r->kind));
-        if (r->kind == RESULT_MATRIX) fprintf(f, ", \"rows\": %u, \"cols\": %u", r->rows, r->cols);
-        if (r->kind == RESULT_SERIES) {
-            fprintf(f, ", \"x_name\": ");
-            json_str(f, r->x_name);
-            fprintf(f, ", \"x_unit\": ");
-            json_str(f, r->x_unit);
-        }
-        fprintf(f, ", \"metrics\": [");
-        const Metric* m = res_metrics(r);
-        for (u32 k = 0; k < r->count && st == ST_DONE; ++k) {
-            fprintf(f, "%s{ \"name\": ", k ? ", " : "");
-            json_str(f, m[k].name);
-            fprintf(f, ", \"unit\": ");
-            json_str(f, m[k].unit);
-            fprintf(f, ", \"value\": ");
-            json_num(f, m[k].value);
-            if (r->kind == RESULT_SERIES) { fprintf(f, ", \"x\": "); json_num(f, m[k].x); }
-            fprintf(f, " }");
-        }
-        fprintf(f, "] }");
+        ++tests;
+        if (st == ST_DONE) metrics += g_results[i].count;
     }
-    fprintf(f, "\n  ]\n}\n");
-    bool ok = ferror(f) == 0;
-    fclose(f);
-    return ok;
-}
 
-// ---- CSV ---------------------------------------------------------------------
-
-// RFC 4180: quote fields containing a separator, quote or line break; double embedded quotes.
-static void csv_field(FILE* f, const char* s, bool last = false) {
-    if (!s) s = "";
-    if (strpbrk(s, ",\"\r\n")) {
-        fputc('"', f);
-        for (; *s; ++s) {
-            if (*s == '"') fputc('"', f);
-            fputc(*s, f);
-        }
-        fputc('"', f);
-    } else {
-        fputs(s, f);
-    }
-    fputs(last ? "\r\n" : ",", f);
-}
-
-static void csv_num(FILE* f, f64 v) {
-    if (isfinite(v)) fprintf(f, "%.15g", v);
-    fputc(',', f);
-}
-
-bool results_write_csv(const wchar_t* path, const BenchParams*) {
-    FILE* f = _wfopen(path, L"wb");
-    if (!f) return false;
-    fputs("\xEF\xBB\xBF", f);     // UTF-8 BOM so spreadsheets read "µs" correctly
-    fputs("suite,group,test,id,status,metric,x,value,unit\r\n", f);
+    toon_table(f, 0, "tests", tests, "id,suite,group,name,status,seconds,kind,rows,cols,x_name,x_unit,error");
     for (u32 i = 0; i < g_bench_count; ++i) {
         const BenchStatus st = (BenchStatus)g_status[i].load(std::memory_order_acquire);
         if (st == ST_NOT_RUN) continue;
         const BenchDesc* b = &g_benches[i];
         const BenchResult* r = &g_results[i];
-        const u32 rows = st == ST_DONE ? r->count : 0;
+        ToonRow row = toon_row(f, 1);
+        toon_cell_str(&row, b->cli_id);
+        toon_cell_str(&row, g_suites[b->suite].name);
+        toon_cell_str(&row, b->group);
+        toon_cell_str(&row, b->name);
+        toon_cell_str(&row, status_name(st));
+        toon_cell_num(&row, r->seconds);
+        toon_cell_str(&row, kind_name(r->kind));
+        toon_cell_num(&row, r->rows);
+        toon_cell_num(&row, r->cols);
+        toon_cell_str(&row, r->x_name ? r->x_name : "");
+        toon_cell_str(&row, r->x_unit ? r->x_unit : "");
+        toon_cell_str(&row, r->error);
+        toon_row_end(&row);
+    }
+
+    toon_table(f, 0, "metrics", metrics, "id,name,unit,value,x");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        if ((BenchStatus)g_status[i].load(std::memory_order_acquire) != ST_DONE) continue;
+        const BenchResult* r = &g_results[i];
         const Metric* m = res_metrics(r);
-        for (u32 k = 0; k < rows || (k == 0 && rows == 0); ++k) {
-            csv_field(f, g_suites[b->suite].name);
-            csv_field(f, b->group);
-            csv_field(f, b->name);
-            csv_field(f, b->cli_id);
-            csv_field(f, status_name(st));
-            if (rows == 0) {    // failed / skipped / cancelled: the reason goes in the metric column
-                csv_field(f, r->error);
-                fputs(",,\r\n", f);
-                continue;
-            }
-            char name[160];
-            if (r->kind == RESULT_MATRIX && r->cols)
-                snprintf(name, sizeof(name), "%s [%u,%u]", m[k].name, k / r->cols, k % r->cols);
-            else
-                snprintf(name, sizeof(name), "%s", m[k].name);
-            csv_field(f, name);
-            if (r->kind == RESULT_SERIES) csv_num(f, m[k].x);
-            else fputc(',', f);
-            csv_num(f, m[k].value);
-            csv_field(f, m[k].unit, true);
+        for (u32 k = 0; k < r->count; ++k) {
+            ToonRow row = toon_row(f, 1);
+            toon_cell_str(&row, g_benches[i].cli_id);
+            toon_cell_str(&row, m[k].name);
+            toon_cell_str(&row, m[k].unit);
+            toon_cell_num(&row, m[k].value);
+            toon_cell_num(&row, baseline_key_x(r, k));
+            toon_row_end(&row);
         }
     }
     const bool ok = ferror(f) == 0;

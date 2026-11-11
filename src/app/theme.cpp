@@ -244,16 +244,32 @@ void theme_apply_style(f32 scale) {
 
 // ---- components ---------------------------------------------------------------------------
 
+// Scrolling panels nest a plain scroll region inside the rounded card, so the scrollbar sits within the
+// card's padding instead of on (and over) its rounded edge. A small stack remembers what to close.
+static bool s_panel_scroll[8];
+static u32 s_panel_depth;
+
 void theme_begin_panel(const char* id, ImVec2 size, bool scroll) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.card);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_scale, 14 * s_scale));
     ImGui::BeginChild(id, size, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
-                      scroll ? 0 : ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+    if (scroll) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::BeginChild("##scroll", ImVec2(0, 0), ImGuiChildFlags_None);
+        ImGui::PopStyleVar();
+    }
+    if (s_panel_depth < 8) s_panel_scroll[s_panel_depth] = scroll;
+    ++s_panel_depth;
 }
 
-void theme_end_panel() { ImGui::EndChild(); }
+void theme_end_panel() {
+    --s_panel_depth;
+    if (s_panel_depth < 8 && s_panel_scroll[s_panel_depth]) ImGui::EndChild();
+    ImGui::EndChild();
+}
 
 static bool pill_button(const char* label, ImVec4 bg, ImVec4 fg) {
     ImGui::PushStyleColor(ImGuiCol_Button, bg);
