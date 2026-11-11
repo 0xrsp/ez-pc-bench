@@ -26,4 +26,8 @@ keep it updated (decision log, open questions, measured facts).
 
 ## Build
 
-- CMake + Ninja + clang-cl from a VS x64 dev environment (see PLAN.md §3). Ninja must be installed.
+- CMake + Ninja + clang-cl + lld (see PLAN.md §3), no vcvars needed:
+  `cmake --preset release` then `cmake --build --preset release` (or `debug`).
+- Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --json out.json` (`--list` shows ids).
+- GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`. Keep the build warning-free.
+- New tests: add the function in the suite's file and one row in `src/core/registry.cpp`.

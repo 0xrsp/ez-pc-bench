@@ -40,21 +40,26 @@ games on this laptop). The UI's D3D11 device will likely land on the iGPU, leavi
 | VS clang-cl toolset (`VC\Tools\Llvm`) | **Not installed** → `-T ClangCL` with VS generator won't work out of the box |
 | Windows SDK | 10.0.26100.0. `bin\10.0.26100.0\x64` has `dxc.exe` (1.9.2602) **+ `dxil.dll`** (signs DXIL), `fxc.exe` |
 | Vulkan SDK | 1.4.363.1 at `C:\VulkanSDK\1.4.363.1`; `VULKAN_SDK` set machine-wide (needs a new shell). `dxc.exe` (1.9.0.5512, SPIR-V codegen) but **no `dxil.dll`**; `glslc.exe` |
-| Ninja | **Not installed.** Install: `winget install Ninja-build.Ninja` |
+| Ninja | 1.13.2 via winget (user PATH; open a new shell after install) |
 | git | 2.56.1 |
 
-### Build approach (decided, pending Ninja install)
+### Build approach (working since M0)
 
-- Generator **Ninja**, compiler **clang-cl** (MSVC ABI, MSVC CRT + Windows SDK), linker `lld-link`.
-- Configure from a VS x64 dev environment (`vcvars64.bat`) so INCLUDE/LIB/`rc.exe`/`mt.exe` resolve.
-- `CMakePresets.json`: `debug` and `release` (`build/debug`, `build/release`).
+- Generator **Ninja**, compiler **clang-cl** (MSVC ABI, MSVC CRT + Windows SDK), linker `lld-link`
+  (`CMAKE_LINKER_TYPE=LLD`), resources `llvm-rc`.
+- **No vcvars needed**: clang-cl and lld-link find MSVC + the Windows SDK on their own. The manifest is
+  embedded through `app.rc` (`/MANIFEST:NO`), so `mt.exe` isn't needed either.
+- `CMAKE_CXX_SCAN_FOR_MODULES OFF` (CMake 4 + C++20 would otherwise scan the MSVC `std` module every build);
+  CMake's default `/EHsc` is stripped.
+- `CMakePresets.json`: `debug` and `release` (`build/debug`, `build/release`):
+  `cmake --preset release` then `cmake --build --preset release`.
 - Targets: `ezbench_core` (static lib: all benchmarks, sysinfo, runner), `ez-pc-bench` (GUI,
   `/SUBSYSTEM:WINDOWS`), `ez-pc-bench-cli` (console). Two exes avoid the AttachConsole mess.
 - Release: `/O2 /arch:AVX2` for app code. AVX-512 kernels per-function via
   `__attribute__((target("avx512f,avx512vl,...")))`, selected by runtime CPUID.
 - `/EHs-c- -D_HAS_EXCEPTIONS=0 /GR-`, static CRT (`/MT`), `/W4`, warnings clean.
 - Manifest: `asInvoker` + per-monitor-v2 DPI awareness + `longPathAware`. Elevation handled at runtime (§5.4).
-- Fallback if Ninja is unwanted: VS "C++ Clang tools for Windows" component + `-G "Visual Studio 18 2026" -T ClangCL`.
+- Exe sizes at M0 (release): GUI 846 KB, CLI 223 KB.
 
 ### Shader build
 
@@ -92,12 +97,17 @@ src/
   app/main_gui.cpp     Win32 window, D3D11 device/swapchain, ImGui frame loop
   app/main_cli.cpp     Arg parsing, runs selected tests, prints live progress lines, writes JSON
   app/ui.cpp/.h        Suite tree, settings, live panel, results/warnings
-  core/bench.h         BenchParams, BenchLive, BenchResult, Metric, SuiteDesc, BenchDesc, registry
+  app/app.rc/.manifest Embedded manifest (asInvoker, PMv2 DPI, long paths)
+  core/types.h         u8..u64, f32/f64, KiB/MiB/GiB
+  core/bench.h         BenchParams, BenchLive, BenchResult, Metric, SuiteDesc, BenchDesc
+  core/registry.cpp    The suite + test tables (only place new tests are registered)
   core/runner.cpp/.h   Worker thread: suite init → tests → suite shutdown, cancel
-  core/results.cpp/.h  Metric arena, JSON/CSV export, text copy
-  core/sysinfo.cpp/.h  CPUID, SMBIOS RAM, adapters, drives, power, admin, BitLocker
-  core/perf.cpp/.h     Process/thread perf setup (priority, affinity, throttling opt-out, timer res)
-  core/timer.h         QPC wrapper, rdtsc helpers, DoNotOptimize/ClobberMemory
+  core/results.cpp/.h  Metric arena, result helpers (res_*), text + JSON export
+  core/sysinfo.cpp/.h  CPUID, SMBIOS RAM, adapters, power, OS, admin (drives/BitLocker: M3)
+  core/perf.cpp/.h     Process/thread perf setup (priority, throttling opt-out, timer res, keep awake)
+  core/elevation.cpp/.h  is_elevated, relaunch via runas
+  core/smoke_bench.cpp Smoke suite: exercises runner, live stats and all three result kinds
+  core/timer.cpp/.h    QPC wrapper, rdtsc, do_not_optimize/clobber_memory
   core/threads.cpp/.h  Minimal pinned thread pool (Win32 threads, group affinity, barriers)
   core/mem_util.h      VirtualAlloc helpers, large pages (best effort), arena
   cpu/cpu_bench.cpp  cpu/cpu_kernels.cpp (inline-asm kernels)
@@ -356,9 +366,11 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
 
 ## 8. Milestones
 
-- **M0 Skeleton**: CMake + presets, vendored ImGui, GUI window (DPI aware), CLI exe, registry with
-  suite init/shutdown, runner thread, metric arena, one dummy bench with live progress, cancel, results
-  table, JSON export, elevation prompt + banners, sysinfo (CPUID, SMBIOS RAM, power).
+- **M0 Skeleton** — ✅ done 2026-11-11: CMake + presets, vendored ImGui 1.93.0, GUI window (DPI aware),
+  CLI exe, registry with suite init/shutdown, runner thread, metric arena, smoke suite (values / series /
+  matrix) with live progress, cancel, results table, JSON export + copy text, elevation prompt + banners,
+  sysinfo (CPUID, cache topology, SMBIOS RAM, DXGI GPUs, power plan + mode, OS).
+  Dev flags: GUI `--no-elevate` (skip UAC prompt), `--autorun` (start default selection at launch).
 - **M1 CPU** suite (inline-asm kernels, perf setup, pinned pool).
 - **M2 Memory** suite.
 - **M3 Disk** suite.
@@ -423,3 +435,15 @@ None currently. (All earlier ones resolved — see decision log.)
   - Explicit GPU selection for GPU suites, default = most powerful adapter.
   - High-DPI aware UI. BitLocker status shown.
   - D3D12 chosen as the DirectX API; one adapter per run; results compare in M6.
+- 2026-11-11 (M0):
+  - Disk target is a drive letter (`BenchParams::disk_drive`); the file path is derived per §6.4.
+  - `BenchLive` carries `phase`/`unit` as static-string atomics instead of a phase index table.
+  - Smoke suite kept as a permanent runner self-test (`smoke.*`).
+  - GUI verification: launch with `--no-elevate --autorun` and capture the window with `PrintWindow`.
+
+## 13. Measured notes
+
+- Smoke `smoke.matrix` (memcpy 4 MiB, src/dst 64 MiB apart): ~3 GB/s instead of ~30 GB/s whenever the
+  dst offset is ahead of src by 16–48 B. A real Zen 4 `rep movsb` aliasing effect — remember it when
+  designing the memory copy test (use own kernels, control relative alignment).
+- CRT `memset` switches to non-temporal stores somewhere above 32 MiB (write BW jumps 14 → 39 GB/s on battery).

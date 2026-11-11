@@ -1,0 +1,88 @@
+#pragma once
+// Core benchmark types and the static registry.
+#include "core/types.h"
+#include <atomic>
+
+enum SuiteId : u8 { SUITE_SMOKE, SUITE_CPU, SUITE_MEM, SUITE_GPU_VK, SUITE_GPU_D3D12, SUITE_DISK, SUITE_COUNT };
+enum ResultKind : u8 { RESULT_VALUES, RESULT_SERIES, RESULT_MATRIX };
+enum BenchStatus : u8 { ST_PENDING, ST_RUNNING, ST_DONE, ST_SKIPPED, ST_FAILED, ST_CANCELLED, ST_NOT_RUN };
+
+struct Metric {
+    const char* name;   // static string
+    const char* unit;   // static string
+    f64 value;
+    f64 x;              // SERIES: x coordinate (in BenchResult::x_unit)
+};
+
+struct BenchResult {
+    u32 first, count;               // slice into the metric arena (results.h)
+    ResultKind kind;
+    u16 rows, cols;                 // MATRIX dims, values row-major
+    const char* x_name;             // SERIES: x axis name
+    const char* x_unit;             // SERIES: "bytes", "threads", ...
+    f64 seconds;                    // wall time of the test
+    bool skipped;                   // set by res_skip (e.g. unsupported ISA)
+    char error[128];                // reason when FAILED / SKIPPED
+};
+
+struct BenchParams {
+    u32 duration_ms = 3000;         // per measured phase
+    u32 thread_count = 0;           // 0 = all logical processors
+    u32 gpu_adapter = 0;            // index into SysInfo::gpus
+    u32 gpu_width = 1920, gpu_height = 1080;
+    bool gpu_fullscreen = true;
+    wchar_t disk_drive = L'C';
+    u64 disk_file_bytes = 1 * 1024ull * 1024 * 1024;
+    u32 disk_passes = 5;
+    bool disk_write_through = false;
+};
+
+// Live state of the running test. Single writer (worker), single reader (UI / CLI).
+constexpr u32 LIVE_HISTORY = 256;
+struct BenchLive {
+    std::atomic<f32> progress;                  // 0..1 within the current test
+    std::atomic<f64> current;                   // latest instantaneous value
+    std::atomic<const char*> unit;              // unit of `current`
+    std::atomic<const char*> phase;             // e.g. "Warm-up", "Read"
+    std::atomic<f32> history[LIVE_HISTORY];     // ring buffer for the sparkline
+    std::atomic<u32> history_count;             // total samples pushed (head = count % LIVE_HISTORY)
+};
+
+void live_reset(BenchLive* live);
+void live_sample(BenchLive* live, f64 value);   // sets current + pushes history
+inline void live_progress(BenchLive* live, f32 p) { live->progress.store(p, std::memory_order_relaxed); }
+inline void live_phase(BenchLive* live, const char* phase, const char* unit) {
+    live->phase.store(phase, std::memory_order_relaxed);
+    live->unit.store(unit, std::memory_order_relaxed);
+}
+
+typedef bool (*SuiteInitFn)(const BenchParams* p, void** state, char* error, u32 error_size);
+typedef void (*SuiteShutdownFn)(void* state);
+typedef void (*BenchFn)(void* state, const BenchParams* p, BenchLive* live, BenchResult* out,
+                        const std::atomic<bool>* cancel);
+
+struct SuiteDesc {
+    SuiteId id;
+    const char* name;       // UI name
+    const char* cli_id;     // e.g. "cpu"
+    SuiteInitFn init;       // may be null
+    SuiteShutdownFn shutdown;
+};
+
+enum BenchFlags : u32 {
+    BENCH_DEFAULT_OFF = 1u << 0,    // not selected by default in the GUI
+};
+
+struct BenchDesc {
+    SuiteId suite;
+    const char* group;      // UI group name, e.g. "Compute"
+    const char* name;       // UI test name
+    const char* cli_id;     // full id, e.g. "cpu.fma.avx2"
+    BenchFn fn;
+    u32 flags;
+};
+
+extern const SuiteDesc g_suites[SUITE_COUNT];
+extern const BenchDesc g_benches[];
+extern const u32 g_bench_count;
+constexpr u32 MAX_BENCHES = 256;
