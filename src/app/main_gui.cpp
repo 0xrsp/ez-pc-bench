@@ -1,4 +1,5 @@
 // GUI entry: Win32 window + D3D11 swapchain + Dear ImGui loop, throttled while benchmarks run.
+#include "app/settings.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/elevation.h"
@@ -164,9 +165,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     const bool no_elevate = cmdline && wcsstr(cmdline, L"--no-elevate");
     if (!no_elevate && !is_elevated() && relaunch_elevated(L"")) return 0;
 
-    // Theme first: the window class brush and title bar use its colors. Default follows Windows.
+    // Theme first: the window class brush and title bar use its colors. Saved mode (default: follow Windows),
+    // --dark / --light override it for this session.
+    const ThemeMode saved_theme = settings_load_theme();
     theme_set_mode(cmdline && wcsstr(cmdline, L"--dark") ? THEME_DARK : cmdline && wcsstr(cmdline, L"--light") ? THEME_LIGHT
-                                                                                                                : THEME_SYSTEM);
+                                                                                                                : saved_theme);
     theme_take_change();
 
     sysinfo_init();
@@ -269,6 +272,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
 
     if (runner_is_running()) runner_cancel();
     runner_wait();
+    ui_shutdown();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

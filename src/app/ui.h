@@ -1,7 +1,8 @@
 #pragma once
 #include "core/bench.h"
 
-void ui_init();
+void ui_init();                         // also loads the saved settings
+void ui_shutdown();                     // saves pending settings changes
 void ui_start_run();                    // start a run with the current selection/settings
 void ui_set_duration(u32 ms);
 void ui_select_only(const char* ids);   // dev: comma-separated test ids / prefixes ("smoke.preview,cpu.int")
