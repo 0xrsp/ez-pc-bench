@@ -1,0 +1,39 @@
+# Publishes site/ to GitHub Pages (https://0xrsp.github.io/ez-pc-bench/) whenever it changes on main.
+# The Inter font files are copied in from third_party/ so they aren't stored twice in the repo.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "third_party/inter/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+          mkdir -p _site/fonts
+          cp third_party/inter/Inter-Regular.ttf third_party/inter/Inter-Medium.ttf _site/fonts/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

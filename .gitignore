@@ -8,3 +8,4 @@ CMakeUserPresets.json
 compile_commands.json
 ezbench.tmp
 .claude/worktrees/
+site/fonts/

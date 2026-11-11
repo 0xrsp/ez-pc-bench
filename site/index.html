@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ez-pc-bench</title>
+<meta name="description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers, no scores.">
+<meta property="og:title" content="ez-pc-bench">
+<meta property="og:description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers, no scores.">
+<meta property="og:image" content="img/main.png">
+<style>
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.ttf") format("truetype"); font-weight: 500 700; font-display: swap; }
+
+/* Colors: the app's Material 3 palette (seed #0B57D0). Dark by default, light follows the system. */
+:root {
+  --page: #111318; --card: #191C20; --container: #1D2024; --container-high: #282A2F;
+  --on-surface: #E2E2E9; --on-variant: #C4C6D0; --outline: #8E9099; --outline-variant: #44474E;
+  --primary: #AEC6FF; --on-primary: #002E69; --primary-container: #0B57D0; --on-primary-container: #D8E2FF;
+  --ok: #8BD89A; --code-bg: #0C0E12;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #F3F5FA; --card: #FFFFFF; --container: #ECEEF4; --container-high: #E1E2E9;
+    --on-surface: #191C20; --on-variant: #44474F; --outline: #74777F; --outline-variant: #C4C6D0;
+    --primary: #0B57D0; --on-primary: #FFFFFF; --primary-container: #D8E2FF; --on-primary-container: #001A41;
+    --ok: #1E6B35; --code-bg: #E6E8EE;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--page); color: var(--on-surface);
+  font: 400 17px/1.6 "Inter", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 0.88em; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* Header */
+header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--page) 88%, transparent);
+         backdrop-filter: blur(10px); border-bottom: 1px solid var(--outline-variant); }
+header .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.logo { font-weight: 600; color: var(--on-surface); font-size: 18px; display: flex; align-items: center; gap: 10px; }
+.logo .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--primary);
+              display: grid; place-items: center; color: var(--on-primary); font-size: 13px; font-weight: 700; }
+nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
+nav a { color: var(--on-variant); }
+nav a:hover { color: var(--on-surface); text-decoration: none; }
+
+/* Hero */
+.hero { padding: 72px 0 40px; text-align: center; }
+.hero h1 { font-size: clamp(40px, 6vw, 64px); line-height: 1.05; margin: 0 0 18px; font-weight: 600; letter-spacing: -0.02em; }
+.hero p.lead { font-size: clamp(18px, 2.2vw, 21px); color: var(--on-variant); max-width: 720px; margin: 0 auto 32px; }
+.buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 10px; padding: 12px 24px; border-radius: 100px;
+       font-weight: 500; font-size: 16px; transition: filter .15s; }
+.btn:hover { text-decoration: none; filter: brightness(1.08); }
+.btn.primary { background: var(--primary); color: var(--on-primary); }
+.btn.tonal { background: var(--container-high); color: var(--on-surface); }
+.btn svg { width: 18px; height: 18px; }
+.meta { margin-top: 16px; font-size: 14px; color: var(--outline); }
+.shot { margin: 48px auto 0; max-width: 1100px; border-radius: 14px; overflow: hidden;
+        border: 1px solid var(--outline-variant); box-shadow: 0 24px 60px rgba(0,0,0,.35); background: var(--card); }
+.shot img { display: block; width: 100%; height: auto; }
+
+/* Sections */
+section { padding: 64px 0; }
+section h2 { font-size: 32px; font-weight: 600; margin: 0 0 10px; letter-spacing: -0.01em; }
+section .sub { color: var(--on-variant); margin: 0 0 32px; max-width: 720px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--outline-variant); border-radius: 16px; padding: 22px 22px 18px; }
+.card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; display: flex; align-items: flex-start; gap: 10px; }
+.card h3 .dot { flex: none; width: 10px; height: 10px; margin-top: 0.55em; border-radius: 50%; background: var(--primary); }
+.card ul { margin: 0; padding-left: 18px; color: var(--on-variant); font-size: 15px; }
+.card li { margin: 3px 0; }
+.card p { margin: 0; color: var(--on-variant); font-size: 15px; }
+
+.checks { list-style: none; padding: 0; margin: 0; }
+.checks.two { display: grid; grid-template-columns: 1fr 1fr; column-gap: 40px; }
+.checks li { padding-left: 28px; position: relative; margin: 10px 0; color: var(--on-variant); }
+.checks li::before { content: ""; position: absolute; left: 0; top: 7px; width: 14px; height: 8px;
+                     border-left: 2.5px solid var(--ok); border-bottom: 2.5px solid var(--ok); transform: rotate(-45deg); }
+.checks b { color: var(--on-surface); font-weight: 500; }
+
+pre { background: var(--code-bg); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px 18px;
+      overflow-x: auto; margin: 0 0 14px; line-height: 1.55; }
+pre .c { color: var(--outline); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.cols > div { min-width: 0; }      /* let code blocks scroll instead of widening the page */
+.cols h3 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+.req { color: var(--on-variant); font-size: 15px; margin: 0; padding-left: 18px; }
+
+footer { border-top: 1px solid var(--outline-variant); padding: 28px 0 40px; color: var(--outline); font-size: 14px; }
+footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+
+@media (max-width: 860px) {
+  .cols, .checks.two { grid-template-columns: 1fr; }
+  nav a.opt { display: none; }
+  .hero { padding-top: 48px; }
+  section { padding: 48px 0; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="logo" href="#"><span class="mark">ez</span>ez-pc-bench</a>
+    <nav>
+      <a class="opt" href="#measures">What it measures</a>
+      <a class="opt" href="#compare">Compare</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/0xrsp/ez-pc-bench">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <h1>Benchmark your PC.<br>Get real numbers.</h1>
+    <p class="lead">A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D&nbsp;12) and disks.
+      It reports raw throughput &mdash; GFLOPS, GB/s, ns, IOPS, frame times &mdash; never made-up scores.</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/0xrsp/ez-pc-bench/releases/latest/download/ez-pc-bench.exe">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        Download for Windows</a>
+      <a class="btn tonal" href="https://github.com/0xrsp/ez-pc-bench/releases/latest/download/ez-pc-bench-cli.exe">Command-line version</a>
+    </div>
+    <div class="meta">Single ~2&nbsp;MB exe, no installer &middot; Windows 10/11 x64 &middot; free and open source (MIT)</div>
+    <div class="shot"><img src="img/main.png" width="1600" height="834"
+         alt="ez-pc-bench main window: test tree with suites and groups, a GPU test running with a live 3D preview, and the results table"></div>
+  </div>
+
+  <section id="measures">
+    <div class="wrap">
+      <h2>What it measures</h2>
+      <p class="sub">55 tests across four suites, each reporting its numbers in explicit units. CPU and memory
+        tests run single-threaded and on every thread; kernels are hand-written and their output self-checked.</p>
+      <div class="grid">
+        <div class="card">
+          <h3><span class="dot"></span>CPU</h3>
+          <ul>
+            <li>Integer and FP32 / FP64 FMA throughput (scalar, AVX2, AVX-512)</li>
+            <li>SGEMM, SHA-256, AES-128 (VAES)</li>
+            <li>Sort and prime sieve workloads</li>
+            <li>Core-to-core latency matrix, thread scaling</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>Memory</h3>
+          <ul>
+            <li>DRAM read, write, copy, triad bandwidth</li>
+            <li>Normal and non-temporal stores</li>
+            <li>Latency from 4&nbsp;KiB to 1&nbsp;GiB</li>
+            <li>Cache bandwidth sweeps, L1 to DRAM</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>GPU &middot; Vulkan + D3D12</h3>
+          <ul>
+            <li>Compute: FP32, FP16, INT32, VRAM, shared memory, PCIe</li>
+            <li>3D: triangles, fill rate, draw calls, a lit scene</li>
+            <li>2D: sprites, blit, clear</li>
+            <li>Same shaders on both APIs, so they compare directly</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3><span class="dot"></span>Disk</h3>
+          <ul>
+            <li>CrystalDiskMark-style SEQ1M and RND4K</li>
+            <li>Several queue depths, read and write</li>
+            <li>MB/s, IOPS and latency</li>
+            <li>One or more drives per run</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <div>
+        <h2>Compare runs side by side</h2>
+        <p class="sub">Load any number of saved runs, the run you just did, or reference runs built into the app.</p>
+        <ul class="checks two">
+          <li><b>Summary first:</b> overall and per-suite change against a reference run, plus the biggest gain and loss.</li>
+          <li><b>Every number:</b> raw values with the % change, green when better, red when worse.</li>
+          <li><b>System info</b> for each run, with differences from the reference highlighted.</li>
+          <li><b>Library</b> of reference runs on other PCs, compressed into the exe.</li>
+          <li><b>Copy table</b> straight into a spreadsheet.</li>
+        </ul>
+      </div>
+      <div class="shot" style="margin-top:32px"><img src="img/compare.png" width="1700" height="918" loading="lazy"
+           alt="Compare window: two runs side by side with an overall summary, per-suite change and system information"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Built to stay out of the way</h2>
+      <p class="sub">Small, native and quick, so the benchmark measures your hardware instead of itself.</p>
+      <div class="grid">
+        <div class="card"><h3>Live progress</h3><p>Watch each test's current rate, a sparkline and a live preview of the GPU render while it runs.</p></div>
+        <div class="card"><h3>Native and light</h3><p>C++ with Dear ImGui. The UI redraws at a throttled rate during runs and the exe has no runtime to install.</p></div>
+        <div class="card"><h3>Readable results</h3><p>Runs save as compact <a href="https://github.com/toon-format/toon">TOON</a> text files you can open in any editor and diff.</p></div>
+        <div class="card"><h3>Command line too</h3><p>The same tests headless, with saved output and comparison against an earlier run, for scripts and repeat checks.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <h2>Download</h2>
+      <p class="sub">Grab the exe from the <a href="https://github.com/0xrsp/ez-pc-bench/releases/latest">latest release</a>
+        and run it. It asks for admin rights at start; they are optional and only enable a few extra tweaks.</p>
+      <div class="cols">
+        <div>
+          <h3>Requirements</h3>
+          <ul class="req">
+            <li>Windows 10 or 11, x64</li>
+            <li>A CPU with AVX2</li>
+            <li>A GPU driver with Vulkan support (D3D12 and Vulkan 1.3 for the GPU tests)</li>
+            <li>For stable numbers: AC power and the <i>Best performance</i> power mode</li>
+          </ul>
+          <h3 style="margin-top:28px">Command line</h3>
+<pre><code>ez-pc-bench-cli --list                            <span class="c"># test ids</span>
+ez-pc-bench-cli --run cpu,mem --out run.toon.txt  <span class="c"># run suites / ids</span>
+ez-pc-bench-cli --compare run.toon.txt            <span class="c"># run and diff</span></code></pre>
+        </div>
+        <div>
+          <h3>Build from source</h3>
+          <ul class="req" style="margin-bottom:14px">
+            <li>LLVM (clang-cl + lld), CMake 3.29+ and Ninja</li>
+            <li>MSVC build tools with a Windows SDK</li>
+            <li>Vulkan SDK</li>
+          </ul>
+<pre><code>git clone https://github.com/0xrsp/ez-pc-bench
+cd ez-pc-bench
+cmake --preset release
+cmake --build --preset release -- -j 6</code></pre>
+          <p class="req" style="padding:0">No developer prompt needed. See the
+            <a href="https://github.com/0xrsp/ez-pc-bench#readme">README</a> for details.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>ez-pc-bench &middot; MIT licensed &middot; uses Dear ImGui and the Inter font</span>
+    <span><a href="https://github.com/0xrsp/ez-pc-bench">Source on GitHub</a> &middot;
+      <a href="https://github.com/0xrsp/ez-pc-bench/releases">Releases</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

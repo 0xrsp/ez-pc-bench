@@ -2,7 +2,7 @@
 
 A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. It reports raw
 numbers (GFLOPS, GB/s, ns, IOPS, FPS), never synthetic "scores". It comes as a GUI and a command-line exe
-that run the same tests.
+that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
 
 ![ez-pc-bench](docs/screenshot.png)
 
