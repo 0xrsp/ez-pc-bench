@@ -309,9 +309,10 @@ bool theme_tab(const char* label, bool selected) {
     return pressed;
 }
 
-// Material checkbox: outlined box when off, filled primary box with a contrasting tick when on.
-bool theme_checkbox(const char* label, bool* v) {
-    const bool on = *v;
+// Material checkbox: outlined box when off, filled primary box with a contrasting tick when on, and with
+// a dash when `mixed` (some of a group selected; a click then checks it).
+bool theme_checkbox(const char* label, bool* v, bool mixed) {
+    const bool on = *v || mixed;
     const ImVec4 fill = on ? g_pal.primary : ImVec4(0, 0, 0, 0);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, fill);
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, on ? mix(g_pal.primary, g_pal.on_primary, 0.08f)
@@ -325,6 +326,13 @@ bool theme_checkbox(const char* label, bool* v) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * s_scale);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * s_scale, 3.0f * s_scale));
     const bool changed = ImGui::Checkbox(label, v);
+    if (mixed && !*v) {     // ImGui's own mixed mark is a square; Material uses a horizontal dash
+        const f32 box = ImGui::GetFrameHeight();
+        const ImVec2 mn = ImGui::GetItemRectMin();
+        const f32 cy = mn.y + box * 0.5f, half_h = 1.0f * s_scale;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(mn.x + box * 0.25f, cy - half_h), ImVec2(mn.x + box * 0.75f, cy + half_h),
+                                                  ImGui::GetColorU32(g_pal.on_primary), half_h);
+    }
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(6);
     return changed;

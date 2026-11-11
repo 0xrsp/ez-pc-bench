@@ -44,7 +44,7 @@ void theme_end_panel();
 
 bool theme_button_primary(const char* label);   // filled pill
 bool theme_button(const char* label);           // tonal pill
-bool theme_checkbox(const char* label, bool* v);
+bool theme_checkbox(const char* label, bool* v, bool mixed = false);   // mixed: dash, "some selected"
 f32 theme_checkbox_height();                    // box height, for centering next to taller items
 bool theme_tab(const char* label, bool selected);  // segmented tab, returns true when clicked
 void theme_progress(f32 fraction, f32 height, f32 width = -FLT_MIN);  // linear indicator (default: full width)

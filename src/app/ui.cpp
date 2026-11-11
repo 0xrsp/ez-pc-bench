@@ -428,7 +428,7 @@ static void draw_tree() {
         // The header is a full frame tall; center the smaller checkbox (and the count after it) on it.
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (header_h - theme_checkbox_height()) * 0.5f);
         bool all = sel == total;
-        if (theme_checkbox("##all", &all) && !running)
+        if (theme_checkbox("##all", &all, sel > 0 && sel < total) && !running)     // dash when partly selected
             for (u32 i = 0; i < g_bench_count; ++i)
                 if (g_benches[i].suite == s) s_ui.selected[i] = all;
         ImGui::SameLine();
