@@ -1,5 +1,6 @@
 // Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
+#include "app/mem_charts.h"
 #include "app/settings.h"
 #include "app/theme.h"
 #include "core/elevation.h"
@@ -787,10 +788,34 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
+// One plot per metric name (a series can hold several, e.g. "Read" and "Write" per thread count).
+static void draw_series_one(const BenchResult* r, const char* name);
+
 static void draw_series(const BenchResult* r) {
-    static f32 ys[1024];
     const Metric* m = res_metrics(r);
-    const u32 n = r->count < 1024 ? r->count : 1024;
+    const char* names[8];
+    u32 count = 0;
+    for (u32 k = 0; k < r->count; ++k) {
+        bool seen = false;
+        for (u32 i = 0; i < count && !seen; ++i) seen = !strcmp(names[i], m[k].name);
+        if (!seen && count < ARRAY_COUNT(names)) names[count++] = m[k].name;
+    }
+    for (u32 i = 0; i < count; ++i) {
+        ImGui::PushID((int)i);
+        draw_series_one(r, count > 1 ? names[i] : nullptr);
+        ImGui::PopID();
+    }
+}
+
+static void draw_series_one(const BenchResult* r, const char* name) {
+    static f32 ys[1024];
+    static Metric pts[1024];
+    const Metric* all = res_metrics(r);
+    u32 n = 0;
+    for (u32 k = 0; k < r->count && n < 1024; ++k)
+        if (!name || !strcmp(all[k].name, name)) pts[n++] = all[k];
+    if (!n) return;
+    const Metric* m = pts;
     f32 hi = 0.0f;
     for (u32 k = 0; k < n; ++k) {
         ys[k] = (f32)m[k].value;
@@ -862,12 +887,14 @@ static void draw_charts() {
     for (u32 i = 0; i < g_bench_count; ++i) {
         if (status_of(i) != ST_DONE) continue;
         const BenchResult* r = &g_results[i];
-        if (r->count == 0 || r->kind == RESULT_VALUES) continue;
+        const bool own_view = mem_chart_has_view(i);
+        if (r->count == 0 || (r->kind == RESULT_VALUES && !own_view)) continue;
         any = true;
         const BenchDesc* b = &g_benches[i];
         ImGui::PushID((int)i);
         if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
-            if (r->kind == RESULT_SERIES) draw_series(r);
+            if (own_view) mem_chart_draw(i, r);
+            else if (r->kind == RESULT_SERIES) draw_series(r);
             else draw_matrix(r);
             ImGui::TreePop();
         }

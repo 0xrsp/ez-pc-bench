@@ -118,6 +118,8 @@ add_library(ezbench_core STATIC
     src/core/throughput.cpp
     src/mem/mem_bench.cpp
     src/mem/mem_kernels.cpp
+    src/mem/mem_grid.cpp
+    src/mem/mem_load.cpp
     src/cpu/cpu_bench.cpp
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
@@ -137,7 +139,7 @@ target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan:
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
-    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
+    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp src/mem/mem_grid.cpp src/mem/mem_load.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
 
 # Run library: reference runs in library/*.toon.txt, packed + LZMS-compressed by a small host tool and
 # embedded in the GUI exe as RCDATA 103 (read by src/app/library.cpp).
@@ -164,6 +166,7 @@ add_executable(ez-pc-bench WIN32
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
     src/app/health_ui.cpp
+    src/app/mem_charts.cpp
     src/app/library.cpp
     src/app/settings.cpp
     src/app/theme.cpp

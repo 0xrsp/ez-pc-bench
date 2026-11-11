@@ -1,6 +1,6 @@
 // Memory suite: DRAM bandwidth (read/write/copy/triad), load latency curve, cache bandwidth sweeps.
+#include "mem/mem_internal.h"
 #include "mem/mem_kernels.h"
-#include "core/bench.h"
 #include "core/mem_util.h"
 #include "core/results.h"
 #include "core/sysinfo.h"
@@ -15,10 +15,6 @@
 static constexpr u64 ARENA_TARGET = 1536 * MiB;
 static constexpr u64 ARENA_MIN = 256 * MiB;
 
-struct MemState {
-    u8* arena;
-    u64 bytes;
-};
 static MemState s_mem;
 
 bool mem_init(const BenchParams*, void** state, char* error, u32 error_size) {
@@ -178,33 +174,47 @@ struct LatJob {
     f64 ns[LAT_MAX_POINTS];
 };
 
+f64 mem_point_seconds(const BenchParams* p, f64 div) {
+    const f64 s = p->duration_ms / 1000.0 / div;
+    return s < 0.25 ? 0.25 : s;
+}
+
+void chase_build(u8* buf, u64 bytes, u32* perm, u64* rng) {
+    const u64 lines = bytes / 64;
+    u64 r = *rng;
+    for (u64 i = 0; i < lines; ++i) perm[i] = (u32)i;
+    for (u64 i = lines - 1; i > 0; --i) {
+        r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+        const u64 k = r % i;
+        const u32 t = perm[i]; perm[i] = perm[k]; perm[k] = t;
+    }
+    for (u64 i = 0; i < lines; ++i) *(u8**)(buf + i * 64) = buf + (u64)perm[i] * 64;
+    *rng = r;
+}
+
+f64 chase_ns(u8* buf, u64 bytes, f64 seconds, const CancelFlag* cancel) {
+    const u64 lines = bytes / 64;
+    void* p = buf;
+    const u64 chunk = 1u << 14;
+    p = k_mem_chase(p, (lines < (1u << 20) ? lines : (1u << 20)) / 16 * 16 + 16);   // warm-up
+    u64 steps = 0;
+    const f64 t0 = timer_now();
+    f64 now = t0;
+    while (now - t0 < seconds && !cancel->load(std::memory_order_relaxed)) {
+        p = k_mem_chase(p, chunk);
+        steps += chunk;
+        now = timer_now();
+    }
+    do_not_optimize(p);
+    return steps ? (now - t0) / steps * 1e9 : 0.0;
+}
+
 static void latency_task(u32, u32, void* user) {
     LatJob* j = (LatJob*)user;
     u64 rng = 0x2545F4914F6CDD1Dull;
     for (u32 s = 0; s < j->count && !j->cancel->load(); ++s) {
-        const u64 lines = j->sizes[s] / 64;
-        // Sattolo's shuffle gives a single cycle covering every line.
-        for (u64 i = 0; i < lines; ++i) j->perm[i] = (u32)i;
-        for (u64 i = lines - 1; i > 0; --i) {
-            rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
-            const u64 k = rng % i;
-            const u32 t = j->perm[i]; j->perm[i] = j->perm[k]; j->perm[k] = t;
-        }
-        for (u64 i = 0; i < lines; ++i) *(u8**)(j->buf + i * 64) = j->buf + (u64)j->perm[i] * 64;
-
-        void* p = j->buf;
-        const u64 chunk = 1u << 14;
-        p = k_mem_chase(p, (lines < (1u << 20) ? lines : (1u << 20)) / 16 * 16 + 16);   // warm-up
-        u64 steps = 0;
-        const f64 t0 = timer_now();
-        f64 now = t0;
-        while (now - t0 < j->seconds_per_point && !j->cancel->load(std::memory_order_relaxed)) {
-            p = k_mem_chase(p, chunk);
-            steps += chunk;
-            now = timer_now();
-        }
-        do_not_optimize(p);
-        j->ns[s] = steps ? (now - t0) / steps * 1e9 : 0.0;
+        chase_build(j->buf, j->sizes[s], j->perm, &rng);
+        j->ns[s] = chase_ns(j->buf, j->sizes[s], j->seconds_per_point, j->cancel);
         live_sample(j->live, j->ns[s]);
         live_progress(j->live, (f32)(s + 1) / j->count);
     }
@@ -216,8 +226,7 @@ void mem_latency(void* state, const BenchParams* p, BenchLive* live, BenchResult
     memset(&j, 0, sizeof(j));
     j.live = live;
     j.cancel = cancel;
-    j.seconds_per_point = p->duration_ms / 1000.0 / 8.0;
-    if (j.seconds_per_point < 0.25) j.seconds_per_point = 0.25;    // shorter points get noisy (clock ramping)
+    j.seconds_per_point = mem_point_seconds(p, 8.0);
 
     // Prefer large pages (TLB misses otherwise add to DRAM latency); fall back to the arena.
     const u64 max_bytes = m->bytes < GiB ? m->bytes : GiB;
@@ -266,8 +275,7 @@ static void run_sweep(MemState* m, bool multi, const BenchParams* p, BenchLive* 
     u32 n = 0;
     for (u64 sz = 16 * KiB; sz <= 256 * MiB && sz <= cap && n < 20; sz *= 2) sizes[n++] = sz;
 
-    f64 seconds = p->duration_ms / 1000.0 / 8.0;
-    if (seconds < 0.25) seconds = 0.25;
+    const f64 seconds = mem_point_seconds(p, 8.0);
     res_begin(out, RESULT_SERIES);
     res_series_axis(out, multi ? "Working set per thread" : "Working set", "bytes");
     live_phase(live, multi ? "Read sweep, all threads" : "Read sweep, one thread", "GB/s");
