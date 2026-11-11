@@ -121,7 +121,16 @@ add_library(ezbench_core STATIC
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
     src/cpu/cpu_gemm.cpp
-    src/disk/disk_bench.cpp
+    src/disk/disk_suite.cpp
+    src/disk/disk_io.cpp
+    src/disk/disk_cdm.cpp
+    src/disk/disk_latency.cpp
+    src/disk/disk_nvme.cpp
+    src/disk/disk_sweep.cpp
+    src/disk/disk_sustained.cpp
+    src/disk/disk_recovery.cpp
+    src/disk/disk_files.cpp
+    src/disk/disk_raw.cpp
     src/gpu/gpu_common.cpp
     src/gpu/gpu_entry.cpp
     src/gpu/gpu_d3d12.cpp

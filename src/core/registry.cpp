@@ -42,7 +42,7 @@ BENCH_FN(mem_latency);
 BENCH_FN(mem_sweep_st);
 BENCH_FN(mem_sweep_mt);
 
-// disk/disk_bench.cpp
+// disk/*.cpp
 SUITE_FNS(disk);
 BENCH_FN(disk_seq1m_q8t1);
 BENCH_FN(disk_seq1m_q1t1);
@@ -50,6 +50,26 @@ BENCH_FN(disk_rnd4k_q32t1);
 BENCH_FN(disk_rnd4k_q1t1);
 BENCH_FN(disk_seq128k_q32t1);
 BENCH_FN(disk_rnd4k_q32t16);
+BENCH_FN(disk_custom1);
+BENCH_FN(disk_custom2);
+BENCH_FN(disk_custom3);
+BENCH_FN(disk_custom4);
+BENCH_FN(disk_lat_read);
+BENCH_FN(disk_lat_write);
+BENCH_FN(disk_lat_flush);
+BENCH_FN(disk_lat_hist);
+BENCH_FN(disk_lat_load);
+BENCH_FN(disk_lat_wake);
+BENCH_FN(disk_sweep_qd);
+BENCH_FN(disk_sweep_block);
+BENCH_FN(disk_sweep_compress);
+BENCH_FN(disk_fs_meta);
+BENCH_FN(disk_files_copy);
+BENCH_FN(disk_recovery);
+BENCH_FN(disk_sustained_write);
+BENCH_FN(disk_raw_span);
+BENCH_FN(disk_raw_scan);
+BENCH_FN(disk_raw_seek);
 
 // gpu/gpu_entry.cpp: gpu_vk_<id> and gpu_d3d12_<id> for every test in GPU_TESTS (gpu_common.h)
 #define X(id, e, g, gid, name, flags) BENCH_FN(gpu_vk_##id); BENCH_FN(gpu_d3d12_##id);
@@ -99,9 +119,31 @@ const BenchDesc g_benches[] = {
     { SUITE_DISK, "Sequential", "SEQ1M Q8T1",           "disk.seq1m_q8t1",    disk_seq1m_q8t1,    0 },
     { SUITE_DISK, "Sequential", "SEQ1M Q1T1",           "disk.seq1m_q1t1",    disk_seq1m_q1t1,    0 },
     { SUITE_DISK, "Sequential", "SEQ128K Q32T1 (NVMe)", "disk.seq128k_q32t1", disk_seq128k_q32t1, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Sequential sweeps", "Block size sweep 512 B - 64 MiB (Q4)", "disk.sweep.block", disk_sweep_block, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Sequential sweeps", "Compressibility sweep 0-100 %", "disk.sweep.compress", disk_sweep_compress, BENCH_DEFAULT_OFF },
     { SUITE_DISK, "Random",     "RND4K Q32T1",          "disk.rnd4k_q32t1",   disk_rnd4k_q32t1,   0 },
     { SUITE_DISK, "Random",     "RND4K Q1T1",           "disk.rnd4k_q1t1",    disk_rnd4k_q1t1,    0 },
     { SUITE_DISK, "Random",     "RND4K Q32T16 (NVMe)",  "disk.rnd4k_q32t16",  disk_rnd4k_q32t16,  BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Random",     "Queue depth sweep QD1-256", "disk.sweep.qd", disk_sweep_qd,   BENCH_DEFAULT_OFF },
+    // User-defined rows (BenchParams::disk.custom); skipped while empty.
+    { SUITE_DISK, "Custom", "Custom row 1", "disk.custom1", disk_custom1, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Custom", "Custom row 2", "disk.custom2", disk_custom2, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Custom", "Custom row 3", "disk.custom3", disk_custom3, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Custom", "Custom row 4", "disk.custom4", disk_custom4, BENCH_DEFAULT_OFF },
+    // Latency (percentiles from per-I/O histograms), file system, sustained and raw-device tests.
+    { SUITE_DISK, "Latency", "4K random read QD1",             "disk.lat.read",  disk_lat_read,  0 },
+    { SUITE_DISK, "Latency", "4K random write QD1",            "disk.lat.write", disk_lat_write, 0 },
+    { SUITE_DISK, "Latency", "4K write + flush / FUA QD1",     "disk.lat.flush", disk_lat_flush, 0 },
+    { SUITE_DISK, "Latency", "Latency distribution (4K QD1)",  "disk.lat.hist",  disk_lat_hist,  BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Latency", "Read latency under write load",  "disk.lat.load",  disk_lat_load,  BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Latency", "Wake-up latency (idle 1/5/30 s)", "disk.lat.wake", disk_lat_wake,  BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "File system", "Metadata: create / open / stat / delete", "disk.fs.meta", disk_fs_meta, 0 },
+    { SUITE_DISK, "File system", "Copy ISO / program / game sets", "disk.files.copy", disk_files_copy, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Sustained", "TRIM / idle recovery",        "disk.recovery",        disk_recovery,        BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Sustained", "Sustained write (SLC cache)", "disk.sustained.write", disk_sustained_write, BENCH_DEFAULT_OFF | BENCH_CONFIRM },
+    { SUITE_DISK, "Raw device (admin, read-only)", "Full-span read curve", "disk.raw.span", disk_raw_span, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Raw device (admin, read-only)", "Surface scan",         "disk.raw.scan", disk_raw_scan, BENCH_DEFAULT_OFF | BENCH_CONFIRM },
+    { SUITE_DISK, "Raw device (admin, read-only)", "Seek profile",         "disk.raw.seek", disk_raw_seek, BENCH_DEFAULT_OFF },
 
     // GPU: same tests for both APIs, ids like "gpu_vk.compute.fp32", "gpu_d3d12.3d.scene".
 #define X(id, e, g, gid, name, flags) { SUITE_GPU_VK, g, name, "gpu_vk." gid "." #id, gpu_vk_##id, flags },

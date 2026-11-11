@@ -4,6 +4,7 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/toon.h"
+#include "disk/disk.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -238,6 +239,7 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "disk_passes", p->disk_passes);
     toon_bool(f, 1, "disk_write_through", p->disk_write_through);
     toon_num(f, 1, "repeat", p->repeat);
+    disk_write_toon_params(f, p);
 }
 
 // Repeated runs: spread[N]{id,name,x,runs,min,max,cv} for every metric whose value is a median.

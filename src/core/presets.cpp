@@ -33,7 +33,7 @@ static bool in_list(const char* list, const char* id) {
 }
 
 static bool preset_selects(const RunPreset* pr, u32 bench) {
-    if (g_benches[bench].suite == SUITE_SMOKE) return false;
+    if (g_benches[bench].suite == SUITE_SMOKE || (g_benches[bench].flags & BENCH_CONFIRM)) return false;
     switch (pr->select) {
         case PRESET_SEL_LIST: return in_list(pr->ids, g_benches[bench].cli_id);
         case PRESET_SEL_DEFAULT: return !(g_benches[bench].flags & BENCH_DEFAULT_OFF);
