@@ -483,9 +483,19 @@ run writes ~80 GB to the SSD (per pass x 3 s: SEQ1M Q8 ~18 GB, Q1 ~6 GB, RND4K Q
 were ~130 GB) — use 1 pass and a shorter duration for frequent runs.
 ## 11. Open questions
 
-None currently. (All earlier ones resolved — see decision log.)
+None for the current scope. (All earlier ones resolved — see decision log.) The roadmap to replace
+CrystalDiskInfo / Cinebench / Heaven / OCCT / HWiNFO etc. and its open decisions (kernel driver, scores,
+hardware scope, network, resident mode) are in [FUTURE.md](FUTURE.md) §0.
 
 ## 12. Decision log
+
+- 2026-11-11 (roadmap, details in [FUTURE.md](FUTURE.md)): kernel-level sensors (per-core CPU and RAM
+  temperatures, package power, SPD, memory timings) will use the existing signed **PawnIO** driver, opt-in
+  and never bundled-installed by us; no WinRing0 or other blocklisted drivers. Stability testing (CPU, memory
+  error test, VRAM test, GPU error detection, WHEA) becomes its own tool, separate from benchmarks. An
+  **overall score** derived from the raw results (versioned formula, component breakdown, weights calibrated
+  against real-task timings) will be added; raw numbers stay primary and the "no scores" rule gets reworded
+  when it's built. Cinebench-style CPU rendering and a Heaven-style heavy GPU scene are deferred.
 
 - 2026-11-11 (tool windows, temperatures, disk health):
   - Compare, Settings, Temperatures and Disk health are "tool windows" (main_gui.cpp `s_tool_desc`): each its

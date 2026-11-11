@@ -1,25 +1,66 @@
 # ez-pc-bench
 
 A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. It reports raw
-numbers (GFLOPS, GB/s, ns, IOPS, FPS), never synthetic "scores". It comes as a GUI and a command-line exe
+numbers (GFLOPS, GB/s, ns, IOPS, FPS) with explicit units. It comes as a GUI and a command-line exe
 that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
 
 ![ez-pc-bench](docs/screenshot.png)
 
-## What it measures
+## Features
 
-- **CPU:** integer and FP32/FP64 FMA throughput (scalar, AVX2, AVX-512), SGEMM, SHA-256, AES, sort,
-  prime sieve, core-to-core latency and thread scaling. Each runs single-threaded and on all threads.
-- **Memory:** DRAM read, write, copy and triad bandwidth, latency from 4 KiB to 1 GiB, and cache
-  bandwidth sweeps.
-- **GPU (Vulkan + D3D12):**
+### Done
+
+**Benchmarks**
+- [x] **CPU:** integer and FP32/FP64 FMA throughput (scalar, AVX2, AVX-512), SGEMM, SHA-256, AES, sort,
+  prime sieve, core-to-core latency matrix and thread scaling. Each runs single-threaded and on all
+  threads, and every test with a checkable output verifies itself.
+- [x] **Memory:** DRAM read, write, copy and triad bandwidth (normal and non-temporal), latency from
+  4 KiB to 1 GiB, and cache bandwidth sweeps for one thread and all threads.
+- [x] **GPU (Vulkan + D3D12):** both APIs run the same shaders, so their numbers compare directly
   - compute: FP32, FP16 and INT32 throughput, VRAM and shared-memory bandwidth, PCIe transfers
-  - 3D: triangles, fill rate, draw calls, a lit scene, with avg / p99 / p99.9 frame times (the GUI also
-    shows them as fps)
+  - 3D: triangles, fill rate, texture fill, draw calls, a lit scene, with avg / p99 / p99.9 frame times
+    (the GUI also shows them as fps) and a live preview
   - 2D: sprites, blit and clear
-  - both APIs run the same shaders, so their numbers compare directly
-- **Disk:** CrystalDiskMark-style SEQ1M and RND4K at several queue depths, reads and writes, on one or
-  more drives.
+- [x] **Disk:** CrystalDiskMark-style SEQ1M and RND4K at several queue depths (plus NVMe extras),
+  reads and writes, best of N passes, MB/s, IOPS and average latency, on one or more drives.
+
+**Tools**
+- [x] **Temperatures:** live CPU (ACPI zones), GPU (temperature, fan, power) and drive temperatures.
+- [x] **Disk health:** NVMe health log (life used, spare blocks, data written, power-on hours, errors),
+  SMART predict-failure on other drives.
+- [x] **System info:** CPU (CPUID, caches, ISA), RAM modules (SMBIOS), GPUs, drives (bus, file system,
+  VHD / Dev Drive, BitLocker), power source and plan, OS; warnings for anything that skews results.
+- [x] **Results:** TOON text files, a compare window for up to 16 runs (summary, per-suite tabs,
+  change vs a reference run, copy table), a built-in library of reference runs.
+- [x] GUI and CLI with the same tests; light / dark theme; settings saved automatically.
+
+### To do
+
+The full plan, with priorities and sources, is in [docs/FUTURE.md](docs/FUTURE.md).
+
+- [ ] **Disk latency:** p50 to p99.99 and max for every test, QD1 read / write / flush latency, latency
+  under background writes, latency over time, wake-from-idle latency, small-file operations.
+- [ ] **Disk benchmark:** CrystalDiskMark Peak / Real World profiles, mixed read/write, custom tests,
+  sustained-write (SLC cache) test, queue-depth and block-size sweeps, full-drive read and surface scan.
+- [ ] **Disk health (CrystalDiskInfo):** full SATA SMART table, Good / Caution / Bad rules, drive info
+  panel, USB enclosures, self-tests, health history and alerts.
+- [ ] **Stability tester (separate tool):** self-checking CPU stress with per-core error tracking,
+  memory error test, VRAM test, GPU error detection, combined CPU + GPU load, Windows hardware-error
+  (WHEA) logging, temperature limits.
+- [ ] **Sensors:** clocks, temperatures and power recorded during every benchmark and saved with the
+  results; per-core clocks, GPU clocks and PCIe link, battery power, sensor logging.
+- [ ] **Advanced sensors (opt-in PawnIO driver):** per-core CPU temperatures and power, RAM
+  temperatures, module details and memory timings, fans and voltages on desktop boards.
+- [ ] **CPU / memory / GPU:** sustained (thermal) mode, per-core pass, P / E core results, more
+  real-world workloads, AIDA64-style cache and memory grid, loaded latency, GPU ray tracing and
+  mesh-shader tests, GPU memory hierarchy.
+- [ ] **System info:** motherboard / BIOS, microcode, Windows settings that affect performance (VBS,
+  HAGS, Game Mode, ReBAR), GPU details, displays, PCI link speeds.
+- [ ] **Overall score:** derived from the raw results with a published, versioned formula; component
+  scores for CPU, memory, GPU and storage; checked against real-task timings before it's trusted.
+- [ ] **Results:** ranking against reference machines, one-click presets, repeat runs with medians,
+  run history, PNG / HTML export.
+- [ ] **Later:** a Cinebench-style CPU render and a Heaven-style heavy GPU scene.
 
 ## Download
 
