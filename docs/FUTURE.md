@@ -207,15 +207,19 @@ Tests (tick any combination, run together or in sequence, duration or until stop
 ## 7. Live monitoring — HWiNFO, HWMonitor, Task Manager
 
 Driverless sources (always available; §8 adds the rest when PawnIO is installed):
-- [ ] **P1** CPU per-core **effective clock** without a driver: PDH "Processor Information\% Processor
+- [x] **P1** CPU per-core **effective clock** without a driver: PDH "Processor Information\% Processor
   Performance" × base frequency (and "Processor Frequency"); per-core utilization; current power plan.
-- [ ] **P1** **Record sensors during every benchmark**: sample clocks, temperatures, GPU clock/power/
+  *Done (M7): Sensors window, `core/hwread.*`. Utilization comes from `SystemProcessorPerformanceInformation`.*
+- [x] **P1** **Record sensors during every benchmark**: sample clocks, temperatures, GPU clock/power/
   util in the background and store per-test avg/max with the results (clock, max temp, "throttled?").
   Makes every number explainable and comparable — no other benchmark does this well.
-- [ ] **P1** GPU sensors (GPU-Z): core/memory clock, utilization per engine (PDH "GPU Engine"), VRAM used,
+  *Done (M7): `core/monitor.*`, `env[]` table in TOON, a line under each result. CPU temperature waits for §8.*
+- [x] **P1** GPU sensors (GPU-Z): core/memory clock, utilization per engine (PDH "GPU Engine"), VRAM used,
   power, fan, temperature; PCIe link speed/width current vs max (SetupAPI `DEVPKEY_PciDevice_*`, no driver).
-- [ ] **P1** Throttling indicators: effective clock vs max boost, power source changes, GPU perf-cap
-  reason where the API exposes it.
+  *Done (M7). The NVIDIA laptop driver reports a core clock only while the GPU is awake.*
+- [x] **P1** Throttling indicators: effective clock vs max boost, power source changes, GPU perf-cap
+  reason where the API exposes it. *Done (M7): clock drop ≥ 10 % within a phase, power source changes,
+  hot GPU. No driverless API exposes the GPU perf-cap reason (that's NVML / ADLX), so it's left out.*
 - [ ] **P2** Battery: charge/discharge rate in W, voltage, design vs full-charge capacity (wear), cycle
   count (`IOCTL_BATTERY_QUERY_STATUS` / `_INFORMATION`) — doubles as a system power meter on laptops.
 - [ ] **P2** Energy Metering Interface (`IOCTL_EMI_*`) power rails where the platform exposes them.
@@ -261,10 +265,11 @@ ZenTimings are good references for register addresses).
 - [ ] **P1** CPU: codename, microcode revision (registry "Update Revision"), base/boost clocks,
   full ISA flag list, cache associativity, P/E core map.
 - [ ] **P1** Motherboard / BIOS from SMBIOS types 0/1/2 (vendor, model, BIOS version and date), chipset
-  from PCI IDs.
+  from PCI IDs. *SMBIOS part done (M7); chipset still to do.*
 - [ ] **P1** Perf-relevant Windows state, with warnings: VBS / HVCI (memory integrity), Game Mode,
   Hardware-accelerated GPU scheduling, Core Isolation, Secure Boot, TPM, Resizable BAR, active power
-  overlay — these move benchmark numbers.
+  overlay — these move benchmark numbers. *Done (M7, `core/sysinfo_win.cpp`) except Resizable BAR, which
+  needs a D3D12 device (it wakes a sleeping laptop dGPU): read it in the GPU suite with the §9 GPU details.*
 - [ ] **P1** GPU details (GPU-Z): shader/CU count, bus width, memory type/size, driver version + date,
   D3D feature level / shader model, Vulkan version + extension list, ReBAR, HAGS, VRR.
 - [ ] **P2** Displays: EDID (model, native resolution, refresh range, HDR, VRR), connected adapter.
@@ -317,8 +322,10 @@ One number for "how fast is this PC overall", plus one per component, computed o
 - [ ] **P1** **Ranking view** (Cinebench ranking list): per test and for the score (§10), a bar chart of
   this run against the library's reference runs. Grow the library with many machines.
 - [ ] **P1** Run presets: Quick (~1 min), Standard, Extended, Sustained/thermal, Score (exactly the
-  tests the score needs) — one click.
-- [ ] **P1** Repeat N times: median, min, max and spread (CV %) per metric; flag noisy metrics.
+  tests the score needs) — one click. *Quick / Standard / Extended done (M7, `core/presets.*`, GUI combo,
+  CLI `--preset`); Sustained comes with §3 sustained mode, Score with §10.*
+- [x] **P1** Repeat N times: median, min, max and spread (CV %) per metric; flag noisy metrics.
+  *Done (M7): `repeat` setting / `--repeat`, `spread[]` table in TOON, values with CV ≥ 3 % marked.*
 - [ ] **P2** Automatic run history (every run saved under `results\history\`) and a trend chart per
   metric across runs (driver/BIOS/Windows update regressions).
 - [ ] **P2** Shareable output: render the results/compare table to PNG (CDM-style screenshot) and a

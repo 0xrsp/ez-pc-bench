@@ -408,6 +408,14 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   settings persistence (`%APPDATA%\ez-pc-bench\settings.ini`), compare against a saved JSON (GUI
   "Compare...", CLI `--compare`), baseline deltas also in "Copy text". Details in the decision log.
 
+- **M7 Context** (roadmap in [FUTURE.md](FUTURE.md)) — ✅ done 2026-11-11 on `dev`: run monitor (`core/monitor.*`,
+  readers in `core/hwread.*`) records CPU clock / load and the test GPU's clocks, load, temperature and
+  power per test (`env[]` in TOON, a short line under each result, CLI `[...]` line), with flags for clock
+  drop, power-source change and hot GPU. Windows state (VBS, memory integrity, Secure Boot, TPM, Game Mode,
+  HAGS per GPU), board / BIOS and GPU driver version in sysinfo. Run presets Quick / Standard / Extended and
+  repeat-N with median + spread (`spread[]` in TOON). Temperatures window became Sensors (per-core clock and
+  load, GPU clocks / load / VRAM / power / PCIe link).
+
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).
 
 ## 9. Benchmarking pitfalls (knowledge)
@@ -488,6 +496,18 @@ CrystalDiskInfo / Cinebench / Heaven / OCCT / HWiNFO etc. and its open decisions
 hardware scope, network, resident mode) are in [FUTURE.md](FUTURE.md) §0.
 
 ## 12. Decision log
+
+- 2026-11-11 (branches): day-to-day work on `dev`; `main` only gets finished work via `git merge --no-ff dev`.
+- 2026-11-11 (M7 run monitor):
+  - Sampled every 250 ms on a TIME_CRITICAL thread. CPU load from `SystemProcessorPerformanceInformation`; CPU
+    clock = utilization-weighted "% Processor Performance" x nominal clock over LPs ≥ 50 % busy. Averages are
+    time-weighted (samples get further apart under all-core load). The first sample of each test and of each
+    phase is skipped (rate counters span the previous one); clock drop is measured per phase (single-thread
+    boosts higher than all-core on purpose) and needs ≥ 9 samples.
+  - No CPU temperature: the ACPI zone stalls under load and doesn't follow the CPU here (TZ01 sat at 32 °C).
+  - Repeats run each test N times in a row (suite init once); the result keeps the first run's layout with
+    the median value, min / max / CV go to `g_spread`. Extended preset uses one disk pass per run, so a
+    median of 3 replaces the best of 3 at the same SSD wear.
 
 - 2026-11-11 (roadmap, details in [FUTURE.md](FUTURE.md)): kernel-level sensors (per-core CPU and RAM
   temperatures, package power, SPD, memory timings) will use the existing signed **PawnIO** driver, opt-in
@@ -671,6 +691,15 @@ hardware scope, network, resident mode) are in [FUTURE.md](FUTURE.md) §0.
   shaderInt16. NVIDIA exposes a dedicated transfer-only queue family.
 - Shared shader bugs found by the backend agents and fixed on main: `vs_scene` pitched the camera up (empty
   frame), `vs_drawcall` used the draw index as the grid column count (`% 0` on draw 0).
+- Driverless sensor timing with all 16 LPs busy at HIGHEST in HIGH_PRIORITY_CLASS (2026-11-11): PDH
+  "Processor Information" 0.1 ms idle → 120–260 ms; "Thermal Zone Information" → 5–20 **s**; the processor
+  performance-distribution query (class 100) ~230 ms; "GPU Engine" stays 0.5 ms; `SystemProcessorPerformance-
+  Information` 0.1–80 ms. They're served by OS worker threads that starve behind the benchmark threads.
+- Measuring the clock with our own dependent-add chain timed by the TSC is wrong under SMT load: with the
+  sibling running the imul test it read 1.2 GHz while throughput implied 2.45 GHz (int ALU sibling: correct).
+- D3DKMT node perf data: the 780M always reports core clock (0.8 GHz idle, max 2.7); the RTX 5060 Laptop
+  reports 0 when idle and ~2.35–2.6 GHz under load, memory 9.0 GHz (max 12.0), no power figure. PCIe:
+  RTX 5060 runs Gen 4 x8 (device capable of Gen 5 x16). NVIDIA driver is now 32.0.15.9649.
 - 2026-11-11: the PC hard-froze once during development (Kernel-Power 41, no low-memory event logged;
   two similar resets on 11/10 predate this project). No benchmark was running then. Precautions since:
   builds use `-- -j 6`, memory arenas capped to ¼ of free RAM, no parallel heavy runs.
