@@ -446,6 +446,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (strstr(ids, "smoke")) ui_set_dev(true);             // smoke tests are only visible in dev mode
             ui_select_only(ids);
         }
+        if (const wchar_t* g = wcsstr(cmdline, L"--gpu-present ")) {    // dev: on-screen GPU mode for this session
+            BenchParams* bp = ui_params();
+            g += 14;
+            bp->gpu_onscreen = !wcsncmp(g, L"windowed", 8) || !wcsncmp(g, L"fullscreen", 10);
+            if (bp->gpu_onscreen) bp->gpu_fullscreen = g[0] == L'f';
+        }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;

@@ -21,8 +21,10 @@ static Snapshot s_file;                         // what the ini holds (defaults 
 static Snapshot s_last;                         // state at the previous tick
 static bool s_started, s_dirty;
 static f64 s_dirty_since;
-// Command-line overrides (--duration, --light/--dark, --only): the ini keeps its value until the user changes it.
-static bool s_keep_duration, s_keep_theme, s_keep_selection;
+// Command-line overrides (--duration, --light/--dark, --only, --gpu-present): the ini keeps its value until the
+// user changes it.
+static bool s_keep_duration, s_keep_theme, s_keep_selection, s_keep_present;
+static bool s_start_onscreen, s_start_fullscreen;
 static u32 s_start_duration;
 static ThemeMode s_start_theme;
 static bool s_start_selected[MAX_BENCHES];
@@ -152,6 +154,10 @@ static void write_all(const Snapshot* cur) {
     if (s_keep_duration) out.params.duration_ms = s_file.params.duration_ms;
     if (s_keep_theme) out.theme = s_file.theme;
     if (s_keep_selection) memcpy(out.selected, s_file.selected, sizeof(out.selected));
+    if (s_keep_present) {
+        out.params.gpu_onscreen = s_file.params.gpu_onscreen;
+        out.params.gpu_fullscreen = s_file.params.gpu_fullscreen;
+    }
     const BenchParams* p = &out.params;
 
     static wchar_t buf[32768], old[32768];
@@ -217,11 +223,16 @@ void settings_tick(const BenchParams* p, const bool* selected) {
         s_keep_duration = s_start_duration != s_file.params.duration_ms;
         s_keep_theme = s_start_theme != s_file.theme;
         s_keep_selection = memcmp(s_start_selected, s_file.selected, g_bench_count) != 0;
+        s_start_onscreen = cur.params.gpu_onscreen;
+        s_start_fullscreen = cur.params.gpu_fullscreen;
+        s_keep_present = s_start_onscreen != s_file.params.gpu_onscreen || s_start_fullscreen != s_file.params.gpu_fullscreen;
         return;
     }
     if (s_keep_duration && cur.params.duration_ms != s_start_duration) s_keep_duration = false;
     if (s_keep_theme && cur.theme != s_start_theme) s_keep_theme = false;
     if (s_keep_selection && memcmp(cur.selected, s_start_selected, g_bench_count) != 0) s_keep_selection = false;
+    if (s_keep_present && (cur.params.gpu_onscreen != s_start_onscreen || cur.params.gpu_fullscreen != s_start_fullscreen))
+        s_keep_present = false;
     const f64 now = timer_now();
     if (!same(&cur, &s_last)) {
         s_last = cur;
