@@ -26,6 +26,7 @@ struct CompareUi {
     bool show_summary = true;
     bool library_request;       // "Library..." clicked: open the popup this frame
     bool lib_selected[256];
+    i32 set_open = -1;          // "Expand all" (1) / "Collapse all" (0) for the next table frame
     ImGuiTextFilter lib_filter;
 };
 static CompareUi s_cu;
@@ -238,13 +239,21 @@ static void value_cell(u32 row, u32 c, f32 delta_w) {
     ImGui::PopFont();
 }
 
-static void group_row(const char* title) {
+// Section header row (Summary, System, one per test): click anywhere on it to collapse / expand its rows.
+// Returns whether it is open. "Expand all" / "Collapse all" apply through s_cu.set_open for one frame.
+static bool group_row(const char* title) {
     ImGui::TableNextRow();
     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(g_pal.container));
     ImGui::TableSetColumnIndex(0);
     ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(title);
+    if (s_cu.set_open >= 0) ImGui::SetNextItemOpen(s_cu.set_open != 0);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.06f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.10f));
+    const bool open = ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAllColumns |
+                                                   ImGuiTreeNodeFlags_NoTreePushOnOpen);
+    ImGui::PopStyleColor(2);
     ImGui::PopFont();
+    return open;
 }
 
 // "Single thread", "Read @ 16 KiB", "One-way latency avg".
@@ -296,9 +305,10 @@ static void row_tooltip(u32 row) {
 }
 
 static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
-    group_row("Summary vs reference");
+    const bool open = group_row("Summary vs reference");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Performance change against the reference run: + = faster / better, also for latency and time.");
+    if (!open) return;
     CmpSummary sum[CMP_MAX_RUNS];
     bool have[CMP_MAX_RUNS];
     for (u32 c = 0; c < runs; ++c) have[c] = c != g_cmp.reference && compare_summary(c, nullptr, &sum[c]);
@@ -399,8 +409,7 @@ static void draw_table() {
     const u32 suite_count = suite_list(suites);
     if (s_cu.show_summary && runs > 1) draw_summary(runs, suites, suite_count);
 
-    if (s_cu.show_system) {
-        group_row("System");
+    if (s_cu.show_system && group_row("System")) {
         const CmpRun* ref = &g_cmp.runs[g_cmp.reference];
         for (u32 i = 0; i < CI_COUNT; ++i) {
             ImGui::TableNextRow();
@@ -422,15 +431,17 @@ static void draw_table() {
 
     const char* suite = s_cu.suite && s_cu.suite <= suite_count ? suites[s_cu.suite - 1] : nullptr;
     i32 last_test = -1;
+    bool test_open = true;
     char label[128];
     for (u32 i = 0; i < g_cmp.row_count; ++i) {
         const CmpRow* r = &g_cmp.rows[i];
         if (!row_visible(r, suite)) continue;
         const CmpTest* t = &g_cmp.tests[r->test];
         if ((i32)r->test != last_test) {
-            group_row(t->title);
+            test_open = group_row(t->title);
             last_test = r->test;
         }
+        if (!test_open) continue;
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         row_label(r, label, sizeof(label));
@@ -445,6 +456,7 @@ static void draw_table() {
         }
     }
     ImGui::EndTable();
+    s_cu.set_open = -1;
 }
 
 // ---- library ------------------------------------------------------------------------------------
@@ -603,6 +615,10 @@ void compare_ui_draw() {
     theme_checkbox("Summary", &s_cu.show_summary);
     ImGui::SameLine();
     theme_checkbox("System info", &s_cu.show_system);
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
+    if (theme_tab("Expand all", false)) s_cu.set_open = 1;
+    ImGui::SameLine(0.0f, 4.0f);
+    if (theme_tab("Collapse all", false)) s_cu.set_open = 0;
 
     ImGui::Spacing();
     theme_begin_panel("cmp_panel", ImVec2(0, 0), false);
