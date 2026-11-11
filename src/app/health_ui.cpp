@@ -1,152 +1,873 @@
-// Disk health window: one block per physical drive with a status chip, identity line, reasons and a grid
-// of health values (each with a hover explanation). Read on open and on Refresh, never during disk tests.
+// Disk health window (CrystalDiskInfo-style): a chip per drive, then for the selected drive the status,
+// an info panel and tabs for the SMART table, self-tests, NVMe details, history and thresholds / AAM / APM.
+// Read on open and on Refresh, never during disk tests.
 #include "app/health_ui.h"
 #include "app/theme.h"
 #include "core/bench.h"
 #include "core/disk_health.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/timer.h"
 #include "imgui.h"
+#include <windows.h>
+#include <objbase.h>
+#include <commdlg.h>
+#include <shellapi.h>
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
-static DiskHealth s_disks[PHYSDISK_MAX];
-static u32 s_count;
-static char s_read_at[32];
-static bool s_scanned;
+enum HealthTab : u8 { TAB_SMART, TAB_SELFTEST, TAB_NVME, TAB_HISTORY, TAB_SETTINGS, TAB_COUNT };
+static const char* const TAB_NAMES[TAB_COUNT] = { "S.M.A.R.T.", "Self-test", "NVMe details", "History", "Thresholds & features" };
+
+struct HealthUi {
+    DiskHealth disks[PHYSDISK_MAX];
+    u32 count, sel;
+    char read_at[32];
+    bool scanned, options_loaded, hide_serial;
+    HealthTab tab;
+    char message[200];          // result of the last action
+    f64 last_poll;
+    // History of the selected drive.
+    HealthSample hist[HEALTH_HISTORY_MAX];
+    u32 hist_count, hist_for;
+    HealthField hist_field;
+    // Confirmations.
+    i32 confirm_test;           // SelfTestKind waiting for a yes, -1 = none
+    i32 confirm_feature;        // 1 = AAM, 2 = APM, -1 = none
+    u8 confirm_value;
+    int aam_value, apm_value;
+    char report[256 * 1024];
+};
+static HealthUi s_ui;
 
 static bool disk_test_running() {
     const i32 cur = g_run.current.load(std::memory_order_relaxed);
     return runner_is_running() && cur >= 0 && g_benches[cur].suite == SUITE_DISK;
 }
 
+static DiskHealth* selected() { return s_ui.sel < s_ui.count ? &s_ui.disks[s_ui.sel] : nullptr; }
+
+static void load_history() {
+    const DiskHealth* h = selected();
+    s_ui.hist_count = h && h->key[0] ? health_history_load(h->key, s_ui.hist, HEALTH_HISTORY_MAX) : 0;
+    s_ui.hist_for = s_ui.sel;
+}
+
 static void scan() {
-    s_count = disk_health_scan(s_disks, PHYSDISK_MAX);
+    s_ui.count = disk_health_scan(s_ui.disks, PHYSDISK_MAX);
+    if (s_ui.sel >= s_ui.count) s_ui.sel = 0;
+    // Start on the first real drive (virtual disks have nothing to show).
+    if (s_ui.sel < s_ui.count && s_ui.disks[s_ui.sel].disk.virtual_disk)
+        for (u32 i = 0; i < s_ui.count; ++i)
+            if (!s_ui.disks[i].disk.virtual_disk) { s_ui.sel = i; break; }
     const time_t now = time(nullptr);
     struct tm t;
     localtime_s(&t, &now);
-    strftime(s_read_at, sizeof(s_read_at), "%H:%M:%S", &t);
-    s_scanned = true;
+    strftime(s_ui.read_at, sizeof(s_ui.read_at), "%H:%M:%S", &t);
+    s_ui.scanned = true;
+    s_ui.last_poll = timer_now();
+    load_history();
 }
 
 void health_ui_on_open() {
+    if (!s_ui.options_loaded) {
+        s_ui.options_loaded = true;
+        s_ui.hide_serial = health_ui_option("hide_serial", false);
+        s_ui.hist_field = HF_TEMP_C;
+        s_ui.confirm_test = s_ui.confirm_feature = -1;
+        s_ui.aam_value = s_ui.apm_value = 128;
+    }
     if (!disk_test_running()) scan();
 }
 
-static void format_bytes(char* buf, u32 size, u64 b) {
+static ImVec4 status_color(HealthStatus s) {
+    return s == HEALTH_GOOD ? g_pal.ok : s == HEALTH_CAUTION ? g_pal.warn : s == HEALTH_BAD ? g_pal.error : g_pal.outline;
+}
+
+static void bytes_text(char* buf, u32 size, u64 b) {
     if (b >= 1000000000000ull) snprintf(buf, size, "%.2f TB", b / 1e12);
     else snprintf(buf, size, "%.1f GB", b / 1e9);
 }
 
-// One label / value cell pair of the 4-column grid.
-static void cell(const char* label, const char* value, const char* help, ImVec4 color) {
+static void degrees(char* buf, u32 size, f32 c) { snprintf(buf, size, "%.0f \xC2\xB0\x43", c); }     // \x43 = 'C'
+
+// ---- actions ----------------------------------------------------------------------------------------
+
+static void copy_report() {
+    disk_health_report(s_ui.disks, s_ui.count, s_ui.hide_serial, s_ui.report, sizeof(s_ui.report));
+    ImGui::SetClipboardText(s_ui.report);
+    snprintf(s_ui.message, sizeof(s_ui.message), "Report copied to the clipboard.");
+}
+
+static void save_report() {
+    wchar_t path[MAX_PATH];
+    const time_t now = time(nullptr);
+    struct tm t;
+    localtime_s(&t, &now);
+    wcsftime(path, MAX_PATH, L"disk-health_%Y-%m-%d_%H%M.txt", &t);
+    OPENFILENAMEW ofn = { sizeof(ofn) };
+    ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
+    ofn.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt";
+    ofn.lpstrTitle = L"Save disk health report";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool picked = GetSaveFileNameW(&ofn) != 0;
+    if (SUCCEEDED(co)) CoUninitialize();
+    if (!picked) return;
+    const u32 len = disk_health_report(s_ui.disks, s_ui.count, s_ui.hide_serial, s_ui.report, sizeof(s_ui.report));
+    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    DWORD written = 0;
+    const bool ok = f != INVALID_HANDLE_VALUE && WriteFile(f, "\xEF\xBB\xBF", 3, &written, nullptr) &&
+                    WriteFile(f, s_ui.report, len, &written, nullptr) && written == len;
+    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+    snprintf(s_ui.message, sizeof(s_ui.message), ok ? "Report saved." : "Could not write the report file.");
+}
+
+// ---- drive chips ------------------------------------------------------------------------------------
+
+static void drive_chip(u32 i) {
+    const DiskHealth* h = &s_ui.disks[i];
+    char label[96], temp[24] = "";
+    if (h->have_temp) degrees(temp, sizeof(temp), h->temp_c);
+    snprintf(label, sizeof(label), "%s  %s", h->disk.letters[0] ? h->disk.letters : h->raid_member ? "RAID" : "Disk", temp);
+    char sub[32];
+    snprintf(sub, sizeof(sub), "%s", h->disk.virtual_disk ? "Virtual" : HEALTH_STATUS_NAMES[h->status]);
+    const f32 fs = ImGui::GetFontSize(), pad = fs * 0.7f, dot = fs * 0.32f;
+    const ImVec2 ls = ImGui::CalcTextSize(label), ss = ImGui::CalcTextSize(sub);
+    const ImVec2 size(pad * 2.0f + dot * 2.0f + fs * 0.5f + (ls.x > ss.x ? ls.x : ss.x), fs * 2.6f);
+    ImGui::PushID((int)i);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton("chip", size);
+    const bool sel = i == s_ui.sel, hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec4 bg = sel ? g_pal.primary_container : hov ? g_pal.container_high : g_pal.card;
+    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(bg), fs * 0.5f);
+    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(sel ? g_pal.primary : g_pal.outline_variant), fs * 0.5f);
+    const ImVec4 col = h->disk.virtual_disk ? g_pal.outline : status_color(h->status);
+    dl->AddCircleFilled(ImVec2(p.x + pad + dot, p.y + size.y * 0.5f), dot, ImGui::GetColorU32(col));
+    const f32 tx = p.x + pad + dot * 2.0f + fs * 0.5f;
+    dl->AddText(ImVec2(tx, p.y + fs * 0.25f), ImGui::GetColorU32(sel ? g_pal.on_primary_container : g_pal.on_surface), label);
+    dl->AddText(ImVec2(tx, p.y + fs * 1.3f), ImGui::GetColorU32(col), sub);
+    if (hov) {
+        char tip[160];
+        snprintf(tip, sizeof(tip), "%s\n%.0f GB  \xC2\xB7  %s", h->model[0] ? h->model : h->disk.model, h->disk.size_bytes / 1e9, h->disk.bus);
+        ImGui::SetTooltip("%s", tip);
+    }
+    if (clicked && s_ui.sel != i) {
+        s_ui.sel = i;
+        load_history();
+    }
+    ImGui::PopID();
+}
+
+// ---- header + info ------------------------------------------------------------------------------------
+
+static void status_box(const char* title, const char* value, ImVec4 col, f32 w) {
+    const f32 fs = ImGui::GetFontSize();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 size(w, fs * 3.2f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.16f)), fs * 0.5f);
+    dl->AddText(ImVec2(p.x + fs * 0.7f, p.y + fs * 0.35f), ImGui::GetColorU32(g_pal.on_surface_variant), title);
+    ImGui::PushFont(g_fonts.medium, theme_font_size(1.3f));
+    dl->AddText(ImVec2(p.x + fs * 0.7f, p.y + fs * 1.4f), ImGui::GetColorU32(col), value);
+    ImGui::PopFont();
+    ImGui::Dummy(size);
+}
+
+// One label / value pair of the info grid; `help` on hover of either.
+static void cell(const char* label, const char* value, const char* help) {
     ImGui::TableNextColumn();
     ImGui::TextDisabled("%s", label);
-    theme_help(help);
+    if (help) theme_help(help);
     ImGui::TableNextColumn();
-    ImGui::TextColored(color, "%s", value);
-    theme_help(help);
+    ImGui::TextUnformatted(value && value[0] ? value : "----");
+    if (help) theme_help(help);
 }
 
-static void status_chip(HealthStatus s) {
-    static const char* const names[] = { "Unknown", "Good", "Warning", "Critical" };
-    const ImVec4 col = s == HEALTH_GOOD ? g_pal.ok : s == HEALTH_WARNING ? g_pal.warn : s == HEALTH_CRITICAL ? g_pal.error
-                                                                                                          : g_pal.outline;
-    const char* text = names[s];
-    const ImVec2 ts = ImGui::CalcTextSize(text);
-    const f32 pad = ImGui::GetFontSize() * 0.6f;
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const ImVec2 sz(ts.x + pad * 2.0f, ts.y + pad * 0.5f);
-    ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y),
-                                              ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.16f)), sz.y * 0.5f);
-    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + pad, p.y + pad * 0.25f), ImGui::GetColorU32(col), text);
-    ImGui::Dummy(sz);
-}
-
-static void draw_disk(const DiskHealth* h) {
-    const PhysDisk* d = &h->disk;
-    ImGui::PushFont(g_fonts.medium, theme_font_size(1.1f));
-    ImGui::Text("Disk %u  \xC2\xB7  %s", d->number, d->model);
+static void draw_header(DiskHealth* h) {
+    char v[160];
+    ImGui::PushFont(g_fonts.medium, theme_font_size(1.25f));
+    ImGui::Text("%s", h->model[0] ? h->model : h->disk.model);
     ImGui::PopFont();
-    ImGui::SameLine(0.0f, ImGui::GetFontSize());
-    status_chip(h->status);
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%.1f GB  \xC2\xB7  Disk %u", h->disk.size_bytes / 1e9, h->disk.number);
 
-    char ident[256];
-    snprintf(ident, sizeof(ident), "%s  \xC2\xB7  %.0f GB%s%s%s%s%s%s", d->bus, d->size_bytes / 1e9,
-             d->letters[0] ? "  \xC2\xB7  " : "", d->letters, d->firmware[0] ? "  \xC2\xB7  firmware " : "", d->firmware,
-             d->serial[0] ? "  \xC2\xB7  serial " : "", d->serial);
-    ImGui::TextDisabled("%s", ident);
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextUnformatted(h->status_text);
-    ImGui::PopTextWrapPos();
-
-    if (!h->have_nvme && !h->have_temp) return;
-    ImGui::Spacing();
-    if (!ImGui::BeginTable("vals", 4, ImGuiTableFlags_SizingStretchProp)) return;
-    ImGui::TableSetupColumn("l1", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-    ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-    ImGui::TableSetupColumn("l2", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-    ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-    char v[64];
-    const ImVec4 normal = g_pal.on_surface;
-    if (h->have_nvme) {
-        // Life used: value + bar of the remaining endurance.
-        ImGui::TableNextColumn();
-        const char* life_help = "How much of the drive's rated write endurance has been used, as estimated by the drive "
-                                "itself. It can go past 100%; most drives keep working well beyond it, but it's a "
-                                "sign to keep backups current.";
-        ImGui::TextDisabled("Life used");
-        theme_help(life_help);
-        ImGui::TableNextColumn();
-        snprintf(v, sizeof(v), "%u%%", h->used_pct);
-        ImGui::TextColored(h->used_pct >= 90 ? g_pal.warn : normal, "%s", v);
-        theme_help(life_help);
-        ImGui::SameLine();
-        const f32 left = h->used_pct >= 100 ? 0.0f : (100 - h->used_pct) / 100.0f;
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ImGui::GetTextLineHeight() * 0.35f);
-        theme_progress(left, ImGui::GetFontSize() * 0.3f, ImGui::GetContentRegionAvail().x * 0.9f);
-
-        snprintf(v, sizeof(v), "%u%% (threshold %u%%)", h->spare_pct, h->spare_threshold_pct);
-        cell("Available spare", v, "Spare flash blocks left to replace worn-out ones, as a percentage. The drive warns "
-                                   "when it falls below its threshold.",
-             h->spare_pct < h->spare_threshold_pct ? g_pal.error : normal);
-    }
+    const f32 fs = ImGui::GetFontSize();
+    if (h->life_left_pct >= 0) snprintf(v, sizeof(v), "%s  %d %%", HEALTH_STATUS_NAMES[h->status], h->life_left_pct);
+    else snprintf(v, sizeof(v), "%s", HEALTH_STATUS_NAMES[h->status]);
+    status_box("Health status", v, status_color(h->status), fs * 11.0f);
+    theme_help("Good / Caution / Bad like CrystalDiskInfo. Bad: the drive itself reports a failure (SMART threshold "
+               "exceeded, NVMe critical warning, spare below threshold, read-only). Caution: reallocated / pending / "
+               "uncorrectable sectors, media errors or little rated life left, using the thresholds in \"Thresholds & "
+               "features\". The percentage is the remaining rated life the drive estimates.");
+    ImGui::SameLine();
+    char t[32] = "----";
+    ImVec4 tc = g_pal.on_surface;
     if (h->have_temp) {
-        if (h->warn_c > 0.0f) snprintf(v, sizeof(v), "%.0f \xC2\xB0" "C (warns at %.0f)", h->temp_c, h->warn_c);
-        else snprintf(v, sizeof(v), "%.0f \xC2\xB0" "C", h->temp_c);
-        cell("Temperature", v, "The drive's own temperature sensor (NVMe: composite temperature). Drives slow down to "
-                               "protect themselves when they reach their warning temperature.",
-             h->warn_c > 0.0f && h->temp_c >= h->warn_c ? g_pal.error : normal);
+        degrees(t, sizeof(t), h->temp_c);
+        tc = h->warn_c > 0 && h->temp_c >= h->warn_c ? g_pal.error : h->temp_c >= 60 ? g_pal.warn : g_pal.ok;
     }
-    if (h->have_nvme) {
-        format_bytes(v, sizeof(v), h->data_written_bytes);
-        cell("Data written", v, "Total data the computer has written to the drive over its life (decimal units). "
-                                "Endurance ratings (TBW) are in the same units.", normal);
-        format_bytes(v, sizeof(v), h->data_read_bytes);
-        cell("Data read", v, "Total data the computer has read from the drive over its life.", normal);
-        snprintf(v, sizeof(v), "%llu h (%.0f days)", h->power_on_hours, h->power_on_hours / 24.0);
-        cell("Power-on time", v, "Hours the drive has been powered on, not counting low-power idle states.", normal);
-        snprintf(v, sizeof(v), "%llu", h->power_cycles);
-        cell("Power cycles", v, "How many times the drive has been powered on.", normal);
-        snprintf(v, sizeof(v), "%llu", h->unsafe_shutdowns);
-        cell("Unsafe shutdowns", v, "Power losses without a proper shutdown (battery ran out, forced power-off, crash). "
-                                    "Usually harmless, but each one risks losing data still in the drive's cache.",
-             normal);
-        snprintf(v, sizeof(v), "%llu", h->media_errors);
-        cell("Media errors", v, "Data the drive could not recover (uncorrectable ECC, checksum failures). Should be 0; "
-                                "any other value is a reason to back up and keep an eye on the drive.",
-             h->media_errors ? g_pal.error : normal);
-        snprintf(v, sizeof(v), "%llu", h->error_log_entries);
-        cell("Error log entries", v, "Entries in the drive's error log over its life. Often non-zero on healthy drives "
-                                     "(e.g. unsupported commands sent by tools); media errors are what matter.",
-             normal);
-        snprintf(v, sizeof(v), "%u min / %u min", h->warn_temp_minutes, h->crit_temp_minutes);
-        cell("Time too hot", v, "Minutes spent at or above the drive's warning temperature / critical temperature over "
-                                "its life.",
-             h->crit_temp_minutes ? g_pal.warn : normal);
+    status_box("Temperature", t, tc, fs * 8.0f);
+    if (h->warn_c > 0) {
+        char w[32], c[32];
+        degrees(w, sizeof(w), h->warn_c);
+        snprintf(v, sizeof(v), "The drive's own sensor. It throttles from its warning temperature (%s)", w);
+        if (h->crit_c > 0) {
+            degrees(c, sizeof(c), h->crit_c);
+            snprintf(v + strlen(v), sizeof(v) - strlen(v), "; critical at %s", c);
+        }
+        snprintf(v + strlen(v), sizeof(v) - strlen(v), ".");
+        theme_help(v);
+    }
+    ImGui::SameLine(0.0f, fs);
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(h->status >= HEALTH_CAUTION ? status_color(h->status) : g_pal.on_surface, "%s", h->status_text);
+    ImGui::PopTextWrapPos();
+    if (h->source[0]) ImGui::TextDisabled("Read via %s%s", h->source, h->full_access ? "" : " (no administrator rights)");
+    ImGui::EndGroup();
+}
+
+static void draw_info(DiskHealth* h) {
+    char v[160], a[64];
+    if (!ImGui::BeginTable("info", 4, ImGuiTableFlags_SizingStretchProp)) return;
+    ImGui::TableSetupColumn("l1", ImGuiTableColumnFlags_WidthStretch, 0.75f);
+    ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+    ImGui::TableSetupColumn("l2", ImGuiTableColumnFlags_WidthStretch, 0.75f);
+    ImGui::TableSetupColumn("v2", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+    cell("Firmware", h->firmware, nullptr);
+    cell("Serial number", s_ui.hide_serial && h->serial[0] ? "********" : h->serial, "Hide it with \"Hide serial\" before taking screenshots.");
+    cell("Interface", h->interface_name, h->loc.controller[0] ? h->loc.controller : nullptr);
+    snprintf(v, sizeof(v), "%s | %s", h->transfer_cur[0] ? h->transfer_cur : "----", h->transfer_max[0] ? h->transfer_max : "----");
+    cell("Transfer mode", v, "Current | maximum link. NVMe: PCIe generation and lanes of the drive's link; SATA: the negotiated "
+                             "speed. A current link below the maximum costs sequential speed (wrong slot, chipset lanes, "
+                             "power saving).");
+    cell("Standard", h->standard, nullptr);
+    if (h->rotation == 1) snprintf(v, sizeof(v), "---- (SSD)");
+    else if (h->rotation) snprintf(v, sizeof(v), "%u RPM", h->rotation);
+    else v[0] = 0;
+    cell("Rotation rate", v, nullptr);
+    if (h->have_power_cycles) snprintf(v, sizeof(v), "%llu", h->power_cycles);
+    else v[0] = 0;
+    cell("Power on count", v, "How many times the drive has been powered on.");
+    if (h->have_power_on_hours) snprintf(v, sizeof(v), "%llu h  (%.0f days)", h->power_on_hours, h->power_on_hours / 24.0);
+    else v[0] = 0;
+    cell("Power on hours", v, "Hours powered on, not counting low-power idle states.");
+    v[0] = 0;
+    if (h->have_host_reads) bytes_text(v, sizeof(v), h->host_reads_bytes);
+    cell("Host reads", v, "Data the computer read from the drive over its life (decimal units).");
+    v[0] = 0;
+    if (h->have_host_writes) bytes_text(v, sizeof(v), h->host_writes_bytes);
+    cell("Host writes", v, "Data the computer wrote to the drive over its life. Endurance ratings (TBW) are in the same units.");
+    v[0] = 0;
+    if (h->have_nand_writes) bytes_text(v, sizeof(v), h->nand_writes_bytes);
+    cell("NAND writes", v, "Data the controller wrote to flash, including garbage collection and wear levelling. Only some "
+                           "drives report it (most NVMe drives don't); NAND / host writes is the write amplification.");
+    v[0] = 0;
+    if (h->buffer_bytes) snprintf(v, sizeof(v), "%u KB", (u32)(h->buffer_bytes / 1024));
+    cell("Buffer size", v, "Cache size from IDENTIFY (an obsolete field: most drives report 0). DRAM-less NVMe drives borrow "
+                           "host memory instead (HMB, listed under Features).");
+    ImGui::EndTable();
+
+    ImGui::TextDisabled("Features");
+    ImGui::SameLine();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(h->features[0] ? h->features : "----");
+    ImGui::PopTextWrapPos();
+    if (h->part_count) {
+        char parts[1024] = "";
+        for (u32 i = 0; i < h->part_count; ++i) {
+            const DiskPartition* p = &h->parts[i];
+            snprintf(v, sizeof(v), "#%u %s %.1f GB", p->number, p->type, p->size / 1e9);
+            a[0] = 0;
+            if (p->letter) snprintf(a, sizeof(a), " %c:", p->letter);
+            const size_t len = strlen(parts);
+            snprintf(parts + len, sizeof(parts) - len, "%s%s%s%s%s%s%s", i ? "   \xC2\xB7   " : "", v, a, p->fs[0] ? " " : "", p->fs,
+                     p->label[0] ? " " : "", p->label);
+        }
+        ImGui::TextDisabled("Partitions (%s)", h->part_style);
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(parts);
+        ImGui::PopTextWrapPos();
+    }
+}
+
+// ---- SMART table ------------------------------------------------------------------------------------
+
+static void draw_smart(DiskHealth* h) {
+    if (!h->row_count) {
+        ImGui::PushTextWrapPos(0.0f);
+        if (h->disk.virtual_disk) ImGui::TextDisabled("Virtual disks have no SMART data.");
+        else if (h->proto == HPROTO_ATA && !h->full_access)
+            ImGui::TextDisabled("SATA SMART attributes need administrator rights (restart EzPcBench and accept the prompt). "
+                                "What Windows hands out without them is shown above.");
+        else ImGui::TextDisabled("This drive reports no SMART attributes to Windows.");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+    const bool ata = h->proto == HPROTO_ATA;
+    const u32 cols = ata ? 8 : 5;
+    if (!ImGui::BeginTable("smart", (int)cols, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg))
+        return;
+    const f32 fs = ImGui::GetFontSize();
+    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, fs * 0.8f);
+    ImGui::TableSetupColumn("ID");
+    ImGui::TableSetupColumn("Attribute", ImGuiTableColumnFlags_WidthStretch);
+    if (ata) {
+        ImGui::TableSetupColumn("Current");
+        ImGui::TableSetupColumn("Worst");
+        ImGui::TableSetupColumn("Threshold");
+    }
+    ImGui::TableSetupColumn("Raw values");
+    ImGui::TableSetupColumn("Decoded", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
+    for (u32 i = 0; i < h->row_count; ++i) {
+        const SmartRow* r = &h->rows[i];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const f32 d = fs * 0.28f;
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + d + 1.0f, p.y + ImGui::GetTextLineHeight() * 0.5f), d,
+                                                    ImGui::GetColorU32(status_color(r->level)));
+        ImGui::TableNextColumn();
+        theme_push_numbers();
+        ImGui::Text("%02X", r->id);
+        ImGui::PopFont();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(r->name);
+        if (ata && r->flags) {
+            char tip[160];
+            snprintf(tip, sizeof(tip), "Flags 0x%04X: %s%s%s", r->flags, (r->flags & 1) ? "pre-failure (a value at or below the threshold "
+                                                                                         "means the drive is failing)" : "advisory / old-age",
+                     (r->flags & 2) ? ", updated online" : "", "");
+            theme_help(tip);
+        }
+        theme_push_numbers();
+        if (ata) {
+            ImGui::TableNextColumn();
+            ImGui::Text("%3u", r->current);
+            ImGui::TableNextColumn();
+            ImGui::Text("%3u", r->worst);
+            ImGui::TableNextColumn();
+            ImGui::Text("%3u", r->threshold);
+        }
+        ImGui::TableNextColumn();
+        char raw[32] = {};
+        for (u32 k = 0; k < 6; ++k) {       // most significant byte first
+            const u32 idx = 5 - k;
+            snprintf(raw + 2 * k, 3, "%02X", idx < r->raw_len ? r->raw[idx] : 0);
+        }
+        ImGui::TextUnformatted(raw);
+        ImGui::PopFont();
+        ImGui::TableNextColumn();
+        if (r->level >= HEALTH_CAUTION) ImGui::TextColored(status_color(r->level), "%s", r->decoded);
+        else ImGui::TextUnformatted(r->decoded);
+    }
+    ImGui::EndTable();
+    if (ata && h->smart_status >= 0)
+        ImGui::TextDisabled("SMART RETURN STATUS: %s", h->smart_status ? "threshold exceeded" : "OK");
+    if (ata && h->ata_error_count) ImGui::TextColored(g_pal.warn, "ATA error log: %u errors logged over the drive's life", h->ata_error_count);
+    ImGui::TextDisabled("Attribute names: %s table", SMART_VENDOR_NAMES[h->vendor]);
+}
+
+// ---- self-tests -------------------------------------------------------------------------------------------
+
+static const char* const TEST_NAMES[] = { "Short", "Extended", "Conveyance", "Abort" };
+
+static void draw_selftest(DiskHealth* h) {
+    ImGui::PushTextWrapPos(0.0f);
+    if (!h->can_self_test) {
+        ImGui::TextDisabled("%s", h->proto == HPROTO_NONE || h->disk.virtual_disk ? "Self-tests need a drive with SMART / NVMe health data."
+                                                                                  : "This drive doesn't report self-test support.");
+        ImGui::PopTextWrapPos();
+        return;
+    }
+    ImGui::TextDisabled("Self-tests run inside the drive: it reads (never writes) its own media and electronics while "
+                        "you keep using the PC, a bit slower. They only start when you click a button below.");
+    ImGui::PopTextWrapPos();
+    const bool admin = g_sys.elevated;
+    const bool running = h->test_progress >= 0;
+    const bool busy = disk_test_running();
+    struct { SelfTestKind kind; bool can; u16 minutes; } tests[] = {
+        { SELFTEST_SHORT, h->can_short, h->minutes_short },
+        { SELFTEST_EXTENDED, h->can_extended, h->minutes_extended },
+        { SELFTEST_CONVEYANCE, h->can_conveyance, h->minutes_conveyance },
+    };
+    for (u32 i = 0; i < ARRAY_COUNT(tests); ++i) {
+        if (!tests[i].can) continue;
+        char label[64];
+        if (tests[i].minutes) snprintf(label, sizeof(label), "%s test (~%u min)", TEST_NAMES[tests[i].kind], tests[i].minutes);
+        else snprintf(label, sizeof(label), "%s test", TEST_NAMES[tests[i].kind]);
+        ImGui::BeginDisabled(!admin || running || busy);
+        if (theme_button(label)) s_ui.confirm_test = tests[i].kind;
+        ImGui::EndDisabled();
+        theme_help(!admin ? "Starting a self-test needs administrator rights."
+                   : tests[i].kind == SELFTEST_SHORT    ? "Quick check of the electronics and a sample of the media (a minute or two)."
+                   : tests[i].kind == SELFTEST_EXTENDED ? "Reads the whole surface / all flash. Takes long; the drive is slower meanwhile."
+                                                         : "Checks for damage from transport (HDDs).");
+        ImGui::SameLine();
+    }
+    ImGui::BeginDisabled(!admin || !running);
+    if (theme_button("Abort")) {
+        char err[160];
+        if (disk_selftest_start(h, SELFTEST_ABORT, err, sizeof(err))) snprintf(s_ui.message, sizeof(s_ui.message), "Self-test aborted.");
+        else snprintf(s_ui.message, sizeof(s_ui.message), "Abort failed: %s", err);
+    }
+    ImGui::EndDisabled();
+    if (!admin) {
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(g_pal.warn, "Needs administrator rights.");
+    }
+    if (running) {
+        ImGui::Text("%s test running: %d %%", h->test_running, h->test_progress);
+        theme_progress(h->test_progress / 100.0f, ImGui::GetFontSize() * 0.35f, ImGui::GetFontSize() * 20.0f);
+    }
+
+    ImGui::Spacing();
+    if (!h->test_count) {
+        ImGui::TextDisabled("Self-test log: no tests recorded.");
+        return;
+    }
+    ImGui::TextDisabled("Self-test log (newest first)");
+    if (!ImGui::BeginTable("tests", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) return;
+    ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+    ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+    ImGui::TableSetupColumn("At power-on hour", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+    ImGui::TableSetupColumn("First failing LBA", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+    ImGui::TableHeadersRow();
+    for (u32 i = 0; i < h->test_count; ++i) {
+        const SelfTestEntry* e = &h->tests[i];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(e->kind);
+        ImGui::TableNextColumn();
+        if (e->failed) ImGui::TextColored(g_pal.error, "%s", e->result);
+        else ImGui::TextUnformatted(e->result);
+        ImGui::TableNextColumn();
+        ImGui::Text("%llu", e->hours);
+        ImGui::TableNextColumn();
+        if (e->lba_valid) ImGui::Text("%llu", e->lba);
+        else ImGui::TextDisabled("-");
     }
     ImGui::EndTable();
 }
+
+static void draw_confirmations(DiskHealth* h) {
+    if (s_ui.confirm_test >= 0) ImGui::OpenPopup("Start self-test?");
+    if (s_ui.confirm_feature >= 0) ImGui::OpenPopup("Change drive setting?");
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 30.0f, 0.0f));
+    if (ImGui::BeginPopupModal("Start self-test?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        const SelfTestKind k = (SelfTestKind)(s_ui.confirm_test < 0 ? 0 : s_ui.confirm_test);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::Text("Start a %s self-test on %s?", k == SELFTEST_SHORT ? "short" : k == SELFTEST_EXTENDED ? "extended" : "conveyance", h->model);
+        ImGui::TextDisabled("The drive tests itself in the background and doesn't change any data. It may be slower until "
+                            "the test ends; you can abort it at any time. Disk benchmarks during the test give low numbers.");
+        ImGui::PopTextWrapPos();
+        if (theme_button_primary("Start")) {
+            char err[160];
+            if (disk_selftest_start(h, k, err, sizeof(err))) snprintf(s_ui.message, sizeof(s_ui.message), "%s self-test started.", TEST_NAMES[k]);
+            else snprintf(s_ui.message, sizeof(s_ui.message), "Could not start the self-test: %s", err);
+            s_ui.last_poll = timer_now();
+            s_ui.confirm_test = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            s_ui.confirm_test = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 30.0f, 0.0f));
+    if (ImGui::BeginPopupModal("Change drive setting?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        const bool aam = s_ui.confirm_feature == 1;
+        const u8 value = s_ui.confirm_value;
+        ImGui::PushTextWrapPos(0.0f);
+        if (value) ImGui::Text("Set %s on %s to %u (0x%02X)?", aam ? "AAM" : "APM", h->model, value, value);
+        else ImGui::Text("Disable %s on %s?", aam ? "AAM" : "APM", h->model);
+        ImGui::TextDisabled("%s The drive keeps the setting until it is power-cycled; EzPcBench doesn't reapply it at boot.",
+                            aam ? "AAM trades seek speed for noise." : "APM trades performance for power: low values let the "
+                                                                       "drive park heads / spin down, which adds load cycles.");
+        ImGui::PopTextWrapPos();
+        if (theme_button_primary("Apply")) {
+            char err[160];
+            const bool ok = aam ? disk_set_aam(h, value, err, sizeof(err)) : disk_set_apm(h, value, err, sizeof(err));
+            snprintf(s_ui.message, sizeof(s_ui.message), ok ? "%s updated." : "%s change failed: %s", aam ? "AAM" : "APM", err);
+            s_ui.confirm_feature = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            s_ui.confirm_feature = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+// ---- NVMe details ---------------------------------------------------------------------------------------
+
+static void hex_dump(const char* id, const u8* data, u32 size) {
+    const f32 h = ImGui::GetTextLineHeightWithSpacing() * 14.0f;
+    ImGui::BeginChild(id, ImVec2(0.0f, h), ImGuiChildFlags_Borders);
+    theme_push_numbers();
+    ImGuiListClipper clip;
+    clip.Begin((int)(size / 16));
+    while (clip.Step()) {
+        for (int line = clip.DisplayStart; line < clip.DisplayEnd; ++line) {
+            char text[128];
+            int n = snprintf(text, sizeof(text), "%04X  ", line * 16);
+            for (u32 k = 0; k < 16; ++k) n += snprintf(text + n, sizeof(text) - n, "%02X%s", data[line * 16 + k], k == 7 ? "  " : " ");
+            n += snprintf(text + n, sizeof(text) - n, " ");
+            for (u32 k = 0; k < 16; ++k) {
+                const u8 c = data[line * 16 + k];
+                text[n++] = c >= 0x20 && c < 0x7F ? (char)c : '.';
+            }
+            text[n] = 0;
+            ImGui::TextUnformatted(text);
+        }
+    }
+    ImGui::PopFont();
+    ImGui::EndChild();
+}
+
+static void kv(const char* k, const char* fmt, ...) {
+    ImGui::TableNextColumn();
+    ImGui::TextDisabled("%s", k);
+    ImGui::TableNextColumn();
+    char v[160];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(v, sizeof(v), fmt, a);
+    va_end(a);
+    ImGui::TextUnformatted(v);
+}
+
+static void draw_nvme(DiskHealth* h) {
+    if (h->proto != HPROTO_NVME || !h->have_nvme_id) {
+        ImGui::TextDisabled("Only for NVMe drives.");
+        return;
+    }
+    const u8* id = h->nvme_id;
+    auto le16 = [](const u8* p) { return (u32)(p[0] | (p[1] << 8)); };
+    auto le32 = [](const u8* p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); };
+    if (ImGui::BeginTable("nvme", 4, ImGuiTableFlags_SizingStretchProp)) {
+        kv("PCI vendor / subsystem", "%04X / %04X", le16(id), le16(id + 2));
+        kv("IEEE OUI", "%02X%02X%02X", id[75], id[74], id[73]);
+        kv("Controller id", "%u", le16(id + 78));
+        kv("Namespaces", "%u", le32(id + 516));
+        kv("Max data transfer", id[77] ? "%u KiB (with 4 KiB pages)" : "no limit", id[77] ? (1u << id[77]) * 4 : 0);
+        kv("LBA size", "%u bytes", h->logical_sector ? h->logical_sector : 512);
+        char w[32], c[32];
+        degrees(w, sizeof(w), h->warn_c);
+        degrees(c, sizeof(c), h->crit_c);
+        kv("Warning / critical temp", "%s / %s", w, c);
+        kv("Extended self-test", h->minutes_extended ? "%u min" : "not reported", h->minutes_extended);
+        kv("RTD3 resume / entry", "%u / %u ms", le32(id + 84) / 1000, le32(id + 88) / 1000);
+        kv("Host memory buffer", le32(id + 272) ? "%u MiB preferred, %u MiB min" : "not used", le32(id + 272) * 4 / 1024, le32(id + 276) * 4 / 1024);
+        kv("Error log entries", "%u kept", id[262] + 1u);
+        kv("Firmware slots", "%u%s", (id[260] >> 1) & 7, (id[260] & 1) ? " (slot 1 read-only)" : "");
+        // Features (Get Features dword 0).
+        if (h->feature_ok & (1u << 0x06)) kv("Volatile write cache", "%s", (h->feature[0x06] & 1) ? "enabled" : "disabled");
+        if (h->feature_ok & (1u << 0x0C)) kv("APST (autonomous power states)", "%s", (h->feature[0x0C] & 1) ? "enabled" : "disabled");
+        if (h->feature_ok & (1u << 0x02)) kv("Power state now", "PS%u%s", h->feature[0x02] & 0x1F, (h->feature[0x02] >> 5) & 7 ? " (workload hint)" : "");
+        if (h->feature_ok & (1u << 0x04)) {
+            const u32 k = h->feature[0x04] & 0xFFFF;
+            kv("Temperature threshold", "%d \xC2\xB0\x43", (i32)k - 273);
+        }
+        if (h->feature_ok & (1u << 0x10)) {
+            const u32 f = h->feature[0x10];
+            if (f) kv("Host thermal management", "TMT1 %d \xC2\xB0\x43, TMT2 %d \xC2\xB0\x43", (i32)(f >> 16) - 273, (i32)(f & 0xFFFF) - 273);
+            else kv("Host thermal management", "off");
+        }
+        if (h->feature_ok & (1u << 0x01)) kv("Arbitration burst", "%u", 1u << (h->feature[0x01] & 7));
+        if (h->feature_ok & (1u << 0x08)) kv("Interrupt coalescing", "%u x 100 us, %u entries", (h->feature[0x08] >> 8) & 0xFF, (h->feature[0x08] & 0xFF) + 1);
+        ImGui::EndTable();
+    }
+
+    if (h->have_nvme_fw) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Firmware slots");
+        const u32 slots = (id[260] >> 1) & 7;
+        for (u32 s = 0; s < slots && s < 7; ++s) {
+            char rev[9] = {};
+            memcpy(rev, h->nvme_fw + 8 + 8 * s, 8);
+            for (int k = 7; k >= 0 && (rev[k] == ' ' || rev[k] == 0); --k) rev[k] = 0;
+            ImGui::SameLine(0.0f, ImGui::GetFontSize());
+            const bool active = (h->nvme_fw[0] & 7) == s + 1;
+            if (rev[0]) ImGui::TextColored(active ? g_pal.primary : g_pal.on_surface, "%u: %s%s", s + 1, rev, active ? " (active)" : "");
+            else ImGui::TextDisabled("%u: empty", s + 1);
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Power states");
+    theme_help("From Identify Controller. Non-operational states are deep sleep; their exit latency is the delay before the "
+               "first I/O after idle (APST / Windows picks when to enter them).");
+    if (ImGui::BeginTable("ps", 5, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("State");
+        ImGui::TableSetupColumn("Max power");
+        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Entry latency");
+        ImGui::TableSetupColumn("Exit latency");
+        ImGui::TableHeadersRow();
+        for (u32 i = 0; i < h->power_state_count; ++i) {
+            const NvmePowerState* p = &h->power_states[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("PS%u", i);
+            ImGui::TableNextColumn(); ImGui::Text(p->max_watts >= 0.1f ? "%.2f W" : "%.4f W", p->max_watts);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(p->non_operational ? "non-operational" : "operational");
+            ImGui::TableNextColumn(); ImGui::Text("%u \xC2\xB5s", p->entry_us);
+            ImGui::TableNextColumn(); ImGui::Text("%u \xC2\xB5s", p->exit_us);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    if (!h->error_count) {
+        ImGui::TextDisabled("Error information log: empty.");
+    } else {
+        ImGui::TextDisabled("Error information log (%u entries)", h->error_count);
+        if (ImGui::BeginTable("err", 6, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Error #");
+            ImGui::TableSetupColumn("Queue");
+            ImGui::TableSetupColumn("Command id");
+            ImGui::TableSetupColumn("Status");
+            ImGui::TableSetupColumn("Namespace");
+            ImGui::TableSetupColumn("LBA");
+            ImGui::TableHeadersRow();
+            for (u32 i = 0; i < h->error_count; ++i) {
+                const NvmeErrorEntry* e = &h->errors[i];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::Text("%llu", e->count);
+                ImGui::TableNextColumn(); ImGui::Text("%u", e->sqid);
+                ImGui::TableNextColumn(); ImGui::Text("%u", e->cmdid);
+                ImGui::TableNextColumn(); ImGui::Text("0x%04X", e->status);
+                ImGui::TableNextColumn(); ImGui::Text("%u", e->nsid);
+                ImGui::TableNextColumn(); ImGui::Text("%llu", e->lba);
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Identify Controller (raw)")) hex_dump("idc", h->nvme_id, 4096);
+    if (h->have_nvme_ns && ImGui::CollapsingHeader("Identify Namespace 1 (raw)")) hex_dump("idn", h->nvme_ns, 4096);
+    if (h->have_nvme_health && ImGui::CollapsingHeader("SMART / Health log (raw)")) hex_dump("hlog", h->nvme_health, 512);
+}
+
+// ---- history --------------------------------------------------------------------------------------------
+
+static void plot(const HealthSample* s, u32 n, HealthField f) {
+    const f32 fs = ImGui::GetFontSize();
+    const ImVec2 avail(ImGui::GetContentRegionAvail().x, fs * 14.0f);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("plot", avail);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    f64 lo = 1e300, hi = -1e300;
+    i64 t0 = 0, t1 = 0;
+    u32 valid = 0;
+    for (u32 i = 0; i < n; ++i) {
+        if (!isfinite(s[i].v[f])) continue;
+        lo = s[i].v[f] < lo ? s[i].v[f] : lo;
+        hi = s[i].v[f] > hi ? s[i].v[f] : hi;
+        if (!valid) t0 = s[i].time;
+        t1 = s[i].time;
+        ++valid;
+    }
+    const f32 left = fs * 4.5f, bottom = fs * 1.6f;
+    const ImVec2 a(p0.x + left, p0.y + fs * 0.5f), b(p0.x + avail.x - fs * 0.5f, p0.y + avail.y - bottom);
+    dl->AddRect(a, b, ImGui::GetColorU32(g_pal.outline_variant));
+    if (!valid) {
+        dl->AddText(ImVec2(a.x + fs, a.y + fs), ImGui::GetColorU32(g_pal.on_surface_variant), "No values for this drive yet.");
+        return;
+    }
+    const f64 vmin = lo, vmax = hi;
+    if (hi - lo < 1e-9) { lo -= 1.0; hi += 1.0; }
+    const f64 pad = (hi - lo) * 0.08;
+    lo -= pad;
+    hi += pad;
+    if (t1 == t0) { t0 -= 3600; t1 += 3600; }
+    auto pos = [&](i64 t, f64 v) {
+        return ImVec2(a.x + (f32)((t - t0) / (f64)(t1 - t0)) * (b.x - a.x), b.y - (f32)((v - lo) / (hi - lo)) * (b.y - a.y));
+    };
+    char text[64];
+    snprintf(text, sizeof(text), "%.5g", vmax);     // labels at the max / min sample
+    dl->AddText(ImVec2(p0.x, pos(t0, vmax).y - fs * 0.5f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
+    if (vmin != vmax) {
+        snprintf(text, sizeof(text), "%.5g", vmin);
+        dl->AddText(ImVec2(p0.x, pos(t0, vmin).y - fs * 0.5f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
+    }
+    struct tm tm;
+    const time_t tt0 = (time_t)t0, tt1 = (time_t)t1;
+    localtime_s(&tm, &tt0);
+    strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
+    dl->AddText(ImVec2(a.x, b.y + fs * 0.2f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
+    localtime_s(&tm, &tt1);
+    strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
+    dl->AddText(ImVec2(b.x - ImGui::CalcTextSize(text).x, b.y + fs * 0.2f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
+    const ImU32 col = ImGui::GetColorU32(g_pal.primary);
+    ImVec2 prev;
+    bool have_prev = false;
+    i32 hover = -1;
+    f32 best = fs;
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    for (u32 i = 0; i < n; ++i) {
+        if (!isfinite(s[i].v[f])) continue;
+        const ImVec2 q = pos(s[i].time, s[i].v[f]);
+        if (have_prev) dl->AddLine(prev, q, col, 2.0f);
+        dl->AddCircleFilled(q, 3.0f, col);
+        prev = q;
+        have_prev = true;
+        if (ImGui::IsItemHovered() && fabsf(mouse.x - q.x) < best) { best = fabsf(mouse.x - q.x); hover = (i32)i; }
+    }
+    if (hover >= 0) {
+        const time_t th = (time_t)s[hover].time;
+        localtime_s(&tm, &th);
+        strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
+        ImGui::SetTooltip("%s\n%s: %.6g %s", text, HEALTH_FIELD_NAMES[f], s[hover].v[f], HEALTH_FIELD_UNITS[f]);
+    }
+}
+
+static void draw_history(DiskHealth* h) {
+    if (s_ui.hist_for != s_ui.sel) load_history();
+    if (!s_ui.hist_count) {
+        ImGui::TextDisabled("No history yet. A sample is saved each time this window reads the drive (at most hourly, and "
+                            "whenever a wear or error counter changes).");
+        return;
+    }
+    // Field picker: only fields this drive reports.
+    bool first = true;
+    for (u32 f = 0; f < HF_COUNT; ++f) {
+        bool any = false;
+        for (u32 i = 0; i < s_ui.hist_count && !any; ++i) any = isfinite(s_ui.hist[i].v[f]);
+        if (!any) continue;
+        if (!first) ImGui::SameLine(0.0f, 4.0f);
+        first = false;
+        ImGui::PushID((int)f);
+        if (theme_tab(HEALTH_FIELD_NAMES[f], s_ui.hist_field == f)) s_ui.hist_field = (HealthField)f;
+        ImGui::PopID();
+    }
+    plot(s_ui.hist, s_ui.hist_count, s_ui.hist_field);
+    ImGui::TextDisabled("%u samples  \xC2\xB7  saved in %%APPDATA%%\\ez-pc-bench\\health", s_ui.hist_count);
+    ImGui::SameLine();
+    if (theme_button("Open folder")) ShellExecuteW(nullptr, L"open", health_store_dir(), nullptr, nullptr, SW_SHOWNORMAL);
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Endurance projection");
+    theme_help("From the first and last samples in the history: no vendor TBW database needed. Needs at least a day of "
+               "history; the life estimate needs the drive's life-used value to have moved.");
+    HealthProjection pr;
+    if (!health_project(s_ui.hist, s_ui.hist_count, &pr)) {
+        ImGui::Text("Needs history spanning at least a day (now %.1f h).", pr.days * 24.0);
+        return;
+    }
+    if (isfinite(pr.written_gb_per_day))
+        ImGui::Text("Writes: %.1f GB per day over the last %.0f days (%.1f TB per year)", pr.written_gb_per_day, pr.days,
+                    pr.written_gb_per_day * 365.0 / 1000.0);
+    if (pr.life_end_time) {
+        struct tm tm;
+        const time_t t = (time_t)pr.life_end_time;
+        localtime_s(&tm, &t);
+        char date[32];
+        strftime(date, sizeof(date), "%Y-%m-%d", &tm);
+        ImGui::Text("Life used grows %.3f %% per day: 100 %% around %s at this rate", pr.life_pct_per_day, date);
+    } else if (h->life_left_pct >= 0) {
+        ImGui::Text("Life used hasn't changed over %.0f days: too little wear to project an end date yet.", pr.days);
+    }
+}
+
+// ---- thresholds and AAM / APM -------------------------------------------------------------------------------
+
+static bool threshold_row(const char* label, u32* v, u32 max, const char* help) {
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    theme_help(help);
+    ImGui::TableNextColumn();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
+    ImGui::PushID(label);
+    const u32 step = 1;
+    const bool changed = ImGui::InputScalar("##v", ImGuiDataType_U32, v, &step, nullptr, "%u");
+    ImGui::PopID();
+    if (*v > max) *v = max;
+    return changed;
+}
+
+static void draw_settings(DiskHealth* h) {
+    if (h->disk.virtual_disk || h->proto == HPROTO_NONE) {
+        ImGui::TextDisabled("Nothing to configure for this drive.");
+        return;
+    }
+    ImGui::TextDisabled("Caution thresholds for this drive (saved per drive; 0 turns a rule off)");
+    HealthThresholds t = h->thresholds;
+    bool changed = false;
+    if (ImGui::BeginTable("thr", 2, ImGuiTableFlags_SizingFixedFit)) {
+        if (h->proto == HPROTO_ATA) {
+            changed |= threshold_row("Reallocated sectors (05)", &t.reallocated, 1000000, "Caution once the raw count of reallocated "
+                                     "sectors reaches this. CrystalDiskInfo's default is 1.");
+            changed |= threshold_row("Pending sectors (C5)", &t.pending, 1000000, "Sectors the drive couldn't read and wants to "
+                                     "reallocate on the next write.");
+            changed |= threshold_row("Uncorrectable sectors (C6)", &t.uncorrectable, 1000000, "Sectors that failed an offline scan "
+                                     "or reads beyond ECC.");
+        } else {
+            changed |= threshold_row("Media errors", &t.media_errors, 1000000, "Unrecovered data integrity errors in the NVMe health log.");
+        }
+        changed |= threshold_row("Life left at or below (%)", &t.life_left_pct, 100, "Caution when the drive's remaining rated "
+                                 "endurance drops to this percentage. Drives often keep working well past it.");
+        ImGui::EndTable();
+    }
+    if (theme_button("Reset to defaults")) { t = HEALTH_THRESHOLDS_DEFAULT; changed = true; }
+    if (changed) disk_health_set_thresholds(h, &t);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextDisabled("Acoustic and power management (ATA)");
+    theme_help("AAM (Automatic Acoustic Management) trades seek speed for noise; APM (Advanced Power Management) lets a "
+               "drive save power by parking heads or spinning down. Mostly HDDs; changes last until the drive is "
+               "power-cycled (EzPcBench doesn't reapply them at boot, that would need a resident service).");
+    if (h->proto != HPROTO_ATA || (!h->aam_supported && !h->apm_supported)) {
+        ImGui::TextDisabled("Not supported by this drive (normal for SSDs and NVMe).");
+        return;
+    }
+    const bool can = g_sys.elevated && h->ata.tr != ATA_TR_NONE && h->ata.tr != ATA_TR_SMART_IOCTL;
+    if (!can) ImGui::TextColored(g_pal.warn, "Changing them needs administrator rights and an ATA pass-through connection.");
+    ImGui::BeginDisabled(!can);
+    if (h->aam_supported) {
+        ImGui::Text("AAM: %s, current 0x%02X, recommended 0x%02X", h->aam_enabled ? "enabled" : "disabled", h->aam_value, h->aam_recommended);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        ImGui::SliderInt("##aam", &s_ui.aam_value, 128, 254, s_ui.aam_value < 160 ? "%d (quiet)" : s_ui.aam_value > 240 ? "%d (fast)" : "%d");
+        ImGui::SameLine();
+        if (theme_button("Apply AAM")) { s_ui.confirm_feature = 1; s_ui.confirm_value = (u8)s_ui.aam_value; }
+        ImGui::SameLine();
+        if (theme_button("Disable AAM")) { s_ui.confirm_feature = 1; s_ui.confirm_value = 0; }
+    }
+    if (h->apm_supported) {
+        ImGui::Text("APM: %s, current 0x%02X", h->apm_enabled ? "enabled" : "disabled", h->apm_value);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        ImGui::SliderInt("##apm", &s_ui.apm_value, 1, 254, s_ui.apm_value < 128 ? "%d (may spin down)" : s_ui.apm_value >= 254 ? "%d (max performance)" : "%d");
+        ImGui::SameLine();
+        if (theme_button("Apply APM")) { s_ui.confirm_feature = 2; s_ui.confirm_value = (u8)s_ui.apm_value; }
+        ImGui::SameLine();
+        if (theme_button("Disable APM")) { s_ui.confirm_feature = 2; s_ui.confirm_value = 0; }
+    }
+    ImGui::EndDisabled();
+}
+
+// ---- frame ----------------------------------------------------------------------------------------------
 
 void health_ui_draw() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -156,39 +877,70 @@ void health_ui_draw() {
                                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
     const bool busy = disk_test_running();
     ImGui::BeginDisabled(busy);
-    if (theme_button("Refresh")) scan();
+    if (theme_button_primary("Refresh")) scan();
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::BeginDisabled(s_ui.count == 0);
+    if (theme_button("Copy report")) copy_report();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(runner_is_running());      // the file dialog would load shell extensions mid-benchmark
+    if (theme_button("Save report...")) save_report();
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::SameLine(0.0f, ImGui::GetFontSize());
+    if (theme_checkbox("Hide serial", &s_ui.hide_serial)) health_set_ui_option("hide_serial", s_ui.hide_serial);
+    theme_help("Replaces serial numbers with asterisks in this window and in copied / saved reports (for screenshots).");
+    ImGui::SameLine(0.0f, ImGui::GetFontSize());
     ImGui::AlignTextToFramePadding();
     if (busy) ImGui::TextDisabled("Paused while a disk test runs.");
-    else if (s_scanned) ImGui::TextDisabled("Read at %s", s_read_at);
-    // Many NVMe drivers answer health queries without admin rights; only point at elevation when a real
-    // drive came back empty.
+    else if (s_ui.message[0]) ImGui::TextDisabled("%s", s_ui.message);
+    else if (s_ui.scanned) ImGui::TextDisabled("Read at %s", s_ui.read_at);
     bool missing = false;
-    for (u32 i = 0; i < s_count; ++i)
-        missing |= !s_disks[i].disk.virtual_disk && !s_disks[i].have_nvme && !s_disks[i].have_predict;
+    for (u32 i = 0; i < s_ui.count; ++i)
+        missing |= !s_ui.disks[i].disk.virtual_disk && s_ui.disks[i].proto == HPROTO_ATA && !s_ui.disks[i].have_smart;
     if (!g_sys.elevated && missing) {
         ImGui::SameLine();
-        ImGui::TextColored(g_pal.warn, "  Some drives need administrator rights to report health data.");
+        ImGui::TextColored(g_pal.warn, "  Some drives need administrator rights for SMART data.");
     }
 
-    ImGui::BeginChild("##disks", ImVec2(0, 0));
-    if (s_scanned && s_count == 0) ImGui::TextDisabled("No physical drives found.");
-    for (u32 i = 0; i < s_count; ++i) {
-        ImGui::PushID((int)i);
-        ImGui::Spacing();
-        // Card sized to its contents (theme_begin_panel fills the remaining height instead).
-        const f32 pad = ImGui::GetFontSize();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.card);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad * 0.9f));
-        ImGui::BeginChild("disk", ImVec2(-FLT_MIN, 0.0f),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY);
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
-        draw_disk(&s_disks[i]);
-        ImGui::EndChild();
-        ImGui::PopID();
+    // Drive chips.
+    ImGui::Spacing();
+    for (u32 i = 0; i < s_ui.count; ++i) {
+        if (i) ImGui::SameLine(0.0f, ImGui::GetFontSize() * 0.5f);
+        drive_chip(i);
     }
-    ImGui::EndChild();
+    if (s_ui.scanned && s_ui.count == 0) ImGui::TextDisabled("No physical drives found.");
+    DiskHealth* h = selected();
+    if (!h) { ImGui::End(); return; }
+
+    // Poll a running self-test every 3 s.
+    if (h->test_progress >= 0 && !busy && timer_now() - s_ui.last_poll > 3.0) {
+        s_ui.last_poll = timer_now();
+        disk_selftest_poll(h);
+    }
+
+    ImGui::Spacing();
+    theme_begin_panel("drive", ImVec2(0, 0));
+    draw_header(h);
+    ImGui::Spacing();
+    draw_info(h);
+    ImGui::Spacing();
+    for (u32 t = 0; t < TAB_COUNT; ++t) {
+        if (t == TAB_NVME && h->proto != HPROTO_NVME) continue;
+        if (t) ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab(TAB_NAMES[t], s_ui.tab == t)) s_ui.tab = (HealthTab)t;
+    }
+    if (s_ui.tab == TAB_NVME && h->proto != HPROTO_NVME) s_ui.tab = TAB_SMART;
+    ImGui::Spacing();
+    switch (s_ui.tab) {
+        case TAB_SMART: draw_smart(h); break;
+        case TAB_SELFTEST: draw_selftest(h); break;
+        case TAB_NVME: draw_nvme(h); break;
+        case TAB_HISTORY: draw_history(h); break;
+        case TAB_SETTINGS: draw_settings(h); break;
+        default: break;
+    }
+    draw_confirmations(h);
+    theme_end_panel();
     ImGui::End();
 }

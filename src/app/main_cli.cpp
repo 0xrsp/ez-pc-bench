@@ -1,6 +1,7 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
 #include "core/baseline.h"
 #include "core/bench.h"
+#include "core/disk_health.h"
 #include "core/elevation.h"
 #include "core/monitor.h"
 #include "core/presets.h"
@@ -30,6 +31,7 @@ static void print_usage() {
         "  --preset <name>        quick, standard or extended: selection + duration / repeat / disk settings;\n"
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
+        "  --health [--hide-serial]  Print the disk health report of every drive and exit\n"
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --pause                Wait for Enter before exiting\n");
 }
@@ -187,6 +189,25 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
     }
 }
 
+// --health: the disk health window's text report for every drive.
+static int print_health(bool hide_serial) {
+    static DiskHealth drives[PHYSDISK_MAX];
+    const u32 n = disk_health_scan(drives, PHYSDISK_MAX);
+    const u32 size = 256 * 1024;
+    char* text = (char*)VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!text) return 1;
+    const u32 len = disk_health_report(drives, n, hide_serial, text, size);
+    u32 k = 0;
+    for (u32 i = 0; i < len; ++i)
+        if (text[i] != '\r') text[k++] = text[i];      // CRLF report; stdout is in text mode
+    text[k] = 0;
+    fputs(text, stdout);
+    VirtualFree(text, 0, MEM_RELEASE);
+    disk_health_close();
+    if (!g_sys.elevated) printf("Not running as administrator: SATA / USB SMART data and self-tests need --elevate.\n");
+    return 0;
+}
+
 static void to_utf8(const wchar_t* w, char* out, int size) {
     WideCharToMultiByte(CP_UTF8, 0, w, -1, out, size, nullptr, nullptr);
 }
@@ -197,7 +218,7 @@ int wmain(int argc, wchar_t** argv) {
     runner_init();
 
     bool selected[MAX_BENCHES] = {};
-    bool any_run = false, from_preset = false, list = false, pause = false, elevate = false;
+    bool any_run = false, from_preset = false, list = false, pause = false, elevate = false, health = false, hide_serial = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     BenchParams params;
@@ -209,7 +230,9 @@ int wmain(int argc, wchar_t** argv) {
         char val[1024] = {};
         if (has_val) to_utf8(argv[i + 1], val, sizeof(val));
 
-        if (!wcscmp(a, L"--list")) list = true;
+        if (!wcscmp(a, L"--health")) health = true;
+        else if (!wcscmp(a, L"--hide-serial")) hide_serial = true;
+        else if (!wcscmp(a, L"--list")) list = true;
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
@@ -245,6 +268,8 @@ int wmain(int argc, wchar_t** argv) {
                    g_benches[i].name);
         return 0;
     }
+
+    if (health) return print_health(hide_serial);
 
     if (elevate && !g_sys.elevated) {
         if (relaunch_elevated(L"--pause")) return 0;

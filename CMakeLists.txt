@@ -109,6 +109,12 @@ add_library(ezbench_core STATIC
     src/core/hwread.cpp
     src/core/presets.cpp
     src/core/disk_health.cpp
+    src/core/ata.cpp
+    src/core/nvme_dev.cpp
+    src/core/scsi_pt.cpp
+    src/core/csmi.cpp
+    src/core/smart_attr.cpp
+    src/core/health_store.cpp
     src/core/perf.cpp
     src/core/elevation.cpp
     src/core/smoke_bench.cpp
