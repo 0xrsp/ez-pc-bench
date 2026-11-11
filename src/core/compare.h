@@ -3,6 +3,7 @@
 // table. Rows are (test, metric, x) in test order; values[row][run] is NaN where a run lacks that metric.
 // Matrix results are reduced to three rows (off-diagonal min / avg / max).
 #include "core/bench.h"
+#include "core/score.h"
 
 constexpr u32 CMP_MAX_RUNS = 16;
 constexpr u32 CMP_MAX_TESTS = 256;
@@ -16,6 +17,8 @@ struct CmpRun {
     char label[96];             // file name without ".toon.txt", or "Current run"
     char info[CI_COUNT][128];
     u32 metrics;                // rows this run has a value for
+    ScoreResult score;          // computed from the run's raw results (score.h)
+    i8 integrity;               // IntegrityState of the file (integrity.h); -1 for the current run
 };
 
 struct CmpTest {

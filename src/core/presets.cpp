@@ -1,4 +1,5 @@
 #include "core/presets.h"
+#include "core/score.h"
 #include <string.h>
 
 // Quick: one or two tests per area, short phases, one disk pass on a small file (~1 minute here).
@@ -16,6 +17,9 @@ const RunPreset g_presets[] = {
     { "extended", "Extended", "Every test, each run 3 times and reported as the median with its spread; one disk "
                               "pass per run (the median of 3 instead of the best of 3). About 35 minutes.",
       PRESET_SEL_ALL, nullptr, 3000, 3, 1, 1024 },
+    { "score", "Score", "Exactly the tests the overall score needs (score.h), at default settings: 3 s phases, best of 3 "
+                        "disk passes on a 1 GiB file, both GPU APIs (the score takes the better one). About 5 minutes.",
+      PRESET_SEL_LIST, SCORE_V1_TESTS, 3000, 1, 3, 1024 },
 };
 const u32 g_preset_count = ARRAY_COUNT(g_presets);
 

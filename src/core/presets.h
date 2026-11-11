@@ -1,6 +1,6 @@
 #pragma once
 // One-click run presets (FUTURE.md section 11): a test selection plus the run settings that go with it.
-// Sustained / thermal and Score presets come with the sustained mode (section 3) and the score (section 10).
+// Sustained / thermal comes with the sustained mode (section 3). Score runs exactly the score inputs (score.h).
 #include "core/bench.h"
 
 enum PresetSelect : u8 {
