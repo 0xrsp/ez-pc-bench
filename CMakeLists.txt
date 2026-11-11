@@ -116,6 +116,8 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_common.cpp
     src/gpu/gpu_entry.cpp
     src/gpu/gpu_d3d12.cpp
+    src/gpu/gpu_d3d12_compute.cpp
+    src/gpu/gpu_d3d12_raster.cpp
     src/gpu/gpu_vk.cpp
     src/gpu/gpu_vk_tests.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})

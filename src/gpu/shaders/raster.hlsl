@@ -9,16 +9,17 @@ SamplerState samp : register(s0);   // linear filter, wrap
 // vs_triangles: Draw(GR_TRI_COUNT * 3). pc.u.x = grid columns, pc.u.y = grid rows,
 //               pc.f.xy = cell size (NDC), pc.f.zw = triangle size (NDC). Host: cols = width / 4,
 //               rows = height / 4, cell = 2 / cols|rows, triangle = 2 px. Triangles wrap over the grid.
-// vs_drawcall:  GR_DRAWS separate Draw(3) per frame, pc.u.x = draw index (changes per draw), rest as above.
+// vs_drawcall:  GR_DRAWS separate Draw(3) per frame, pc.u.x = draw index (changes per draw), rest as above
+//               (grid columns are recovered from the cell size: cols = 2 / pc.f.x).
 struct ColorOut {
     float4 pos : SV_Position;
     float4 col : COLOR0;
 };
 
-ColorOut tiny_triangle(uint tri, uint corner) {
-    const uint cells = pc.u.x * pc.u.y;
+ColorOut tiny_triangle(uint tri, uint corner, uint cols) {
+    const uint cells = cols * pc.u.y;
     const uint cell = tri % cells;
-    float2 p = float2(cell % pc.u.x, cell / pc.u.x) * pc.f.xy - 1.0f;
+    float2 p = float2(cell % cols, cell / cols) * pc.f.xy - 1.0f;
     if (corner == 1) p.x += pc.f.z;
     if (corner == 2) p.y += pc.f.w;
     ColorOut o;
@@ -27,8 +28,8 @@ ColorOut tiny_triangle(uint tri, uint corner) {
     return o;
 }
 
-ColorOut vs_triangles(uint vid : SV_VertexID) { return tiny_triangle(vid / 3u, vid % 3u); }
-ColorOut vs_drawcall(uint vid : SV_VertexID) { return tiny_triangle(pc.u.x * 37u, vid % 3u); }
+ColorOut vs_triangles(uint vid : SV_VertexID) { return tiny_triangle(vid / 3u, vid % 3u, pc.u.x); }
+ColorOut vs_drawcall(uint vid : SV_VertexID) { return tiny_triangle(pc.u.x * 37u, vid % 3u, (uint)(2.0f / pc.f.x + 0.5f)); }
 float4 ps_color(ColorOut i) : SV_Target { return i.col; }
 
 // ---- full-screen layers (pixel fill, texture fill) ------------------------------------------------
