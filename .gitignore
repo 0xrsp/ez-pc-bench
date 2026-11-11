@@ -1,0 +1,9 @@
+build/
+out/
+.vs/
+.vscode/
+.cache/
+*.user
+CMakeUserPresets.json
+compile_commands.json
+ezbench.tmp
