@@ -350,6 +350,11 @@ bool compare_add_buffer(const char* label, const char* data, u32 size, char* err
         compare_remove(run);
         return false;
     }
+    if (g_cmp.runs[run].metrics == 0) {     // e.g. a run cancelled before its first test finished
+        compare_remove(run);
+        snprintf(err, err_size, "no finished tests in this run");
+        return false;
+    }
     CmpRun* c = &g_cmp.runs[run];
     copy_str(c->label, sizeof(c->label), label);
     fill_info(c);
