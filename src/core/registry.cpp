@@ -40,13 +40,22 @@ BENCH_FN(mem_latency);
 BENCH_FN(mem_sweep_st);
 BENCH_FN(mem_sweep_mt);
 
+// disk/disk_bench.cpp
+SUITE_FNS(disk);
+BENCH_FN(disk_seq1m_q8t1);
+BENCH_FN(disk_seq1m_q1t1);
+BENCH_FN(disk_rnd4k_q32t1);
+BENCH_FN(disk_rnd4k_q1t1);
+BENCH_FN(disk_seq128k_q32t1);
+BENCH_FN(disk_rnd4k_q32t16);
+
 const SuiteDesc g_suites[SUITE_COUNT] = {
     { SUITE_SMOKE,     "Smoke test",   "smoke",     smoke_init, smoke_shutdown },
     { SUITE_CPU,       "CPU",          "cpu",       cpu_init,   cpu_shutdown },
     { SUITE_MEM,       "Memory",       "mem",       mem_init,   mem_shutdown },
     { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    nullptr, nullptr },
     { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", nullptr, nullptr },
-    { SUITE_DISK,      "Disk",         "disk",      nullptr, nullptr },
+    { SUITE_DISK,      "Disk",         "disk",      disk_init,  disk_shutdown },
 };
 
 const BenchDesc g_benches[] = {
@@ -69,13 +78,22 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Topology",       "Core-to-core latency",      "cpu.topo.c2c",      cpu_c2c,            0 },
     { SUITE_CPU, "Topology",       "Thread scaling (AVX2 FMA)", "cpu.topo.scaling",  cpu_scaling,        0 },
 
-    { SUITE_MEM, "DRAM bandwidth", "Read",                      "mem.bw.read",       mem_read,           0 },
+    { SUITE_MEM, "DRAM bandwidth", "Read",                     "mem.bw.read",       mem_read,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Write",                     "mem.bw.write",      mem_write,          0 },
     { SUITE_MEM, "DRAM bandwidth", "Copy",                      "mem.bw.copy",       mem_copy,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Triad (a = b + s*c)",       "mem.bw.triad",      mem_triad,          0 },
     { SUITE_MEM, "Latency",        "Random access latency",     "mem.lat.chase",     mem_latency,        0 },
     { SUITE_MEM, "Cache sweep",    "Read sweep, one thread",    "mem.sweep.st",      mem_sweep_st,       0 },
     { SUITE_MEM, "Cache sweep",    "Read sweep, all threads",   "mem.sweep.mt",      mem_sweep_mt,       0 },
+
+    // CDM 8 Default profile + NVMe profile extras (off by default). All sequential tests run before the
+    // random ones: random 4K writes fragment the SSD's mapping of the test file and slow later sequential reads.
+    { SUITE_DISK, "Sequential", "SEQ1M Q8T1",           "disk.seq1m_q8t1",    disk_seq1m_q8t1,    0 },
+    { SUITE_DISK, "Sequential", "SEQ1M Q1T1",           "disk.seq1m_q1t1",    disk_seq1m_q1t1,    0 },
+    { SUITE_DISK, "Sequential", "SEQ128K Q32T1 (NVMe)", "disk.seq128k_q32t1", disk_seq128k_q32t1, BENCH_DEFAULT_OFF },
+    { SUITE_DISK, "Random",     "RND4K Q32T1",          "disk.rnd4k_q32t1",   disk_rnd4k_q32t1,   0 },
+    { SUITE_DISK, "Random",     "RND4K Q1T1",           "disk.rnd4k_q1t1",    disk_rnd4k_q1t1,    0 },
+    { SUITE_DISK, "Random",     "RND4K Q32T16 (NVMe)",  "disk.rnd4k_q32t16",  disk_rnd4k_q32t16,  BENCH_DEFAULT_OFF },
 };
 
 const u32 g_bench_count = ARRAY_COUNT(g_benches);

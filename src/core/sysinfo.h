@@ -47,11 +47,28 @@ struct PowerInfo {
     PowerMode mode;         // Windows "power mode" overlay
 };
 
+struct DriveInfo {
+    char letter;            // 'C'
+    char model[64];         // vendor + product id of the backing device
+    char bus[24];           // "NVMe", "SATA", "File-backed virtual", ...
+    char fs[16];            // "NTFS", "ReFS"
+    u32 bus_type;           // STORAGE_BUS_TYPE
+    u32 logical_sector, physical_sector;
+    u64 total_bytes, free_bytes;
+    bool virtual_disk;      // VHD/VHDX or other virtual disk (BusTypeVirtual / BusTypeFileBackedVirtual)
+    bool dev_drive;         // Windows Dev Drive (FSCTL_QUERY_PERSISTENT_VOLUME_STATE)
+    bool refs;
+    i32 bitlocker;          // raw System.Volume.BitLockerProtection, -1 = unknown
+    bool bitlocker_on;
+};
+
 struct SysInfo {
     CpuInfo cpu;
     RamInfo ram;
     u32 gpu_count;
     GpuInfo gpus[8];
+    u32 drive_count;
+    DriveInfo drives[26];   // fixed drives
     PowerInfo power;
     char os[64];
     bool elevated;
@@ -64,3 +81,11 @@ void sysinfo_refresh_power();
 const char* power_mode_name(PowerMode m);
 bool power_is_best_performance(const PowerInfo* p);
 u32 sysinfo_default_gpu();      // most powerful adapter index (DXGI high-performance order)
+
+// Device, bus, file system and sector sizes of one drive (no BitLocker). False if the drive doesn't exist.
+bool drive_query(wchar_t letter, DriveInfo* d);
+const DriveInfo* sysinfo_find_drive(wchar_t letter);   // fixed drives gathered at startup, null if unknown
+// One-line description: "Samsung XYZ, NVMe, NTFS, 953 GiB (120 GiB free), sector 512/4096, BitLocker on".
+void drive_describe(const DriveInfo* d, char* buf, u32 size);
+// Disk-target warnings shared by GUI and CLI (VHD / Dev Drive, BitLocker). Returns the line count (0..2).
+u32 drive_target_warnings(wchar_t letter, char lines[2][192]);

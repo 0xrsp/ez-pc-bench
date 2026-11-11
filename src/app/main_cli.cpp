@@ -110,7 +110,7 @@ static void print_live() {
     fflush(stdout);
 }
 
-static void print_sysinfo() {
+static void print_sysinfo(const BenchParams* p, const bool* selected) {
     const SysInfo* s = &g_sys;
     printf("CPU   %s, %uC/%uT, L2 %u KiB/core, L3 %u KiB\n", s->cpu.brand, s->cpu.cores, s->cpu.threads,
            s->cpu.l2_kib, s->cpu.l3_kib);
@@ -120,12 +120,22 @@ static void print_sysinfo() {
                s->ram.modules[i].configured_mts);
     printf("\n");
     for (u32 i = 0; i < s->gpu_count; ++i) printf("GPU%u  %s\n", i, s->gpus[i].name);
+    for (u32 i = 0; i < s->drive_count; ++i) {
+        char d[192];
+        drive_describe(&s->drives[i], d, sizeof(d));
+        printf("Disk  %c:  %s\n", s->drives[i].letter, d);
+    }
     printf("OS    %s\n", s->os);
     printf("Power %s, plan \"%s\", mode \"%s\"\n\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
            power_mode_name(s->power.mode));
     if (!s->elevated) printf("WARNING: not running as administrator (use --elevate). Some tests are degraded.\n");
     if (!s->power.on_ac) printf("WARNING: running on battery - results will be lower.\n");
     if (!power_is_best_performance(&s->power)) printf("WARNING: power mode is not \"Best performance\".\n");
+    bool disk_selected = false;
+    for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && selected[i];
+    char lines[2][192];
+    const u32 n = disk_selected ? drive_target_warnings(p->disk_drive, lines) : 0;
+    for (u32 i = 0; i < n; ++i) printf("WARNING: %s\n", lines[i]);
 }
 
 static void to_utf8(const wchar_t* w, char* out, int size) {
@@ -179,7 +189,7 @@ int wmain(int argc, wchar_t** argv) {
     if (!any_run)
         for (u32 i = 0; i < g_bench_count; ++i) selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
 
-    print_sysinfo();
+    print_sysinfo(&params, selected);
     SetConsoleCtrlHandler(on_ctrl, TRUE);
     if (!runner_start(selected, &params)) { fprintf(stderr, "Nothing to run.\n"); return 3; }
 

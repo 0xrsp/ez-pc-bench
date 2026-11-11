@@ -378,8 +378,21 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   `core/threads.*`, generic ST/MT throughput driver in `cpu_bench.cpp`. GUI got a Charts tab
   (series plots + heat-mapped matrix). Not done: pinning the UI thread away from the ST core
   (UI at 15 FPS is negligible; revisit if ST numbers look noisy).
-- **M2 Memory** suite.
-- **M3 Disk** suite.
+- **M2 Memory** — ✅ done 2026-11-11: 7 tests (`mem.*`): read / write / copy (normal + non-temporal) /
+  triad bandwidth ST+MT over ≥ 512 MiB, random pointer-chase latency 4 KiB–1 GiB (series, large pages
+  when the privilege exists), read-bandwidth sweeps 16 KiB–256 MiB for one thread and per-thread for all
+  threads. AVX2 inline-asm kernels in `mem/mem_kernels.cpp`; throughput driver moved to
+  `core/throughput.*` (shared with CPU). Memory safety: the suite arena is min(1.5 GiB, ¼ of free RAM)
+  and fails cleanly below 256 MiB; peak process RAM in a full run ≈ 1.6 GB.
+- **M3 Disk** — ✅ done 2026-11-11 (written by a subagent in a worktree, reviewed + merged): 6 tests
+  (`disk.*`): CDM 8 Default profile + NVMe extras (SEQ128K Q32T1, RND4K Q32T16, off by default), each
+  read then write, best of N passes, MB/s + IOPS + avg latency. One NO_BUFFERING|OVERLAPPED handle and
+  IOCP per thread, QD outstanding requests, `CancelIoEx` drain on stop. Test file is created with
+  `FILE_FLAG_DELETE_ON_CLOSE` and held open until suite shutdown, so even a killed process leaves no
+  file; stale `<drive>:\ezbench\` is removed at the next start; `%TEMP%` fallback only if on the target
+  drive. Drive info (model, bus, FS, sectors, VHD/Dev Drive, BitLocker) in sysinfo, GUI, CLI and exports.
+  **Deviation:** groups are "Sequential"/"Random" and every sequential test runs before any random one
+  (random 4K writes slowed later sequential reads, see §13).
 - **M4 GPU infra + Compute**: shader build (DXIL + SPIR-V), adapter selection, D3D12 + Vulkan devices,
   timestamps, compute tests.
 - **M5 GPU 3D + 2D**: benchmark window, swapchains (tearing), frame-time stats, 3D and 2D tests.
@@ -413,7 +426,7 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
 |---|---|
 | DRAM read BW (MT) | below 89.6 GB/s theoretical; single-CCX fabric limit likely ~60–70 GB/s |
 | DRAM latency | ~90–130 ns typical for mobile Zen 4 |
-| NVMe SEQ1M Q8T1 read | several GB/s (PCIe 4.0 x4 class) |
+| NVMe SEQ1M Q8T1 read | several GB/s (PCIe 4.0 x4 class) — measured ~7.0 GB/s on battery |
 | RTX 5060 Laptop FP32 | several TFLOPS (depends on TGP/clock) |
 
 ## 11. Open questions
@@ -464,3 +477,25 @@ None currently. (All earlier ones resolved — see decision log.)
   With `_mm_pause()` in both spin loops: cross-core ~43–50 ns, SMT siblings ~27–40 ns. Kept `pause`.
 - Throughput live rate uses a ~0.5 s sliding window; without it single-thread SGEMM (0.2 s per call)
   showed 4x spikes.
+- Memory suite on battery / "Best power efficiency": read 37 (ST) / 46 (MT) GB/s = 52 % of the
+  89.6 GB/s peak; write 19 / 20.5 (normal, RFO) vs 36 / 45 GB/s non-temporal; copy 20 / 28 vs 37 / 43;
+  triad 22 / 31 GB/s. Latency (4 KiB pages): L1 1.7 ns (~4 clk), L2 6.2 ns, L3 27–54 ns (2–8 MiB, TLB
+  misses grow), DRAM 105–182 ns (32 MiB–1 GiB). Sweep: L1 134 GB/s ST (~56 B/clk) / 1.17 TB/s MT,
+  L2 ~70 / ~630 GB/s, DRAM ~35 / ~47 GB/s.
+- Sweep/latency points shorter than ~0.25 s gave isolated dips/spikes on battery (clock ramping);
+  minimum per point is now 0.25 s.
+- Drives: C: = SAMSUNG MZAL81T0HFLB-00BL2, NVMe, NTFS, sectors 512 logical / 4096 physical, **BitLocker
+  on**. K: = "Msft Virtual Disk", bus File-backed virtual, ReFS Dev Drive, BitLocker off (but its VHD file
+  lives on encrypted C:). Dev Drive detection needs `FSCTL_QUERY_PERSISTENT_VOLUME_STATE` on a root
+  *directory* handle; `fsutil devdrv query` needs admin.
+- Disk on C: (battery, efficiency mode, 256 MiB file, 2 passes): SEQ1M Q8T1 7.0 / 5.4 GB/s read/write,
+  SEQ1M Q1T1 2.3 / 2.8, SEQ128K Q32T1 5.9 / 4.8, RND4K Q32T1 211 / 330 MB/s (51K / 81K IOPS),
+  RND4K Q1T1 32–46 / 61–67 MB/s, RND4K Q32T16 2.0 GB/s read (483K IOPS). RND4K Q32T1 is CPU-bound on the
+  single submitting thread in this power state (~20 µs/request; T16 shows the SSD isn't the limit).
+- Random 4K writes over the small test file cut a later SEQ128K Q32T1 read from ~6.4 to ~1.5 GB/s on this
+  SSD (reproduced twice) → sequential tests always run first.
+- The RTX 5060 vanished from Windows (no PnP device at all) on 2026-11-11 while on battery; likely
+  Lenovo Vantage Hybrid-Auto / iGPU-only mode. GPU suites (M4) need AC + dGPU enabled to test it.
+- 2026-11-11: the PC hard-froze once during development (Kernel-Power 41, no low-memory event logged;
+  two similar resets on 11/10 predate this project). No benchmark was running then. Precautions since:
+  builds use `-- -j 6`, memory arenas capped to ¼ of free RAM, no parallel heavy runs.

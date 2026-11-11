@@ -118,6 +118,11 @@ u32 results_format_text(char* buf, u32 size, const BenchParams* p) {
     for (u32 i = 0; i < s->gpu_count; ++i)
         tb_printf(&tb, "GPU %u: %s (%llu MiB VRAM)%s\n", i, s->gpus[i].name, s->gpus[i].dedicated_vram / MiB,
                   i == p->gpu_adapter ? "  [selected]" : "");
+    for (u32 i = 0; i < s->drive_count; ++i) {
+        char d[192];
+        drive_describe(&s->drives[i], d, sizeof(d));
+        tb_printf(&tb, "Disk %c: %s%s\n", s->drives[i].letter, d, s->drives[i].letter == (char)p->disk_drive ? "  [target]" : "");
+    }
     tb_printf(&tb, "OS:    %s, %s\n", s->os, s->elevated ? "elevated" : "not elevated");
     tb_printf(&tb, "Power: %s, plan \"%s\", mode \"%s\"\n\n", s->power.on_ac ? "AC" : "battery", s->power.scheme_name,
               power_mode_name(s->power.mode));
@@ -222,6 +227,20 @@ bool results_write_json(const wchar_t* path, const BenchParams* p) {
         json_str(f, s->gpus[i].name);
         fprintf(f, ", \"dedicated_vram\": %llu, \"vendor_id\": %u, \"device_id\": %u }", s->gpus[i].dedicated_vram,
                 s->gpus[i].vendor_id, s->gpus[i].device_id);
+    }
+    fprintf(f, " ],\n    \"drives\": [");
+    for (u32 i = 0; i < s->drive_count; ++i) {
+        const DriveInfo* d = &s->drives[i];
+        fprintf(f, "%s\n      { \"letter\": \"%c\", \"model\": ", i ? "," : "", d->letter);
+        json_str(f, d->model);
+        fprintf(f, ", \"bus\": ");
+        json_str(f, d->bus);
+        fprintf(f, ", \"fs\": ");
+        json_str(f, d->fs);
+        fprintf(f, ", \"total_bytes\": %llu, \"logical_sector\": %u, \"physical_sector\": %u, \"virtual_disk\": %s, "
+                   "\"dev_drive\": %s, \"bitlocker\": %d }",
+                d->total_bytes, d->logical_sector, d->physical_sector, d->virtual_disk ? "true" : "false",
+                d->dev_drive ? "true" : "false", d->bitlocker);
     }
     fprintf(f, " ],\n    \"os\": ");
     json_str(f, s->os);

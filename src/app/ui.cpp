@@ -1,4 +1,4 @@
-// Main window UI: warnings, suite tree, settings, live panel, results.
+﻿// Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
 #include "core/elevation.h"
 #include "core/results.h"
@@ -123,6 +123,15 @@ static void draw_warnings() {
         ImGui::EndChild();
         ImGui::PopStyleColor();
     }
+    bool disk_selected = false;
+    for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && s_ui.selected[i];
+    char lines[2][192];
+    const u32 n = disk_selected ? drive_target_warnings(s_ui.params.disk_drive, lines) : 0;
+    for (u32 i = 0; i < n; ++i) {
+        banner(lines[i]);
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
 }
 
 static void draw_sysinfo() {
@@ -141,6 +150,11 @@ static void draw_sysinfo() {
     }
     for (u32 i = 0; i < s->gpu_count; ++i)
         ImGui::Text("GPU%u  %s  (%llu MiB VRAM)", i, s->gpus[i].name, s->gpus[i].dedicated_vram / MiB);
+    for (u32 i = 0; i < s->drive_count; ++i) {
+        char d[192];
+        drive_describe(&s->drives[i], d, sizeof(d));
+        ImGui::Text("Disk  %c:  %s", s->drives[i].letter, d);
+    }
     ImGui::Text("OS    %s, %s", s->os, s->elevated ? "administrator" : "standard user");
     ImGui::Text("Power %s%s, plan \"%s\", mode \"%s\"", s->power.on_ac ? "AC" : "battery",
                 s->power.has_battery ? "" : " (no battery)", s->power.scheme_name, power_mode_name(s->power.mode));
