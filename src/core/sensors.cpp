@@ -10,6 +10,7 @@
 #include <d3dkmthk.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -17,6 +18,9 @@ static SensorReading s_sensors[SENSOR_MAX];
 static u32 s_count;
 static f64 s_last_sample;
 static SRWLOCK s_lock = SRWLOCK_INIT;
+static CpuLive s_cpu;
+static GpuLive s_gpus[8];
+static u32 s_gpu_count;
 static HANDLE s_thread, s_stop;
 
 // Sources, owned by the sampling thread.
@@ -199,8 +203,60 @@ static void sample_disks(Sources* src) {
     }
 }
 
+static void hist_push(f32* hist, u32* count, f32 v) {
+    if (*count < SENSOR_HISTORY) hist[(*count)++] = v;
+    else {
+        memmove(hist, hist + 1, (SENSOR_HISTORY - 1) * sizeof(f32));
+        hist[SENSOR_HISTORY - 1] = v;
+    }
+}
+
+static void sample_live(CpuReader* cpu, GpuReader* gpu) {
+    f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
+    const u32 n = cpu_reader_sample(cpu, util, mhz);
+    if (n) {
+        CpuLive* c = &s_cpu;
+        c->lps = n;
+        f64 sum = 0.0, wsum = 0.0, w = 0.0;
+        for (u32 i = 0; i < n; ++i) {
+            c->util[i] = util[i];
+            c->mhz[i] = mhz[i];
+            sum += util[i];
+            if (!isnan(mhz[i]) && !(mhz[i] <= c->max_mhz)) c->max_mhz = mhz[i];
+            if (util[i] >= 50.0f && !isnan(mhz[i])) {
+                wsum += (f64)mhz[i] * util[i];
+                w += util[i];
+            }
+        }
+        c->avg_util = (f32)(sum / n);
+        c->busy_mhz = w > 0.0 ? (f32)(wsum / w) : NAN;
+        hist_push(c->util_hist, &c->hist_count, c->avg_util);
+    }
+    gpu_reader_collect(gpu);
+    for (u32 i = 0; i < s_gpu_count; ++i) {
+        GpuLive* g = &s_gpus[i];
+        gpu_reader_read(gpu, i, &g->r, true);
+        if (!isnan(g->r.util)) hist_push(g->util_hist, &g->hist_count, g->r.util);
+    }
+}
+
 static DWORD WINAPI sensor_thread(void*) {
     Sources src = {};
+    CpuReader cpu;
+    GpuReader gpu;
+    cpu_reader_open(&cpu);
+    gpu_reader_open(&gpu);
+    AcquireSRWLockExclusive(&s_lock);
+    memset(&s_cpu, 0, sizeof(s_cpu));
+    s_cpu.max_mhz = NAN;
+    s_gpu_count = gpu.count;
+    for (u32 i = 0; i < s_gpu_count; ++i) {
+        memset(&s_gpus[i], 0, sizeof(s_gpus[i]));
+        snprintf(s_gpus[i].name, sizeof(s_gpus[i].name), "%s", g_sys.gpus[i].name);
+        s_gpus[i].opened = gpu.handle[i] != 0;
+        s_gpus[i].vram_total_mib = (f32)(g_sys.gpus[i].dedicated_vram / MiB);
+    }
+    ReleaseSRWLockExclusive(&s_lock);
     AcquireSRWLockExclusive(&s_lock);
     s_count = 0;
     open_gpus(&src);
@@ -212,10 +268,13 @@ static DWORD WINAPI sensor_thread(void*) {
         sample_zones(&src);
         sample_gpus(&src);
         sample_disks(&src);
+        sample_live(&cpu, &gpu);
         s_last_sample = timer_now();
         ReleaseSRWLockExclusive(&s_lock);
     } while (WaitForSingleObject(s_stop, 1000) == WAIT_TIMEOUT);
 
+    cpu_reader_close(&cpu);
+    gpu_reader_close(&gpu);
     if (src.query) PdhCloseQuery(src.query);
     for (u32 i = 0; i < src.gpu_count; ++i) {
         D3DKMT_CLOSEADAPTER ca = { src.gpus[i].adapter };
@@ -240,6 +299,15 @@ void sensors_stop() {
     CloseHandle(s_thread);
     CloseHandle(s_stop);
     s_thread = s_stop = nullptr;
+}
+
+u32 sensors_live(CpuLive* cpu, GpuLive* gpus) {
+    AcquireSRWLockShared(&s_lock);
+    *cpu = s_cpu;
+    const u32 n = s_gpu_count;
+    memcpy(gpus, s_gpus, n * sizeof(GpuLive));
+    ReleaseSRWLockShared(&s_lock);
+    return n;
 }
 
 u32 sensors_snapshot(SensorReading* out, u32 max, f64* updated) {

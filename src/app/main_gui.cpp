@@ -53,7 +53,7 @@ struct ToolDesc {
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
-    { L"EzPcBench - Temperatures", 900, 640, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
+    { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 980, 720, health_ui_draw, health_ui_on_open, nullptr, false },
 };
 
@@ -452,7 +452,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
-                        if (!wcscmp(argv[i + 1], tool_names[t])) tool_open(inst, t);
+                        if (!wcscmp(argv[i + 1], tool_names[t]) || (t == TOOL_TEMPS && !wcscmp(argv[i + 1], L"sensors")))
+                            tool_open(inst, t);
                     continue;
                 }
                 if (wcscmp(argv[i], L"--compare") != 0) continue;

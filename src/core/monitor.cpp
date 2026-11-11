@@ -1,16 +1,12 @@
 // Run monitor (see monitor.h). One sampling thread per run; per-test aggregates are published to g_env
 // when the runner moves on to the next test (or the run ends).
 #include "core/monitor.h"
+#include "core/hwread.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
 #include <windows.h>
-#include <winternl.h>
-#include <d3dkmthk.h>
-#include <pdh.h>
-#include <pdhmsg.h>
-#include <powerbase.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -28,30 +24,16 @@ constexpr u32 SERIES_MAX = 8192;            // per test, ~34 minutes at 4 Hz; la
 constexpr f32 DROP_FLAG_PCT = 10.0f;
 constexpr f32 CPU_HOT_C = 95.0f;
 
-// ---- sources --------------------------------------------------------------------------------------------
-// CPU utilization comes from SystemProcessorPerformanceInformation (per-LP idle / kernel / user times, a
-// direct kernel query: < 1 ms idle). The effective clock comes from PDH "% Processor Performance" (the
-// kernel's APERF/MPERF-based figure) x the nominal clock. That PDH query is served by OS worker threads that
-// get little CPU while HIGHEST-priority benchmark threads fill every core: measured 0.1 ms idle, 120-260 ms
-// under full load, so the sampling interval stretches to ~0.5 s during all-core tests. Timing our own add
-// chain instead was tried and rejected: with the SMT sibling busy (imul) it read 1.2 GHz for a 2.45 GHz core.
-// The ACPI thermal-zone counter stalls for 5-20 s under load and on many laptops doesn't follow the CPU, so
-// CPU temperature waits for the PawnIO sensors (FUTURE.md section 8); cpu_temp_max stays NaN until then.
+// ---- sampling -------------------------------------------------------------------------------------------
+// Readers in hwread.*. The CPU clock query stalls under all-core load (see hwread.h), so samples get further
+// apart during multi-thread tests; averages are time-weighted for that reason. The ACPI thermal-zone counter
+// stalls for 5-20 s under load and on many laptops doesn't follow the CPU, so CPU temperature waits for the
+// PawnIO sensors (FUTURE.md section 8); cpu_temp_max stays NaN until then.
 
 struct Sources {
-    PDH_HQUERY cpu_query, gpu_query;
-    PDH_HCOUNTER cpu_perf, gpu_engine;
-    f32 base_mhz;               // nominal clock "% Processor Performance" is relative to
-    D3DKMT_HANDLE gpu;
-    u32 gpu_luid_low;
-    i32 gpu_luid_high;
-    f32 gpu_warn_c;
-    u8* buf;                    // PDH counter array scratch
-    u32 buf_size;
-    SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION prev[64];     // processor group 0 (the query covers one group)
-    bool have_prev;
+    CpuReader cpu;
+    GpuReader gpu;
     f64 last_t;                 // time of the previous sample
-    f64 cpu_collect_t;          // time of the previous "% Processor Performance" collection
 };
 
 struct Sample {
@@ -63,170 +45,46 @@ struct Sample {
 
 static void open_sources(Sources* s) {
     memset(s, 0, sizeof(*s));
-    s->buf_size = 512 * 1024;      // "GPU Engine" has one instance per process x engine (~400 here)
-    s->buf = (u8*)VirtualAlloc(nullptr, s->buf_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-
-    struct PROCESSOR_POWER_INFORMATION {        // ntpoapi.h layout, not in the user-mode SDK headers
-        ULONG Number, MaxMhz, CurrentMhz, MhzLimit, MaxIdleState, CurrentIdleState;
-    };
-    PROCESSOR_POWER_INFORMATION ppi[64] = {};
-    if (CallNtPowerInformation(ProcessorInformation, nullptr, 0, ppi, sizeof(ppi)) == 0) s->base_mhz = (f32)ppi[0].MaxMhz;
-
-    if (PdhOpenQueryW(nullptr, 0, &s->cpu_query) == ERROR_SUCCESS) {
-        if (PdhAddEnglishCounterW(s->cpu_query, L"\\Processor Information(*)\\% Processor Performance", 0, &s->cpu_perf) != ERROR_SUCCESS)
-            s->cpu_perf = nullptr;
-        PdhCollectQueryData(s->cpu_query);      // rate counters: need a first collection
-    }
-    if (PdhOpenQueryW(nullptr, 0, &s->gpu_query) == ERROR_SUCCESS) {
-        if (PdhAddEnglishCounterW(s->gpu_query, L"\\GPU Engine(*)\\Utilization Percentage", 0, &s->gpu_engine) != ERROR_SUCCESS)
-            s->gpu_engine = nullptr;
-        PdhCollectQueryData(s->gpu_query);
-    }
-
-    if (s_gpu_adapter < g_sys.gpu_count && !g_sys.gpus[s_gpu_adapter].software) {
-        const GpuInfo* g = &g_sys.gpus[s_gpu_adapter];
-        D3DKMT_OPENADAPTERFROMLUID oa = {};
-        oa.AdapterLuid.LowPart = g->luid_low;
-        oa.AdapterLuid.HighPart = g->luid_high;
-        if (D3DKMTOpenAdapterFromLuid(&oa) == 0) {
-            s->gpu = oa.hAdapter;
-            s->gpu_luid_low = g->luid_low;
-            s->gpu_luid_high = g->luid_high;
-            D3DKMT_ADAPTER_PERFDATACAPS caps = {};
-            D3DKMT_QUERYADAPTERINFO qi = {};
-            qi.hAdapter = s->gpu;
-            qi.Type = KMTQAITYPE_ADAPTERPERFDATA_CAPS;
-            qi.pPrivateDriverData = &caps;
-            qi.PrivateDriverDataSize = sizeof(caps);
-            s->gpu_warn_c = D3DKMTQueryAdapterInfo(&qi) == 0 && caps.TemperatureWarning ? caps.TemperatureWarning / 10.0f : 87.0f;
-        }
-    }
+    cpu_reader_open(&s->cpu);
+    gpu_reader_open(&s->gpu, s_gpu_adapter);
 }
 
 static void close_sources(Sources* s) {
-    if (s->cpu_query) PdhCloseQuery(s->cpu_query);
-    if (s->gpu_query) PdhCloseQuery(s->gpu_query);
-    if (s->gpu) {
-        D3DKMT_CLOSEADAPTER ca = { s->gpu };
-        D3DKMTCloseAdapter(&ca);
-    }
-    if (s->buf) VirtualFree(s->buf, 0, MEM_RELEASE);
-}
-
-// Formatted values of a wildcard counter into s->buf; returns the item count (0 on failure).
-static DWORD counter_array(Sources* s, PDH_HCOUNTER c, PDH_FMT_COUNTERVALUE_ITEM_W** items) {
-    if (!c || !s->buf) return 0;
-    DWORD size = s->buf_size, count = 0;
-    *items = (PDH_FMT_COUNTERVALUE_ITEM_W*)s->buf;
-    if (PdhGetFormattedCounterArrayW(c, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, &size, &count, *items) != ERROR_SUCCESS) return 0;
-    return count;
-}
-
-// "0,5" -> 5 (group 0 only, matching the utilization query); -1 for "_Total" / "0,_Total" / other groups.
-static i32 lp_index(const wchar_t* name) {
-    if (wcsstr(name, L"_Total")) return -1;
-    const wchar_t* comma = wcschr(name, L',');
-    if (!comma || _wtoi(name) != 0) return -1;
-    const i32 lp = _wtoi(comma + 1);
-    return lp >= 0 && lp < 64 ? lp : -1;
+    cpu_reader_close(&s->cpu);
+    gpu_reader_close(&s->gpu);
 }
 
 static void sample_cpu(Sources* s, Sample* out) {
     out->cpu_mhz = out->cpu_mhz_max = out->cpu_util = out->cpu_temp = NAN;
-    static SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION cur[64];
-    ULONG len = 0;
-    if (NtQuerySystemInformation(SystemProcessorPerformanceInformation, cur, sizeof(cur), &len) != 0) return;
-    const u32 n = len / sizeof(cur[0]);
-    // Rate counters over < 100 ms are noise; keep accumulating until the interval is long enough.
-    const f64 now = timer_now();
-    const bool clock_ok = s->cpu_query && now - s->cpu_collect_t >= 0.1;
-    if (clock_ok) {
-        PdhCollectQueryData(s->cpu_query);
-        s->cpu_collect_t = timer_now();
-    }
-    if (!s->have_prev || n == 0) {
-        memcpy(s->prev, cur, sizeof(cur));
-        s->have_prev = true;
-        return;
-    }
-    f32 util[64];
-    f64 sum = 0.0;
-    for (u32 i = 0; i < n; ++i) {
-        // KernelTime includes IdleTime.
-        const f64 total = (f64)(cur[i].KernelTime.QuadPart - s->prev[i].KernelTime.QuadPart) +
-                          (f64)(cur[i].UserTime.QuadPart - s->prev[i].UserTime.QuadPart);
-        const f64 idle = (f64)(cur[i].IdleTime.QuadPart - s->prev[i].IdleTime.QuadPart);
-        const f32 u = total > 0.0 ? (f32)(100.0 * (1.0 - idle / total)) : 0.0f;
-        util[i] = u < 0.0f ? 0.0f : u > 100.0f ? 100.0f : u;
-        sum += util[i];
-    }
-    memcpy(s->prev, cur, sizeof(cur));
-    out->cpu_util = (f32)(sum / n);
-
+    f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
+    const u32 n = cpu_reader_sample(&s->cpu, util, mhz);
+    if (!n) return;
     // Clock of the busy LPs (>= 50 % utilization), utilization-weighted: idle LPs report parked or stale
     // clocks that say nothing about the test.
-    PDH_FMT_COUNTERVALUE_ITEM_W* items;
-    const DWORD m = s->base_mhz > 0.0f && clock_ok ? counter_array(s, s->cpu_perf, &items) : 0;
-    f64 wsum = 0.0, w = 0.0;
-    for (DWORD i = 0; i < m; ++i) {
-        const i32 lp = lp_index(items[i].szName);
-        if (lp < 0 || (u32)lp >= n || util[lp] < 50.0f || items[i].FmtValue.CStatus != ERROR_SUCCESS) continue;
-        const f64 pct = items[i].FmtValue.doubleValue;
-        if (!(pct > 0.0 && pct < 350.0)) continue;     // rate over a near-zero interval (reads bunched up under load)
-        const f32 mhz = (f32)(pct * s->base_mhz / 100.0);
-        wsum += (f64)mhz * util[lp];
-        w += util[lp];
-        if (!(mhz <= out->cpu_mhz_max)) out->cpu_mhz_max = mhz;
+    f64 sum = 0.0, wsum = 0.0, w = 0.0;
+    for (u32 i = 0; i < n; ++i) {
+        sum += util[i];
+        if (util[i] < 50.0f || isnan(mhz[i])) continue;
+        wsum += (f64)mhz[i] * util[i];
+        w += util[i];
+        if (!(mhz[i] <= out->cpu_mhz_max)) out->cpu_mhz_max = mhz[i];
     }
+    out->cpu_util = (f32)(sum / n);
     if (w > 0.0) out->cpu_mhz = (f32)(wsum / w);
 }
 
 static void sample_gpu(Sources* s, Sample* out) {
-    out->gpu_mhz = out->gpu_mem_mhz = out->gpu_util = out->gpu_temp = out->gpu_power = NAN;
-    if (s->gpu) {
-        D3DKMT_QUERYADAPTERINFO qi = {};
-        qi.hAdapter = s->gpu;
-        D3DKMT_NODE_PERFDATA node = {};         // node 0 = the 3D / graphics engine
-        qi.Type = KMTQAITYPE_NODEPERFDATA;
-        qi.pPrivateDriverData = &node;
-        qi.PrivateDriverDataSize = sizeof(node);
-        if (D3DKMTQueryAdapterInfo(&qi) == 0 && node.Frequency) out->gpu_mhz = (f32)(node.Frequency / 1e6);
-        D3DKMT_ADAPTER_PERFDATA pd = {};
-        qi.Type = KMTQAITYPE_ADAPTERPERFDATA;
-        qi.pPrivateDriverData = &pd;
-        qi.PrivateDriverDataSize = sizeof(pd);
-        if (D3DKMTQueryAdapterInfo(&qi) == 0) {
-            if (pd.MemoryFrequency) out->gpu_mem_mhz = (f32)(pd.MemoryFrequency / 1e6);
-            if (pd.Temperature) out->gpu_temp = pd.Temperature / 10.0f;
-            if (pd.Power) out->gpu_power = pd.Power / 10.0f;
-        }
-    }
-    // Engine utilization: instances are "pid_<pid>_luid_0x<high>_0x<low>_phys_0_eng_<n>_engtype_<type>", one per
-    // process and engine; sum per engine over processes, report the busiest engine.
-    PDH_FMT_COUNTERVALUE_ITEM_W* items;
-    const DWORD n = s->gpu ? counter_array(s, s->gpu_engine, &items) : 0;
-    f32 engines[64] = {};
-    bool any = false;
-    for (DWORD i = 0; i < n; ++i) {
-        const wchar_t* l = wcsstr(items[i].szName, L"luid_0x");
-        const wchar_t* e = wcsstr(items[i].szName, L"_eng_");
-        if (!l || !e || items[i].FmtValue.CStatus != ERROR_SUCCESS) continue;
-        const u32 high = wcstoul(l + 7, nullptr, 16);
-        const wchar_t* low_s = wcsstr(l + 7, L"_0x");
-        if (!low_s || high != (u32)s->gpu_luid_high || wcstoul(low_s + 3, nullptr, 16) != s->gpu_luid_low) continue;
-        const u32 eng = (u32)_wtoi(e + 5);
-        if (eng < 64) engines[eng] += (f32)items[i].FmtValue.doubleValue;
-        any = true;
-    }
-    if (any) {
-        f32 hi = 0.0f;
-        for (u32 i = 0; i < 64; ++i) hi = engines[i] > hi ? engines[i] : hi;
-        out->gpu_util = hi > 100.0f ? 100.0f : hi;
-    }
+    GpuReading g;
+    gpu_reader_read(&s->gpu, s_gpu_adapter, &g, false);
+    out->gpu_mhz = g.core_mhz;
+    out->gpu_mem_mhz = g.mem_mhz;
+    out->gpu_util = g.util;
+    out->gpu_temp = g.temp_c;
+    out->gpu_power = g.power_pct;
 }
 
 static void take_sample(Sources* s, Sample* out) {
-    if (s->gpu_query) PdhCollectQueryData(s->gpu_query);
+    gpu_reader_collect(&s->gpu);
     sample_cpu(s, out);
     sample_gpu(s, out);
     SYSTEM_POWER_STATUS ps;
@@ -364,7 +222,7 @@ static void acc_add(Acc* a, const Sample* s, const char* phase) {
 static DWORD WINAPI monitor_thread(void*) {
     Sources src;
     open_sources(&src);
-    s_gpu_warn_c = src.gpu_warn_c;
+    s_gpu_warn_c = s_gpu_adapter < src.gpu.count ? src.gpu.warn_c[s_gpu_adapter] : 87.0f;
     while (WaitForSingleObject(s_stop, SAMPLE_MS) == WAIT_TIMEOUT) {
         Sample smp;
         take_sample(&src, &smp);

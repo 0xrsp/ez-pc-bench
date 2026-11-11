@@ -155,7 +155,8 @@ static void sys_line(const char* label, const char* fmt, ...) {
 // Tool window buttons, to the right of the "System" header (outside it), same height as the header.
 struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
 static const ToolButton s_tool_buttons[] = {
-    { TOOL_TEMPS, ICON_THERMOMETER, "Temperatures", "Live CPU, GPU and drive temperatures in their own window." },
+    { TOOL_TEMPS, ICON_THERMOMETER, "Sensors", "Live CPU clock and load per core, GPU clocks / load / VRAM / PCIe "
+                                               "link, and CPU, GPU and drive temperatures in their own window." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
     { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },

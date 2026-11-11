@@ -57,7 +57,7 @@ keep it updated (decision log, open questions, measured facts).
   `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
   suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark`, `--compare [files...]` (opens the compare
-  window with those results), `--tool compare|settings|temps|health` (opens that tool window). Keep the build warning-free.
+  window with those results), `--tool compare|settings|sensors|health` (`temps` = `sensors`) (opens that tool window). Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.
