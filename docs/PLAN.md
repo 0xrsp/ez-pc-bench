@@ -284,9 +284,9 @@ Never export `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` (wou
   the live stats. A CPU hand-off is used because UI (iGPU) and test (dGPU) are different adapters.
 - Each test: warm-up min(1 s, duration / 3) (discarded), then `duration_ms` of frames.
 - The full contract (bindings, workloads, timing, preview) lives in `src/gpu/gpu_common.h`.
-- Reported: **avg FPS**, **1% low**, **0.1% low**, avg / p99 / p99.9 frame time (ms), plus the derived
-  throughput (Mtri/s, Gpix/s, ...). Definition used: *1% low = 1000 / (99th-percentile frame time in ms)*,
-  *0.1% low = 1000 / (99.9th-percentile)*. Frame-time history is plotted live.
+- Reported: avg / p99 / p99.9 frame time (ms), plus the derived throughput (Mtri/s, Gpix/s, ...). The
+  GUI shows the equivalent fps after each frame time (`format_frame_fps`): avg = average FPS, p99 = 1% low,
+  p99.9 = 0.1% low (*1% low = 1000 / p99 frame time in ms*). Frame-time history is plotted live.
 
 Compute (timings + throughput):
 | Test | Derived metric |
@@ -485,6 +485,15 @@ fill) — use 1–2 passes and a shorter duration for frequent runs.
 None currently. (All earlier ones resolved — see decision log.)
 
 ## 12. Decision log
+
+- 2026-11-11 (frame times + compare summary): GPU frame tests report frame times only (avg / p99 /
+  p99.9 ms); the FPS rows were exact reciprocals. The GUI (tree, results, compare) shows the fps in
+  parentheses after frame-time values. The reference files had their fps rows removed (494 metrics).
+  Compare window gained a summary above System: overall and per-suite geometric mean of performance
+  ratios vs the reference (ratios flipped for lower-is-better units, so + = faster), faster / slower /
+  same counts (1% threshold), largest gain / loss with the metric on hover. Left out of the summary:
+  unit x / %, matrix min / max, "Theoretical" constants and p99.9 frame times — those swung 2–8x
+  between two identical-settings runs (a few hitch frames) and pulled the Vulkan average from −2% to −12%.
 
 - 2026-11-11 (compare window): "Compare..." opens a second top-level window (own HWND, swapchain on the
   shared D3D11 device, own ImGui context and font atlas; `g_fonts` is swapped per window, the Win32

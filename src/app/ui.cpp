@@ -94,9 +94,10 @@ static void result_summary(u32 id, char* buf, u32 size) {
     if (r->count == 0) return;
     const Metric* m = res_metrics(r);
     if (r->kind == RESULT_VALUES) {
-        char v[32];
+        char v[32], fps[32];
         format_value(v, sizeof(v), m[0].value);
-        snprintf(buf, size, "%s %s", v, m[0].unit);
+        format_frame_fps(fps, sizeof(fps), m[0].name, m[0].unit, m[0].value);
+        snprintf(buf, size, "%s %s%s", v, m[0].unit, fps);
     } else if (r->kind == RESULT_SERIES) {
         snprintf(buf, size, "%u points", r->count);
     } else {
@@ -616,8 +617,17 @@ static void draw_results() {
             ImGui::TextUnformatted(label);
             ImGui::TableNextColumn();
             format_value(v, sizeof(v), m[k].value);
+            char fps[32];
             theme_push_numbers();
-            text_right(v);
+            if (format_frame_fps(fps, sizeof(fps), m[k].name, m[k].unit, m[k].value)) {
+                // "0.134 (7490 fps)": the fps part dimmed, both right-aligned as one block.
+                align_right(ImGui::CalcTextSize(v).x + ImGui::CalcTextSize(fps).x);
+                ImGui::TextUnformatted(v);
+                ImGui::SameLine(0.0f, 0.0f);
+                ImGui::TextDisabled("%s", fps);
+            } else {
+                text_right(v);
+            }
             ImGui::PopFont();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", m[k].unit);

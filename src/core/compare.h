@@ -47,6 +47,18 @@ struct CompareSet {
 };
 extern CompareSet g_cmp;
 
+// Run vs the reference run over the metrics both have, as performance change: ratios are flipped for
+// lower-is-better units (latency, frame time) so + always means faster / better. Leaves out ratios (unit
+// "x" / "%"), matrix min / max rows, "Theoretical ..." constants and p99.9 frame times (too noisy).
+struct CmpSummary {
+    f64 geomean_pct;                    // geometric mean of the performance ratios, as a % change
+    u32 compared, better, worse, same;  // per-metric counts, "same" = within 1%
+    f64 best_pct, worst_pct;            // largest gain / loss
+    u32 best_row, worst_row;
+};
+// `suite` limits it to one suite (null = all). False if the two runs share no metric.
+bool compare_summary(u32 run, const char* suite, CmpSummary* out);
+
 // Adds a saved results file as the last column. False (with `err`) if it can't be read or the set is full.
 bool compare_add_file(const wchar_t* path, char* err, u32 err_size);
 // Adds the finished tests of the last run in this process. False if there is nothing to add.

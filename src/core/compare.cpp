@@ -1,5 +1,6 @@
 // Comparison set: loads result files (and the current run) into one aligned table, see compare.h.
 #include "core/compare.h"
+#include "core/baseline.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -119,6 +120,41 @@ void compare_remove(u32 run) {
     if (g_cmp.reference == run) g_cmp.reference = 0;
     else if (g_cmp.reference > run) g_cmp.reference--;
     compact();
+}
+
+// ---- summary ------------------------------------------------------------------------------------
+
+static bool in_summary(const CmpRow* r) {
+    if (r->stat == CS_MIN || r->stat == CS_MAX) return false;
+    if (!strcmp(r->unit, "x") || !strcmp(r->unit, "%")) return false;
+    // p99.9 frame times rest on a handful of frames at these frame rates; one hitch moves them 2-8x and would
+    // dominate the averages.
+    if (strstr(r->name, "p99.9")) return false;
+    return strncmp(r->name, "Theoretical", 11) != 0;
+}
+
+bool compare_summary(u32 run, const char* suite, CmpSummary* out) {
+    memset(out, 0, sizeof(*out));
+    const u32 ref = g_cmp.reference;
+    f64 log_sum = 0.0;
+    for (u32 i = 0; i < g_cmp.row_count; ++i) {
+        const CmpRow* r = &g_cmp.rows[i];
+        if (!in_summary(r)) continue;
+        if (suite && strcmp(g_cmp.tests[r->test].suite, suite) != 0) continue;
+        const f64 v = g_cmp.values[i][run], base = g_cmp.values[i][ref];
+        if (!(v > 0.0) || !(base > 0.0)) continue;      // also NaN (missing)
+        const f64 ratio = unit_lower_is_better(r->unit) ? base / v : v / base;
+        const f64 pct = (ratio - 1.0) * 100.0;
+        log_sum += log(ratio);
+        if (out->compared == 0 || pct > out->best_pct) { out->best_pct = pct; out->best_row = i; }
+        if (out->compared == 0 || pct < out->worst_pct) { out->worst_pct = pct; out->worst_row = i; }
+        out->compared++;
+        if (pct >= 1.0) out->better++;
+        else if (pct <= -1.0) out->worse++;
+        else out->same++;
+    }
+    if (out->compared) out->geomean_pct = (exp(log_sum / out->compared) - 1.0) * 100.0;
+    return out->compared > 0;
 }
 
 // ---- system info strings --------------------------------------------------------------------------

@@ -107,6 +107,15 @@ void format_x(char* buf, u32 size, f64 x, const char* x_unit) {
     }
 }
 
+bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f64 value) {
+    buf[0] = 0;
+    if (!name || !unit || strcmp(unit, "ms") != 0 || !strstr(name, "frame time") || !(value > 0.0)) return false;
+    char v[32];
+    format_value(v, sizeof(v), 1000.0 / value);
+    snprintf(buf, size, " (%s fps)", v);
+    return true;
+}
+
 // ---- text --------------------------------------------------------------------
 
 struct TextBuf { char* p; u32 size, len; };

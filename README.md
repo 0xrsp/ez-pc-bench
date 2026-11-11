@@ -14,7 +14,8 @@ that run the same tests.
   bandwidth sweeps.
 - **GPU (Vulkan + D3D12):**
   - compute: FP32, FP16 and INT32 throughput, VRAM and shared-memory bandwidth, PCIe transfers
-  - 3D: triangles, fill rate, draw calls, a lit scene, with avg FPS and 1 % / 0.1 % lows
+  - 3D: triangles, fill rate, draw calls, a lit scene, with avg / p99 / p99.9 frame times (the GUI also
+    shows them as fps)
   - 2D: sprites, blit and clear
   - both APIs run the same shaders, so their numbers compare directly
 - **Disk:** CrystalDiskMark-style SEQ1M and RND4K at several queue depths, reads and writes, on one or
@@ -50,7 +51,8 @@ vcvars is needed.
 2. Tick the tests you want and press **Run**.
 3. **Save results** writes a `.toon.txt` file.
 4. **Compare...** opens the compare window. Add saved results (or drop files onto the window) and the
-   current run to see them side by side: system info, raw values and the change vs a reference run.
+   current run to see them side by side: an overall / per-suite summary, system info, raw values and
+   the change vs a reference run.
    **Copy table** puts it on the clipboard for spreadsheets.
 
 The app asks for admin rights at start. They are optional; without them a few tweaks are skipped.

@@ -27,6 +27,9 @@ const char* status_name(BenchStatus s);
 void format_value(char* buf, u32 size, f64 v);
 // Formats a series x value using its unit ("16 KiB" for bytes).
 void format_x(char* buf, u32 size, f64 x, const char* x_unit);
+// Frame-time metrics (unit "ms", name containing "frame time") as the equivalent rate: " (7490 fps)" into
+// buf and true; false (buf = "") for any other metric.
+bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f64 value);
 
 // Plain-text report of all results (sysinfo header + table, baseline deltas when one is loaded).
 // Returns length written (truncated to size).

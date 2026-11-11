@@ -100,9 +100,7 @@ void gpu_frames_report(BenchResult* out, f64 work_per_frame, const char* work_na
     std::sort(s_sorted, s_sorted + n);
     const f64 avg_ms = total_ms / n;
     const f64 p99 = percentile(s_sorted, n, 0.99), p999 = percentile(s_sorted, n, 0.999);
-    res_add(out, "Average FPS", "fps", avg_ms > 0.0 ? 1000.0 / avg_ms : 0.0);
-    res_add(out, "1% low", "fps", p99 > 0.0 ? 1000.0 / p99 : 0.0);
-    res_add(out, "0.1% low", "fps", p999 > 0.0 ? 1000.0 / p999 : 0.0);
+    // Frame times only; the GUI shows the equivalent fps next to them (avg = average FPS, p99 = 1% low, ...).
     res_add(out, "Avg frame time", "ms", avg_ms);
     res_add(out, "p99 frame time", "ms", p99);
     res_add(out, "p99.9 frame time", "ms", p999);

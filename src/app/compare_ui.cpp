@@ -22,6 +22,7 @@ struct CompareUi {
     ImGuiTextFilter filter;
     bool show_change = true;
     bool show_system = true;
+    bool show_summary = true;
 };
 static CompareUi s_cu;
 
@@ -208,10 +209,20 @@ static void value_cell(u32 row, u32 c, f32 delta_w) {
         ImGui::PopStyleColor();
         return;
     }
-    char s[32];
+    char s[32], fps[32];
     format_value(s, sizeof(s), v);
+    const CmpRow* r = &g_cmp.rows[row];
+    const bool has_fps = format_frame_fps(fps, sizeof(fps), r->name, r->unit, v);
     theme_push_numbers();
-    text_right(s, value_right);
+    // Value right-aligned before the change column; frame times get the equivalent fps (dimmed) after it.
+    const f32 fps_w = has_fps ? ImGui::CalcTextSize(fps).x : 0.0f;
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorPosX(value_right - ImGui::CalcTextSize(s).x - fps_w);
+    ImGui::TextUnformatted(s);
+    if (has_fps) {
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextDisabled("%s", fps);
+    }
     if (delta && !isnan(base)) {
         const f64 pct = delta_pct(v, base);
         const i32 rating = delta_rating(pct, g_cmp.rows[row].unit);
@@ -223,14 +234,119 @@ static void value_cell(u32 row, u32 c, f32 delta_w) {
     ImGui::PopFont();
 }
 
-static void group_row(const char* title, u32 cols) {
+static void group_row(const char* title) {
     ImGui::TableNextRow();
     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(g_pal.container));
     ImGui::TableSetColumnIndex(0);
     ImGui::PushFont(g_fonts.medium, 0.0f);
     ImGui::TextUnformatted(title);
     ImGui::PopFont();
-    (void)cols;
+}
+
+// "Single thread", "Read @ 16 KiB", "One-way latency avg".
+static void row_label(const CmpRow* r, char* buf, u32 size) {
+    static const char* const stat_names[] = { "", "min", "avg", "max" };
+    const CmpTest* t = &g_cmp.tests[r->test];
+    if (r->stat != CS_VALUE) {
+        snprintf(buf, size, "%s %s", r->name, stat_names[r->stat]);
+    } else if (t->x_unit[0]) {
+        char x[32];
+        format_x(x, sizeof(x), r->x, t->x_unit);
+        snprintf(buf, size, "%s @ %s", r->name, x);
+    } else {
+        snprintf(buf, size, "%s", r->name);
+    }
+}
+
+// ---- summary ------------------------------------------------------------------------------------
+
+static void summary_label(const char* label, const char* tooltip, bool emphasis) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::Indent();
+    if (emphasis) ImGui::PushFont(g_fonts.medium, 0.0f);
+    ImGui::TextUnformatted(label);
+    if (emphasis) ImGui::PopFont();
+    ImGui::Unindent();
+    if (tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+}
+
+static void pct_cell(f64 pct, bool big) {
+    char s[32];
+    format_delta(s, sizeof(s), pct);
+    if (big) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
+    else theme_push_numbers();
+    ImGui::TextColored(pct >= 1.0 ? g_pal.ok : pct <= -1.0 ? g_pal.error : g_pal.on_surface_variant, "%s", s);
+    ImGui::PopFont();
+}
+
+static void dash_cell() { ImGui::TextColored(g_pal.outline, "\xE2\x80\x94"); }
+
+// Which metric a largest gain / loss came from.
+static void row_tooltip(u32 row) {
+    if (!ImGui::IsItemHovered()) return;
+    const CmpRow* r = &g_cmp.rows[row];
+    char label[128];
+    row_label(r, label, sizeof(label));
+    ImGui::SetTooltip("%s: %s (%s)", g_cmp.tests[r->test].title, label, r->unit);
+}
+
+static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
+    group_row("Summary vs reference");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Performance change against the reference run: + = faster / better, also for latency and time.");
+    CmpSummary sum[CMP_MAX_RUNS];
+    bool have[CMP_MAX_RUNS];
+    for (u32 c = 0; c < runs; ++c) have[c] = c != g_cmp.reference && compare_summary(c, nullptr, &sum[c]);
+
+    summary_label("Overall", "Geometric mean of the per-metric ratios over all metrics both runs have.\n"
+                  "Latency and time are flipped so + always means faster. Left out: ratios (x, %), constants and\n"
+                  "p99.9 frame times (a handful of frames, too noisy to average).", true);
+    for (u32 c = 0; c < runs; ++c) {
+        ImGui::TableSetColumnIndex((int)(2 + c));
+        if (c == g_cmp.reference) ImGui::TextDisabled("reference");
+        else if (have[c]) pct_cell(sum[c].geomean_pct, true);
+        else dash_cell();
+    }
+    for (u32 k = 0; suite_count > 1 && k < suite_count; ++k) {
+        summary_label(suites[k], nullptr, false);
+        for (u32 c = 0; c < runs; ++c) {
+            ImGui::TableSetColumnIndex((int)(2 + c));
+            CmpSummary s;
+            if (c == g_cmp.reference) continue;
+            if (compare_summary(c, suites[k], &s)) pct_cell(s.geomean_pct, false);
+            else dash_cell();
+        }
+    }
+    summary_label("Faster / slower / same", "Metrics more than 1% faster / slower than the reference, and within 1%.", false);
+    for (u32 c = 0; c < runs; ++c) {
+        ImGui::TableSetColumnIndex((int)(2 + c));
+        if (!have[c]) continue;
+        theme_push_numbers();
+        ImGui::TextColored(g_pal.ok, "%u", sum[c].better);
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextDisabled(" / ");
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextColored(g_pal.error, "%u", sum[c].worse);
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextDisabled(" / %u", sum[c].same);
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u metrics compared", sum[c].compared);
+    }
+    summary_label("Largest gain", "Hover a value to see the metric.", false);
+    for (u32 c = 0; c < runs; ++c) {
+        ImGui::TableSetColumnIndex((int)(2 + c));
+        if (!have[c]) continue;
+        pct_cell(sum[c].best_pct, false);
+        row_tooltip(sum[c].best_row);
+    }
+    summary_label("Largest loss", "Hover a value to see the metric.", false);
+    for (u32 c = 0; c < runs; ++c) {
+        ImGui::TableSetColumnIndex((int)(2 + c));
+        if (!have[c]) continue;
+        pct_cell(sum[c].worst_pct, false);
+        row_tooltip(sum[c].worst_row);
+    }
 }
 
 static void draw_table() {
@@ -238,7 +354,13 @@ static void draw_table() {
     const f32 fs = ImGui::GetFontSize();
     theme_push_numbers();
     const f32 delta_w = ImGui::CalcTextSize("+100.0%").x + fs * 0.8f;
-    const f32 value_w = ImGui::CalcTextSize("12345.6").x;
+    f32 value_w = ImGui::CalcTextSize("12345.6").x;
+    char fps[32];
+    for (u32 i = 0; i < g_cmp.row_count; ++i)     // room for " (1234 fps)" after frame times
+        if (format_frame_fps(fps, sizeof(fps), g_cmp.rows[i].name, g_cmp.rows[i].unit, 1.0)) {
+            value_w = ImGui::CalcTextSize("0.123 (12345 fps)").x;
+            break;
+        }
     ImGui::PopFont();
     const f32 run_w = value_w + delta_w + fs * 1.5f;     // same width with or without the change shown
 
@@ -269,8 +391,12 @@ static void draw_table() {
     }
     if (g_cmp.run_count != runs) { ImGui::EndTable(); return; }     // a run was removed: redraw next frame
 
+    const char* suites[CMP_MAX_TESTS];
+    const u32 suite_count = suite_list(suites);
+    if (s_cu.show_summary && runs > 1) draw_summary(runs, suites, suite_count);
+
     if (s_cu.show_system) {
-        group_row("System", cols);
+        group_row("System");
         const CmpRun* ref = &g_cmp.runs[g_cmp.reference];
         for (u32 i = 0; i < CI_COUNT; ++i) {
             ImGui::TableNextRow();
@@ -290,30 +416,20 @@ static void draw_table() {
         }
     }
 
-    const char* suites[CMP_MAX_TESTS];
-    const u32 suite_count = suite_list(suites);
     const char* suite = s_cu.suite && s_cu.suite <= suite_count ? suites[s_cu.suite - 1] : nullptr;
-    static const char* const stat_names[] = { "", "min", "avg", "max" };
     i32 last_test = -1;
-    char label[128], x[32];
+    char label[128];
     for (u32 i = 0; i < g_cmp.row_count; ++i) {
         const CmpRow* r = &g_cmp.rows[i];
         if (!row_visible(r, suite)) continue;
         const CmpTest* t = &g_cmp.tests[r->test];
         if ((i32)r->test != last_test) {
-            group_row(t->title, cols);
+            group_row(t->title);
             last_test = r->test;
         }
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        if (r->stat != CS_VALUE) {
-            snprintf(label, sizeof(label), "%s %s", r->name, stat_names[r->stat]);
-        } else if (t->x_unit[0]) {
-            format_x(x, sizeof(x), r->x, t->x_unit);
-            snprintf(label, sizeof(label), "%s @ %s", r->name, x);
-        } else {
-            snprintf(label, sizeof(label), "%s", r->name);
-        }
+        row_label(r, label, sizeof(label));
         ImGui::Indent();
         ImGui::TextUnformatted(label);
         ImGui::Unindent();
@@ -375,6 +491,8 @@ void compare_ui_draw() {
         s_cu.filter.Build();
     ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
     theme_checkbox("Show change", &s_cu.show_change);
+    ImGui::SameLine();
+    theme_checkbox("Summary", &s_cu.show_summary);
     ImGui::SameLine();
     theme_checkbox("System info", &s_cu.show_system);
 

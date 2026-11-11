@@ -97,7 +97,7 @@ tests[53]{id,suite,group,name,status,seconds,kind,rows,cols,x_name,x_unit,error}
   gpu_d3d12.2d.sprites,GPU (D3D12),2D,Sprite batch,done,4.008467,values,0,0,"","",""
   gpu_d3d12.2d.blit,GPU (D3D12),2D,Blit / copy,done,4.0094715,values,0,0,"","",""
   gpu_d3d12.2d.clear,GPU (D3D12),2D,Clear,done,4.0040242,values,0,0,"","",""
-metrics[542]{id,name,unit,value,x}:
+metrics[494]{id,name,unit,value,x}:
   cpu.int.alu,Single thread,Gops/s,17.722105,0
   cpu.int.alu,Multi-thread,Gops/s,140.27668,0
   cpu.int.alu,MT / ST,x,7.91535094,0
@@ -505,57 +505,33 @@ metrics[542]{id,name,unit,value,x}:
   gpu_vk.compute.lds,Dispatch time max,ms,3.993376,0
   gpu_vk.compute.transfer,Upload,GB/s,14.1867345,0
   gpu_vk.compute.transfer,Readback,GB/s,14.077644,0
-  gpu_vk.3d.triangles,Average FPS,fps,1324.72225,0
-  gpu_vk.3d.triangles,1% low,fps,923.105331,0
-  gpu_vk.3d.triangles,0.1% low,fps,605.436815,0
   gpu_vk.3d.triangles,Avg frame time,ms,0.754875221,0
   gpu_vk.3d.triangles,p99 frame time,ms,1.08329999,0
   gpu_vk.3d.triangles,p99.9 frame time,ms,1.65170002,0
   gpu_vk.3d.triangles,Triangles,Mtri/s,2649.4445,0
-  gpu_vk.3d.fill,Average FPS,fps,3228.17408,0
-  gpu_vk.3d.fill,1% low,fps,2233.63863,0
-  gpu_vk.3d.fill,0.1% low,fps,751.089058,0
   gpu_vk.3d.fill,Avg frame time,ms,0.309772638,0
   gpu_vk.3d.fill,p99 frame time,ms,0.447699994,0
   gpu_vk.3d.fill,p99.9 frame time,ms,1.33140004,0
   gpu_vk.3d.fill,Pixel fill,Gpix/s,107.103068,0
-  gpu_vk.3d.texfill,Average FPS,fps,5434.06127,0
-  gpu_vk.3d.texfill,1% low,fps,3195.90917,0
-  gpu_vk.3d.texfill,0.1% low,fps,891.503929,0
   gpu_vk.3d.texfill,Avg frame time,ms,0.184024425,0
   gpu_vk.3d.texfill,p99 frame time,ms,0.312900007,0
   gpu_vk.3d.texfill,p99.9 frame time,ms,1.12170005,0
   gpu_vk.3d.texfill,Texel rate,Gtex/s,180.289111,0
-  gpu_vk.3d.drawcalls,Average FPS,fps,3155.1536,0
-  gpu_vk.3d.drawcalls,1% low,fps,1882.17577,0
-  gpu_vk.3d.drawcalls,0.1% low,fps,436.585912,0
   gpu_vk.3d.drawcalls,Avg frame time,ms,0.316941781,0
   gpu_vk.3d.drawcalls,p99 frame time,ms,0.531300008,0
   gpu_vk.3d.drawcalls,p99.9 frame time,ms,2.29049993,0
   gpu_vk.3d.drawcalls,Draw calls,K draws/s,31551.536,0
-  gpu_vk.3d.scene,Average FPS,fps,7489.62023,0
-  gpu_vk.3d.scene,1% low,fps,3673.76944,0
-  gpu_vk.3d.scene,0.1% low,fps,437.790045,0
   gpu_vk.3d.scene,Avg frame time,ms,0.133518118,0
   gpu_vk.3d.scene,p99 frame time,ms,0.272199988,0
   gpu_vk.3d.scene,p99.9 frame time,ms,2.28419995,0
-  gpu_vk.2d.sprites,Average FPS,fps,799.983201,0
-  gpu_vk.2d.sprites,1% low,fps,668.538566,0
-  gpu_vk.2d.sprites,0.1% low,fps,508.776394,0
   gpu_vk.2d.sprites,Avg frame time,ms,1.25002625,0
   gpu_vk.2d.sprites,p99 frame time,ms,1.49580002,0
   gpu_vk.2d.sprites,p99.9 frame time,ms,1.9655,0
   gpu_vk.2d.sprites,Sprites,Msprites/s,79.9983201,0
-  gpu_vk.2d.blit,Average FPS,fps,5427.67832,0
-  gpu_vk.2d.blit,1% low,fps,3063.72538,0
-  gpu_vk.2d.blit,0.1% low,fps,396.589314,0
   gpu_vk.2d.blit,Avg frame time,ms,0.184240838,0
   gpu_vk.2d.blit,p99 frame time,ms,0.326400012,0
   gpu_vk.2d.blit,p99.9 frame time,ms,2.52150011,0
   gpu_vk.2d.blit,Copy bandwidth,GB/s,720.309361,0
-  gpu_vk.2d.clear,Average FPS,fps,9177.79442,0
-  gpu_vk.2d.clear,1% low,fps,4587.15607,0
-  gpu_vk.2d.clear,0.1% low,fps,719.320951,0
   gpu_vk.2d.clear,Avg frame time,ms,0.10895864,0
   gpu_vk.2d.clear,p99 frame time,ms,0.217999995,0
   gpu_vk.2d.clear,p99.9 frame time,ms,1.39020002,0
@@ -585,57 +561,33 @@ metrics[542]{id,name,unit,value,x}:
   gpu_d3d12.compute.lds,Dispatch time max,ms,4.069376,0
   gpu_d3d12.compute.transfer,Upload,GB/s,14.1236512,0
   gpu_d3d12.compute.transfer,Readback,GB/s,13.933994,0
-  gpu_d3d12.3d.triangles,Average FPS,fps,1278.23891,0
-  gpu_d3d12.3d.triangles,1% low,fps,888.494031,0
-  gpu_d3d12.3d.triangles,0.1% low,fps,642.673524,0
   gpu_d3d12.3d.triangles,Avg frame time,ms,0.782326363,0
   gpu_d3d12.3d.triangles,p99 frame time,ms,1.12549996,0
   gpu_d3d12.3d.triangles,p99.9 frame time,ms,1.55599999,0
   gpu_d3d12.3d.triangles,Triangles,Mtri/s,2556.47783,0
-  gpu_d3d12.3d.fill,Average FPS,fps,3138.63779,0
-  gpu_d3d12.3d.fill,1% low,fps,2095.55741,0
-  gpu_d3d12.3d.fill,0.1% low,fps,932.313997,0
   gpu_d3d12.3d.fill,Avg frame time,ms,0.318609558,0
   gpu_d3d12.3d.fill,p99 frame time,ms,0.477200001,0
   gpu_d3d12.3d.fill,p99.9 frame time,ms,1.07260001,0
   gpu_d3d12.3d.fill,Pixel fill,Gpix/s,104.132469,0
-  gpu_d3d12.3d.texfill,Average FPS,fps,5250.1046,0
-  gpu_d3d12.3d.texfill,1% low,fps,2885.17026,0
-  gpu_d3d12.3d.texfill,0.1% low,fps,1068.49025,0
   gpu_d3d12.3d.texfill,Avg frame time,ms,0.190472395,0
   gpu_d3d12.3d.texfill,p99 frame time,ms,0.346599996,0
   gpu_d3d12.3d.texfill,p99.9 frame time,ms,0.935899973,0
   gpu_d3d12.3d.texfill,Texel rate,Gtex/s,174.185871,0
-  gpu_d3d12.3d.drawcalls,Average FPS,fps,6550.06544,0
-  gpu_d3d12.3d.drawcalls,1% low,fps,3344.48166,0
-  gpu_d3d12.3d.drawcalls,0.1% low,fps,1046.90115,0
   gpu_d3d12.3d.drawcalls,Avg frame time,ms,0.15267023,0
   gpu_d3d12.3d.drawcalls,p99 frame time,ms,0.298999995,0
   gpu_d3d12.3d.drawcalls,p99.9 frame time,ms,0.955200016,0
   gpu_d3d12.3d.drawcalls,Draw calls,K draws/s,65500.6544,0
-  gpu_d3d12.3d.scene,Average FPS,fps,6826.30239,0
-  gpu_d3d12.3d.scene,1% low,fps,3471.01696,0
-  gpu_d3d12.3d.scene,0.1% low,fps,1126.50668,0
   gpu_d3d12.3d.scene,Avg frame time,ms,0.146492192,0
   gpu_d3d12.3d.scene,p99 frame time,ms,0.288100004,0
   gpu_d3d12.3d.scene,p99.9 frame time,ms,0.887700021,0
-  gpu_d3d12.2d.sprites,Average FPS,fps,779.424369,0
-  gpu_d3d12.2d.sprites,1% low,fps,644.288407,0
-  gpu_d3d12.2d.sprites,0.1% low,fps,342.032345,0
   gpu_d3d12.2d.sprites,Avg frame time,ms,1.28299812,0
   gpu_d3d12.2d.sprites,p99 frame time,ms,1.55209994,0
   gpu_d3d12.2d.sprites,p99.9 frame time,ms,2.92370009,0
   gpu_d3d12.2d.sprites,Sprites,Msprites/s,77.9424369,0
-  gpu_d3d12.2d.blit,Average FPS,fps,5030.91967,0
-  gpu_d3d12.2d.blit,1% low,fps,3045.06712,0
-  gpu_d3d12.2d.blit,0.1% low,fps,1044.60461,0
   gpu_d3d12.2d.blit,Avg frame time,ms,0.198770814,0
   gpu_d3d12.2d.blit,p99 frame time,ms,0.328399986,0
   gpu_d3d12.2d.blit,p99.9 frame time,ms,0.957300007,0
   gpu_d3d12.2d.blit,Copy bandwidth,GB/s,667.655362,0
-  gpu_d3d12.2d.clear,Average FPS,fps,11589.5539,0
-  gpu_d3d12.2d.clear,1% low,fps,4604.05165,0
-  gpu_d3d12.2d.clear,0.1% low,fps,1252.97583,0
   gpu_d3d12.2d.clear,Avg frame time,ms,0.0862845983,0
   gpu_d3d12.2d.clear,p99 frame time,ms,0.217199996,0
   gpu_d3d12.2d.clear,p99.9 frame time,ms,0.798099995,0
