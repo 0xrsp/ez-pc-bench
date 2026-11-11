@@ -1,11 +1,12 @@
 # Publishes site/ to GitHub Pages (https://0xrsp.github.io/ez-pc-bench/) whenever it changes on main.
-# The Inter font files are copied in from third_party/ so they aren't stored twice in the repo.
+# The Inter font files are copied in from third_party/ so they aren't stored twice in the repo. The results
+# page (site/results.html) gets its table data from library/*.toon.txt via tools/site_library.py (static JSON).
 name: Pages
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", "third_party/inter/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "third_party/inter/**", "library/**", "tools/site_library.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +32,9 @@ jobs:
           cp -r site/. _site/
           mkdir -p _site/fonts
           cp third_party/inter/Inter-Regular.ttf third_party/inter/Inter-Medium.ttf _site/fonts/
+          mkdir -p _site/library _site/data
+          cp library/*.toon.txt _site/library/
+          python3 tools/site_library.py library _site/data/library.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
