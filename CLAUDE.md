@@ -45,7 +45,10 @@ keep it updated (decision log, open questions, measured facts).
 - Use Win32 APIs directly (threads, files, timers). No extra dependencies beyond Dear ImGui (vendored),
   Vulkan SDK and Windows SDK without discussing first.
 - Keep it fast and small: no work in the UI thread while benchmarks run beyond drawing at a throttled rate.
-- Benchmarks report raw throughput numbers with explicit units; never invented "scores".
+- Benchmarks report raw numbers with explicit units; those are the primary output everywhere. The only
+  aggregate is the overall score (`core/score.*`): derived from the raw results by a published, versioned
+  formula (one data table per version), always shown with its breakdown and version, never replacing the raw
+  numbers. No other made-up "points".
 - Code should be clean and readable: short files per suite, clear names, comments only where intent isn't obvious.
 
 ## Build
@@ -55,9 +58,17 @@ keep it updated (decision log, open questions, measured facts).
   never run two heavy builds/benchmarks at once (the PC froze once; see PLAN.md §13).
 - Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --out out.toon.txt` (`--list` shows ids,
   `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
+- CLI modes (besides `--run`): `--health [--hide-serial]` (drive health report), `--sysinfo [base]` (system
+  report), `--stress <tests>` (stability tester), `--capture <exe|pid|*>` (frame capture, needs admin),
+  `--log-sensors <file>` / `--list-sensors`, `--score [files...]` (`--score-write`), `--html <file>`,
+  `--adv-report` (PawnIO sensors); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
+  `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests). `-h` prints the full usage.
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
   suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark`, `--compare [files...]` (opens the compare
-  window with those results), `--tool compare|settings|sensors|health` (`temps` = `sensors`) (opens that tool window). Keep the build warning-free.
+  window with those results), `--tool compare|settings|sensors|health|system|stability|frames|history` (`temps` = `sensors`)
+  (opens that tool window), `--tab results|charts|score|ranking`, `--charts` (= `--tab charts`), `--sustain <minutes>`,
+  `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor overlay), `--stability-run <ids> [seconds]`
+  (`--dev --inject` adds the error self-test). Session only, never saved to the ini. Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.

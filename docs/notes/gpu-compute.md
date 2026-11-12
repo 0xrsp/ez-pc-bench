@@ -1,9 +1,9 @@
-# GPU compute / memory / pipelines / multi-adapter (FUTURE.md Â§5)
+# GPU compute / memory / pipelines / multi-adapter (FUTURE.md §5)
 
 Stream notes, 2026-11-11. What was built, how it works, measured numbers, and what's left. For PLAN.md / FUTURE.md
 to absorb when merged.
 
-## FUTURE.md Â§5 items
+## FUTURE.md §5 items
 
 | Item | Status |
 |---|---|
@@ -14,7 +14,7 @@ to absorb when merged.
 | P2 atomics throughput | done, both APIs |
 | P2 pipeline / shader compile time, cold vs cached | done, both APIs |
 | P2 several adapters in one run | done (suite layer, CLI, GUI, ini, TOON, compare) |
-| P3 texture format sampling rates (BC1â€“BC7, R32F, ...) | done, both APIs |
+| P3 texture format sampling rates (BC1–BC7, R32F, ...) | done, both APIs |
 | P3 anisotropic filtering cost | done, both APIs |
 
 D3D12 matrix: the released runtime / DXC have no matrix-multiply HLSL. `D3D12_OPTIONS9.WaveMMATier` exists but the
@@ -35,8 +35,8 @@ New `GPU_TESTS` rows (gpu_common.h), same ids under `gpu_vk.` and `gpu_d3d12.`; 
 | `mem.latency` | series `Latency` (ns) vs working set 4 KiB .. 512 MiB (256 MiB if < 4 GiB VRAM) | single-thread chase, 128-byte stride, random cycle (Sattolo), each dispatch continues where the last stopped |
 | `mem.sweep` | series `Read` (GB/s) vs working set 16 KiB .. 512 MiB / 256 MiB | 1024 groups x 256 threads x 512 uint4 loads, wrapping inside the working set |
 | `pso.pso` | `Compute, cold` / `Compute, cached` / `Graphics, cold` / `Graphics, cached` (PSO/s), `Compute, cold, slowest` / `Graphics, cold, slowest` (ms) | see below |
-| `tex.formats` | one metric per format: RGBA8, R32F, RGBA16F, RGBA32F, BC1, BC3, BC4, BC5, BC6H, BC7 (Gtex/s) | 2048Â² random texels / blocks, bilinear, 2048x1024 threads x 128 samples; formats the device can't sample/filter are left out |
-| `tex.aniso` | Bilinear, Trilinear, Anisotropic 2x / 4x / 8x / 16x (Gtex/s) | RGBA8 2048Â² + full mips, `SampleGrad` with a 16:1 footprint |
+| `tex.formats` | one metric per format: RGBA8, R32F, RGBA16F, RGBA32F, BC1, BC3, BC4, BC5, BC6H, BC7 (Gtex/s) | 2048² random texels / blocks, bilinear, 2048x1024 threads x 128 samples; formats the device can't sample/filter are left out |
+| `tex.aniso` | Bilinear, Trilinear, Anisotropic 2x / 4x / 8x / 16x (Gtex/s) | RGBA8 2048² + full mips, `SampleGrad` with a 16:1 footprint |
 
 Timing: GPU timestamps around every dispatch (as the base compute tests). Series points take max(0.1 s, duration/16);
 formats max(0.2 s, duration/8) each; aniso modes max(0.2 s, duration/6) each. PSO: each cold pass stops after 40 % of
@@ -84,10 +84,10 @@ RTX 5060 Laptop (adapter 0) / Radeon 780M (adapter 1), from one `--gpu 0,1` run.
 |---|---|---|---|---|
 | FP64 | 0.237 TFLOPS | 0.236 | 0.123 | 0.093 |
 | dp4a | 23.2 TOPS | 34.2 | 6.9 | 11.6 |
-| Coop matrix FP16 / INT8 | 35.9 TFLOPS / 133 TOPS | skipped | 11.5â€“15.6 / 10.1â€“15.1 | skipped |
-| Atomics one / unique / LDS (G/s) | 50â€“76 / 203 / 367 | 78 / 135 / 353 | 115 / 140 / 449 | 165 / 144 / 455 |
-| Latency L1 / L2 / VRAM | 18.6 / 118â€“155 / 331â€“341 ns | 17.5 / 117 / 342 ns | 13â€“17 (L0) / 41â€“56 / 116â€“200 / 250â€“300 ns | 12â€“13 / 34â€“39 / 67â€“76 / 203â€“289 ns |
-| Sweep L1 / L2 / VRAM (GB/s) | 2284 / 1600 / 348â€“365 | 2285 / 1650â€“1830 / 286â€“331 | 2300 / 1100â€“1800 / 78â€“86 | 3250 / 1060â€“2420 / 83â€“91 |
+| Coop matrix FP16 / INT8 | 35.9 TFLOPS / 133 TOPS | skipped | 11.5–15.6 / 10.1–15.1 | skipped |
+| Atomics one / unique / LDS (G/s) | 50–76 / 203 / 367 | 78 / 135 / 353 | 115 / 140 / 449 | 165 / 144 / 455 |
+| Latency L1 / L2 / VRAM | 18.6 / 118–155 / 331–341 ns | 17.5 / 117 / 342 ns | 13–17 (L0) / 41–56 / 116–200 / 250–300 ns | 12–13 / 34–39 / 67–76 / 203–289 ns |
+| Sweep L1 / L2 / VRAM (GB/s) | 2284 / 1600 / 348–365 | 2285 / 1650–1830 / 286–331 | 2300 / 1100–1800 / 78–86 | 3250 / 1060–2420 / 83–91 |
 | PSO compute cold / cached (PSO/s) | 23.6 / 14584 | 27.7 / 2335 | 26.7 / 57262 | 46.7 / 21564 |
 | PSO graphics cold / cached (PSO/s) | 16.8 / 7872 | 28.6 / 2257 | 20.8 / 33911 | 17.1 / 9170 |
 | Slowest cold PSO compute / graphics | 43 / 62 ms | 39 / 45 ms | 40 / 53 ms | 23 / 62 ms |
@@ -99,7 +99,7 @@ Reading them:
 - RTX 5060: FP64 = 1/64 of FP32; L1 ~18 ns up to 64 KiB, L2 ~117 ns up to 32 MiB (= its 32 MiB L2), VRAM ~340 ns.
   The sweep drops at 64 MiB the same way. Half-rate RGBA16F / BC6H and quarter-rate RGBA32F filtering; BC3 / BC7
   ~20 % slower than BC1. Aniso cost scales with the probe count above 2x (16x = 1/9 of bilinear).
-- 780M (RDNA3 iGPU): steps after 16 KiB (L0), ~256 KiB (L1) and 2 MiB (L2), then system DDR5 (~200â€“300 ns, ~80 GB/s = the shared
+- 780M (RDNA3 iGPU): steps after 16 KiB (L0), ~256 KiB (L1) and 2 MiB (L2), then system DDR5 (~200–300 ns, ~80 GB/s = the shared
   DDR5-5600 bus). Every format filters at full rate (~77 Gtex/s) except RGBA16F (0.8x) and RGBA32F (0.4x). The 780M
   latency curve on Vulkan is noisier (clock ramping on a 1-thread load); its first point read 34 ns before the
   warm-up was added for the first point.
@@ -107,9 +107,9 @@ Reading them:
   FP64 on the 780M the other way round (VK 0.12 vs D3D12 0.09). Driver codegen, not measurement: both use the same
   dispatch / timestamp code.
 - One-address atomics are clearly aggregated per wave by the hardware / driver (76 G/s into one word on NVIDIA,
-  165 G/s on the 780M), so they measure that path, not raw L2 atomic latency. NVIDIA's value swung 50â€“78 between runs.
-- Cold PSO creation is ~25â€“45 ms per pipeline on both GPUs and APIs: one new pipeline per frame is a visible hitch at
-  60 fps. Cached recreation is 100â€“2000x faster. NVIDIA D3D12 pipeline libraries load ~6x slower than its Vulkan
+  165 G/s on the 780M), so they measure that path, not raw L2 atomic latency. NVIDIA's value swung 50–78 between runs.
+- Cold PSO creation is ~25–45 ms per pipeline on both GPUs and APIs: one new pipeline per frame is a visible hitch at
+  60 fps. Cached recreation is 100–2000x faster. NVIDIA D3D12 pipeline libraries load ~6x slower than its Vulkan
   pipeline cache.
 
 ## Verification
@@ -123,8 +123,8 @@ Reading them:
   `3d.scene` and `2d.blit` was clean. The D3D12 debug layer isn't installed on this PC (Graphics Tools), so D3D12 was
   not layer-validated.
 - Bugs found by measuring: DXC/DXIL reads `[unroll(N)]` as "at most N iterations" (D3D12 took 8 of 128 texture
-  samples, 14x too fast; SPIR-V treats it as a hint) â€” removed; the chase restarted at element 0 every dispatch, so
-  big working sets looked like L2 â€” the position now carries over in the sink buffer.
+  samples, 14x too fast; SPIR-V treats it as a hint) — removed; the chase restarted at element 0 every dispatch, so
+  big working sets looked like L2 — the position now carries over in the sink buffer.
 
 ## Not done / caveats
 

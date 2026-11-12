@@ -6,10 +6,14 @@ Living doc. Update it as decisions are made or facts are learned. Keep it terse.
 
 A small, fast, native Windows benchmark for this laptop. GUI: the user picks suites/tests in a
 collapsible tree, hits Run, sees live progress + live stats of every test as the run moves through
-them, and gets a results table of **raw numbers** (GB/s, GFLOPS, IOPS, ns, ms, FPS, ...). No synthetic
-"scores". A CLI build runs the same benchmarks headless and writes JSON.
+them, and gets a results table of **raw numbers** (GB/s, GFLOPS, IOPS, ns, ms, FPS, ...). Raw numbers are
+the primary output. A derived, versioned overall score (FUTURE.md §10) summarizes them; its formula, weights
+and reference are published in the app and docs, and it is labelled preliminary until calibrated against
+real-task timings. A CLI build runs the same benchmarks headless. Results files are TOON text (`*.toon.txt`).
 
-Suites: **CPU**, **Memory**, **GPU** (Vulkan + Direct3D 12; 2D, 3D, Compute), **Disk** (CrystalDiskMark-style).
+Suites: **CPU**, **Memory**, **GPU** (Vulkan + Direct3D 12; Compute, 3D, 2D, Features), **Disk**
+(CrystalDiskMark-style plus latency, sweeps, raw-device tests). Separate tools (own windows / CLI modes):
+stability tester, drive health, sensors + log + overlay, frame capture, system details, history.
 
 Scope: only needs to work on this machine for now. No installer, no cross-platform.
 
@@ -94,32 +98,67 @@ Procedural, data-oriented, C-style C++ (rules in CLAUDE.md).
 
 ```
 src/
-  app/main_gui.cpp     Win32 window, D3D11 device/swapchain, ImGui frame loop
-  app/main_cli.cpp     Arg parsing, runs selected tests, prints live progress lines, writes JSON
-  app/ui.cpp/.h        Suite tree, settings, live panel, results/warnings
-  app/app.rc/.manifest Embedded manifest (asInvoker, PMv2 DPI, long paths)
+  app/main_gui.cpp     Win32 window, D3D11 device/swapchain, ImGui frame loop, tool-window table, dev flags
+  app/main_cli.cpp     Arg parsing, runs selected tests, live progress lines, CLI modes (--health, --sysinfo, ...)
+  app/ui.cpp/.h        Suite tree, live panel, Results / Charts / Score / Ranking tabs, warnings
+  app/settings*.cpp    settings.ini load/save, Settings window
+  app/theme.*          Material palette, fonts, vector icons
+  app/library.*        Built-in reference runs (RCDATA, LZMS)
+  app/compare_ui.*     Compare window;  app/score_ui.*, history_ui.*: score tab / About, History window
+  app/snapshot.*       Window back buffer -> PNG (WIC)
+  app/mem_charts.*     Memory grid table, loaded-latency plot
+  app/temps_ui.*, overlay.*, adv_ui.*   Sensors window (+ log), click-through overlay, PawnIO section
+  app/health_ui.*      Drive health window
+  app/system_ui.*      System details window
+  app/stability_ui.*, stability_cli.*   Stability tester window and `--stress`
+  app/frames_ui.*, frames_graph.*       Frame capture window, frame-time graph (also in compare)
+  app/app.rc/gui.rc/.manifest           Manifest (asInvoker, PMv2 DPI, long paths), icon, fonts, library
   core/types.h         u8..u64, f32/f64, KiB/MiB/GiB
-  core/bench.h         BenchParams, BenchLive, BenchResult, Metric, SuiteDesc, BenchDesc
+  core/bench.h         BenchParams (+ DiskOptions), BenchLive, BenchResult, Metric, SuiteDesc, BenchDesc, flags
   core/registry.cpp    The suite + test tables (only place new tests are registered)
-  core/runner.cpp/.h   Worker thread: suite init → tests → suite shutdown, cancel
-  core/results.cpp/.h  Metric arena, result helpers (res_*), text + JSON export
-  core/sysinfo.cpp/.h  CPUID, SMBIOS RAM, adapters, power, OS, admin (drives/BitLocker: M3)
+  core/runner.cpp/.h   Worker thread: suite init → tests → suite shutdown, cancel, repeat / sustained passes
+  core/results.cpp/.h  Metric arena, result helpers (res_*), TOON results file (system, params, score, integrity)
+  core/toon.*          TOON reader/writer subset
+  core/presets.*       Run presets (quick, standard, extended, score, sustained)
+  core/monitor.*, hwread.*  Run monitor (env[] per test), driverless CPU / GPU readers
+  core/sensors.*, battery.*, emi.*   Sensors sampler + channels + log, battery IOCTLs, Energy Metering Interface
+  core/pawnio.*, adv_*.cpp/.h        PawnIO client, advanced sensors (AMD / Intel CPU, SMBus DIMMs, UMC timings)
+  core/sysinfo.cpp/.h  CPUID, SMBIOS RAM, adapters, drives, power, OS, admin
+  core/sysinfo_cpu/devices/display/gpu/win/spd.cpp, sysinfo_ext.h   CPU details, PCI/USB tree, EDID, GPU API
+                       details, Windows state, SPD + timings
+  core/sysreport.cpp   System report model -> window / text / TOON
+  core/disk_health.*, ata.*, nvme_dev.*, scsi_pt.*, csmi.*, smart_attr.*, health_store.*, physdisk.*
+                       Drive health: SMART / NVMe logs over every transport, status rules, history
+  core/compare.*, baseline.*   Compare window model, CLI --compare baseline
+  core/score.*, runfile.*, history.*, integrity.*, report.*   Score v1, flat run reader, run history,
+                       integrity hash, HTML report
+  core/whea.*          WHEA-Logger event counter
   core/perf.cpp/.h     Process/thread perf setup (priority, throttling opt-out, timer res, keep awake)
   core/elevation.cpp/.h  is_elevated, relaunch via runas
   core/smoke_bench.cpp Smoke suite: exercises runner, live stats and all three result kinds
   core/timer.cpp/.h    QPC wrapper, rdtsc, do_not_optimize/clobber_memory
-  core/threads.cpp/.h  Minimal pinned thread pool (Win32 threads, group affinity, barriers)
-  core/mem_util.h      VirtualAlloc helpers, large pages (best effort), arena
-  cpu/cpu_bench.cpp  cpu/cpu_kernels.cpp (inline-asm kernels)
-  mem/mem_bench.cpp
-  disk/disk_bench.cpp
-  gpu/gpu_common.h     Shared test params, frame-time stats, adapter selection
-  gpu/gpu_window.cpp   Benchmark render window (separate from UI)
-  gpu/gpu_vk.cpp       Vulkan backend
-  gpu/gpu_d3d12.cpp    D3D12 backend
-  gpu/shaders/*.hlsl
+  core/threads.cpp/.h  Pinned thread pool, CPU topology (incl. EfficiencyClass)
+  core/throughput.*    MT throughput driver shared by CPU and memory
+  core/mem_util.*      VirtualAlloc helpers, large pages (best effort), arena
+  cpu/cpu_bench.cpp, cpu_kernels.cpp (inline asm), cpu_gemm, cpu_crypto, cpu_hash (CRC32C, xxHash, AES-GCM,
+      ChaCha20), cpu_compress, cpu_image (WIC), cpu_parse, cpu_sci (FFT, n-body, rays), cpu_ai, cpu_pi,
+      cpu_micro, cpu_topo
+  mem/mem_bench.cpp, mem_kernels.cpp, mem_grid.cpp, mem_load.cpp (loaded latency), mem_internal.h
+  disk/disk_suite.cpp  Suite init/shutdown, test files / folder target;  disk.h / disk_internal.h
+  disk/disk_io.cpp     Overlapped I/O engine + latency histogram
+  disk/disk_cdm, disk_latency, disk_sweep, disk_sustained, disk_recovery, disk_files, disk_raw, disk_nvme
+  gpu/gpu_common.*     Test table (GPU_TESTS), preview hand-off, frame-time stats
+  gpu/gpu_entry.cpp, gpu_multi.cpp   Registry wrappers, suite layer (one device per selected adapter)
+  gpu/gpu_vk*.cpp      Vulkan backend: base tests, _ext / _memory / _pso / _texture, _features
+  gpu/gpu_d3d12*.cpp   D3D12 backend: compute, raster, _ext / _memory / _pso / _texture, _features
+  gpu/gpu_ext.h, gpu_features.*      Shared definitions of the extra compute and feature tests
+  gpu/gpu_present*.cpp On-screen mode: benchmark window, flip-model swapchains
+  gpu/shaders/*.hlsl (+ coopmat.comp)
+  stability/           Stability tester: controller + report, cpu / mem / disk / gpu (D3D12) tests, stab.hlsl
+  frames/frame_capture.*   ETW present-event capture and analysis
+tools/pack_library.cpp, site_library.py, serve_site.ps1, make_icon.ps1
 third_party/imgui/
-docs/PLAN.md
+docs/PLAN.md, FUTURE.md, notes/
 ```
 
 ### 5.1 Core data model (sketch)
@@ -247,6 +286,13 @@ accumulator counts are explicit.
 | Core-to-core latency | Cache-line ping-pong for each LP pair → **matrix** | ns |
 | Thread scaling | AVX2 FMA at 1, 2, 4, 8, 16 threads → **series** | GFLOPS |
 
+Added in M11 (all self-verifying): Topology (`cpu.topo.percore` series per core, `cpu.topo.hybrid` per
+EfficiencyClass), Compression (Windows Compression API XPRESS / XPRESS-Huffman / MSZIP / LZMS + own LZ77,
+MB/s), Image (WIC JPEG / PNG decode, resize, MPix/s), Parsing (JSON, text tokenizer, MB/s), Science (FFT
+GFLOPS, n-body Ginteractions/s, ray-box / ray-triangle Mtests/s), Crypto (AES-GCM via CNG, ChaCha20, CRC32C,
+xxHash64, GB/s), AI inference (int8 VNNI GOPS, BF16 GFLOPS). Off by default: `cpu.work.pi` (1M digits, s),
+Microarchitecture (`cpu.micro.instr` clk table, `cpu.micro.branch`, `cpu.micro.code`).
+
 ### 6.2 Memory
 
 | Test | What | Metric |
@@ -257,6 +303,10 @@ accumulator counts are explicit.
 | Triad (STREAM) | a = b + s·c | GB/s |
 | Latency | Random pointer chase (shuffled cycle, one hop per cache line), 16 KiB … 1 GiB → **series** | ns |
 | Cache BW sweep | Read BW per working-set size, ST + MT → **series** | GB/s |
+
+Added in M12: `mem.grid` (L1 / L2 / L3 / DRAM read, write, copy GB/s + latency ns), `mem.bw.mix` (read:write
+3:1 / 2:1 / 1:1), `mem.bw.scaling` (series over threads), `mem.lat.loaded` (latency vs generated bandwidth,
+MLC-style), `mem.lat.pages` (4 KiB vs 2 MiB pages; off, needs SeLockMemoryPrivilege).
 
 Theoretical DRAM peak for reference: 89.6 GB/s (DDR5-5600 dual channel). Expect well below it on
 single-CCX Zen 4 (fabric-limited reads).
@@ -315,6 +365,13 @@ Compute (timings + throughput):
 | Clear rate (render-target clears) | GB/s |
 | (Stretch) Direct2D path: geometry fill + text, D3D12 suite only via D3D11On12 | ops/s |
 
+Added in M12 (same ids on both APIs): `compute.fp64`, `compute.dp4a` (TOPS), `compute.matrix` (cooperative
+matrix FP16 / INT8, Vulkan only), `compute.atomics` (Gatomics/s); `mem.latency` / `mem.sweep` (series vs
+working set); `pso.pso` (PSO/s, cold vs cached); `tex.formats`, `tex.aniso` (Gtex/s); group Features:
+`features.raytracing` (Grays/s, BLAS / TLAS ms), `mesh_shader`, `tessellation`, `vrs`, `sampler_feedback`
+(D3D12 only), `async_compute` (overlap gain %). 3D / 2D tests can also present on screen (setting "Present
+mode"); several adapters per run prefix metrics with the adapter short name.
+
 Debug builds enable the Vulkan validation layer and the D3D12 debug layer.
 
 ### 6.4 Disk (CrystalDiskMark-style)
@@ -349,6 +406,14 @@ Implementation:
   fully write the file before any timed test.
 - Random offsets: xorshift/pcg, block-aligned across the whole file. Check free space first.
 
+Added in M8: p50 / p90 / p99 / p99.9 / p99.99 / max latency per pass type in every engine-based test; QD1
+latency (`disk.lat.read` / `write` / `flush`, flush and FUA), `disk.lat.hist` (distribution series),
+`disk.lat.load`, `disk.lat.wake`; sweeps `disk.sweep.qd` / `block` / `compress`; `disk.custom1..4`;
+`disk.fs.meta`, `disk.files.copy`, `disk.recovery`; `disk.sustained.write` and raw-device `disk.raw.span` /
+`scan` / `seek` (admin, read-only handle). Modes rw / read / write / mix, test data random / zero, folder
+target, buffered option, CDM profiles as selections. `BENCH_CONFIRM` tests (sustained write, surface scan)
+ask first and are never in presets.
+
 ## 7. System info & warnings
 
 Shown in the GUI header and in every JSON/CSV export:
@@ -368,6 +433,8 @@ Warning banners: not elevated; on battery; power scheme/mode not best performanc
 VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
 
 ## 8. Milestones
+
+Per-stream details for M8–M12 (files, settings, formats, measurements, untested paths): [notes/](notes/).
 
 - **M0 Skeleton** — ✅ done 2026-11-11: CMake + presets, vendored ImGui 1.93.0, GUI window (DPI aware),
   CLI exe, registry with suite init/shutdown, runner thread, metric arena, smoke suite (values / series /
@@ -416,6 +483,65 @@ VHD/Dev Drive; BitLocker on target volume; large pages unavailable (info only).
   repeat-N with median + spread (`spread[]` in TOON). Temperatures window became Sensors (per-core clock and
   load, GPU clocks / load / VRAM / power / PCIe link).
 
+M8–M12 were built 2026-11-11 by eleven parallel streams in worktrees (one benchmark at a time through a shared
+lock), each merged into `dev`. Their measurements were taken under heavy background load (the other streams'
+builds); treat CPU single-thread and L3 numbers from them as shape, not reference.
+
+- **M8 Disk** — ✅ done 2026-11-11 on `dev` ([disk-bench](notes/disk-bench.md),
+  [disk-health](notes/disk-health.md)). Benchmark: `disk/disk_bench.cpp` split into `disk/*.cpp` around one
+  overlapped I/O engine (`disk_io.cpp`) with a per-thread log-bucket latency histogram (p50..max in every
+  test); QD1 / flush / FUA latency, latency under load, wake-up latency, histogram series, QD / block /
+  compressibility sweeps, custom rows, mixed mode, CDM profiles, metadata and copy workloads, TRIM / idle
+  recovery, sustained write / SLC, raw-device span / surface scan / seek; folder target, buffered option,
+  `BenchParams::disk` (`DiskOptions`), `BENCH_CONFIRM`. Health (CrystalDiskInfo parity): SMART table with
+  vendor names (`core/ata.*`, `smart_attr.*`), NVMe logs / features / self-test (`nvme_dev.*`), USB bridges
+  (`scsi_pt.*`), CSMI RAID members (`csmi.*`), status rules + thresholds, history + endurance projection
+  (`health_store.*`), rewritten window, text report, CLI `--health`. **Untested:** raw-device tests and
+  self-test start (need admin), every ATA / USB / CSMI path (no such hardware; ATA checked with a synthetic
+  sector), AAM / APM (never applied), sustained write past the SLC cache (verified at 2 GiB).
+- **M9 Stability** — ✅ done 2026-11-11 on `dev` ([stability](notes/stability.md)): separate tool
+  (`src/stability/`, window `--tool stability`, CLI `--stress`), tests `cpu`, `cores` (CoreCycler-style),
+  `cache`, `mem`, `vram`, `gpu` (D3D12 compute + render with known answers), `power` (unchecked max load),
+  `disk` (write / read-back verify); errors attributed to LP / chunk / address; sequence, together
+  (`combined`) or until stopped; temperature / battery limits, stop on first error, state always restored;
+  WHEA-Logger counter (`core/whea.*`); report as TOON `kind: stability`. `--inject` self-test proved
+  detection end to end for every test. **Not done:** WHEA in benchmark runs, Vulkan GPU tests, settings
+  persistence, CPU temperature limit from PawnIO. **Untested:** a real WHEA event (none in this PC's log).
+- **M10 PawnIO sensors** — ✅ code done 2026-11-11 on `dev` ([pawnio](notes/pawnio.md)): license / HVCI /
+  anti-cheat research (decision log), plain-`DeviceIoControl` client (`core/pawnio.*`), advanced sensors
+  (`core/adv_sensors.*`, `adv_cpu.cpp`: AMD Tctl / Tdie / CCDs / RAPL / APERF-MPERF / SVI2 / PM table, Intel
+  DTS / RAPL / limit bits; `adv_smbus.cpp`: SPD5118 / TSE2004 temperatures + SPD base config; `adv_umc.cpp`:
+  AMD UMC timings), `sysinfo_spd.*` (`system.ram.timings` / `spd` in results), Sensors-window section,
+  Settings row, CLI `--adv-report` / `--no-adv-sensors`, run monitor `cpu_temp` when available. **Untested:
+  all of it** — PawnIO isn't installed here and no module `.bin` is shipped. Hawk Point PM table only has
+  Tctl + PPT mapped. Not done: XMP / EXPO (needs an SPD page-select write, §11), Intel MCHBAR, Super I/O.
+- **M11 Score + CPU kernels** — ✅ done 2026-11-11 on `dev` ([cpu](notes/cpu.md),
+  [score-results](notes/score-results.md)). CPU: 26 new tests (`cpu/cpu_{topo,compress,image,parse,sci,hash,
+  ai,pi,micro}.cpp`; per-core pass, hybrid split, Windows Compression API + own LZ77, WIC, JSON / text,
+  FFT, n-body, rays, AES-GCM / ChaCha20 / CRC32C / xxHash, int8 / BF16, π, instruction table, branch / code
+  footprint), all self-verifying; runner-level sustained mode (`sustain_s`, `sustained[]` /
+  `sustain_passes[]` TOON tables, per-pass charts) and the Sustained preset. Score v1 (`core/score.*`,
+  `runfile.*`): 5 components, 4 profiles, 11 validity flags, Score preset, Score / Ranking tabs, About page,
+  compare Score group, CLI `--score` / `--score-write`; run history (`core/history.*`, History window),
+  PNG (`app/snapshot.*`) and HTML report (`core/report.*`, `--html`), `integrity:` block, issue form +
+  `site/results.html` (`tools/site_library.py`). **Untested / open:** `cpu.topo.hybrid` (one efficiency
+  class here), the AVX-VNNI int8 path, score calibration (needs other machines). CPU ST numbers from the
+  stream were taken under build load (2–5x low): re-measure on an idle machine.
+- **M12 Breadth** — ✅ done 2026-11-11 on `dev` ([memory-sysinfo](notes/memory-sysinfo.md),
+  [gpu-compute](notes/gpu-compute.md), [gpu-features](notes/gpu-features.md),
+  [gpu-present](notes/gpu-present.md), [sensors-p2](notes/sensors-p2.md)). Memory: grid, mix, thread
+  scaling, loaded latency, page sizes (`mem/mem_grid.cpp`, `mem_load.cpp`, `app/mem_charts.*`). System
+  details: CPU codename / microcode / flags / core map, chipset, PCI / USB tree, displays (EDID), network,
+  audio, GPU API details incl. ReBAR (`core/sysinfo_{cpu,devices,display,gpu}.cpp`, `sysreport.cpp`, window
+  `--tool system`, CLI `--sysinfo`). GPU: FP64, dp4a, cooperative matrix (Vulkan), atomics, memory
+  hierarchy, PSO cold / cached, texture formats / aniso (`gpu_*_ext/memory/pso/texture.cpp`), several
+  adapters per run (`gpu_multi.cpp`), feature tests (`gpu_*_features.cpp`), on-screen present mode
+  (`gpu_present*.cpp`), frame capture of other apps (`src/frames/`, `--tool frames`, `--capture`). Sensors:
+  battery, EMI power rails, channel list with min / max / avg, sensor log (`--log-sensors`), overlay
+  (`core/battery.*`, `emi.*`, `app/overlay.*`). **Untested:** live frame capture (needs admin),
+  `mem.lat.pages` (needs SeLockMemoryPrivilege), D3D12 debug layer (not installed). **Not done:** GPU suites
+  calling `gpu_api_details_query`, GPU memory type / bus width, EMI package power in the run monitor.
+
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).
 
 ## 9. Benchmarking pitfalls (knowledge)
@@ -426,6 +552,10 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
   frequency, not core clock — short relative timing only.
 - **Compiler**: scalar loops get auto-vectorized under `/arch:AVX2` and chains can be folded → kernels in
   inline asm; every result feeds a sink. Inspect generated asm for benchmark TUs.
+- **Inline asm, equal constant inputs**: clang may put two `"r"` inputs with the same value in one
+  register. `cpu.micro.branch` passed the wrap value as a separate `"r"(0)` next to a zero loop index; both
+  got the same register, so incrementing the index changed the "constant" and the loop never wrapped. Make
+  operands that the asm writes `"+r"` outputs, don't rely on separate inputs staying distinct.
 - **Topology**: Zen 4 SMT siblings are usually adjacent LPs (0/1, 2/3, …) — verify via
   `GetLogicalProcessorInformationEx`. Use group-aware APIs even with one group.
 - **Memory**: Windows zeroes pages on first touch — pre-fault before timing.
@@ -491,12 +621,115 @@ run writes ~80 GB to the SSD (per pass x 3 s: SEQ1M Q8 ~18 GB, Q1 ~6 GB, RND4K Q
 were ~130 GB) — use 1 pass and a shorter duration for frequent runs.
 ## 11. Open questions
 
-None for the current scope. (All earlier ones resolved — see decision log.) The roadmap to replace
-CrystalDiskInfo / Cinebench / Heaven / OCCT / HWiNFO etc. and its open decisions (kernel driver, scores,
-hardware scope, network, resident mode) are in [FUTURE.md](FUTURE.md) §0.
+Waiting on the user (2026-11-11):
+- **FUTURE.md §0 hardware scope**: which machines beyond this laptop (Intel hybrid, multi-CCD / X3D,
+  > 64 LPs, NUMA, non-AVX2, ARM64), and test hardware or volunteers. §12 hardware generality and ARM64 wait.
+- **§0 network**: may anything talk to the network (update check, email alerts)? Today nothing does.
+- **§0 resident mode**: may the GUI stay resident (tray, health / temperature alerts, AAM / APM reapply at
+  boot)?
+- **PawnIO SPD page select**: allow one SMBus write to the SPD hub's page register (MR11 on SPD5118, SPA0 /
+  SPA1 on DDR4), restored afterwards, to read XMP / EXPO and the DDR5 manufacturing data? (HWiNFO, CPU-Z,
+  ZenTimings and Linux `spd5118` do.)
+- **PawnIO module `.bin` files**: ship them (LGPL-2.1 allows it, with COPYING + a README naming the
+  release), and if so embedded via `third_party/pawnio/` or as a `pawnio\` folder next to the exe?
+- **Install PawnIO on this PC** to test M10 at all (driver install is the user's call), then map the Hawk
+  Point PM table from an `--adv-report` dump. Also: may SMBus DIMM polling run during stability runs?
+- **Frame capture needs admin** to test live (ETW `StartTraceW` is denied otherwise); likewise the raw-device
+  disk tests and drive self-tests.
+- **Score calibration needs other machines' data**: real-task timings + Score-preset runs from 8–15
+  machines (issue form) before the weights can be fitted and "preliminary" dropped.
 
 ## 12. Decision log
 
+- 2026-11-11 (M11 score v1, [notes](notes/score-results.md)):
+  - ratio = value / ref (ref / value when lower is better); component = 1000 · weighted geometric mean of
+    its input ratios; profile (Overall / Gaming / Creator / Everyday) = weighted geometric mean of the
+    components. Inputs, weights and references are one static table per version (`s_v1_inputs`,
+    `core/score.cpp`), so adding library runs never changes a score; a new version is a new table and scores
+    of different versions are never compared (the version is stored with every score).
+  - Reference = the library run `2026-11-11_r7-250_rtx5060-laptop` = 1000 in every component and profile.
+    GPU inputs take the better of Vulkan / D3D12; storage uses C: (else the first tested drive). Missing
+    inputs: component from what ran (coverage shown), no Overall / profiles.
+  - Labelled **preliminary** (UI, CLI, TOON `status`, website) until calibrated against real-task timings
+    (method in the notes, §11). Validity problems are 11 flags shown next to the score, never hidden.
+  - `score:` block at the end of every results file (derived, recomputed by every reader; `--score-write`
+    adds it to old files); `integrity:` block hashes everything except `score` / `integrity` (weak by
+    design). Runs auto-save to `<exe dir>\results\history\` (CLI `--no-history`).
+  - Rule reworded (CLAUDE.md, §1): raw numbers stay primary; the score is the only aggregate.
+- 2026-11-11 (M10 PawnIO, [notes](notes/pawnio.md)):
+  - License: our client is an independent program talking to the driver only through `DeviceIoControl`,
+    which the driver's GPL-2.0 special exception allows; we don't use PawnIOLib (LGPL) and never ship or
+    install the driver (users get it from pawnio.eu). The signed module `.bin` files are LGPL-2.1 and may be
+    shipped unmodified with COPYING + a README naming the release (as LibreHardwareMonitor does); not shipped
+    yet (§11). Not legal advice.
+  - HVCI: no official statement; very likely compatible (in-driver bytecode interpreter, no code generation;
+    a user report with memory integrity on). Untested here.
+  - Anti-cheat: FACEIT blocked `PawnIO.sys` in 2025 (signing certificate shared with cheat software),
+    re-signed and fixed as of PawnIO 2.1.0; no reports for Vanguard / EAC / BattlEye / Javelin. Our switch
+    only closes our handles: users who must satisfy an anti-cheat have to uninstall PawnIO.
+  - Read-only: we only call read functions (`ioctl_read_msr`, `ioctl_read_smn`, PM table, `ioctl_smbus_xfer`
+    reads); never `ioctl_write_*`, SMU commands, PIIX4 port select, clock setting, SPD page select, Super I/O
+    port writes. Bus mutexes `Global\Access_PCI` / `Global\Access_SMBUS.HTP.Method` around every batch.
+  - Polling: one TIME_CRITICAL 1 Hz thread, PM table ≤ 1 Hz; while a benchmark runs only package-scope reads
+    (no per-LP hopping, no SMBus); any SMBus timeout / collision stops SMBus for the session (EC-owned bus).
+    `adv_sensors=1` by default; everything falls back to driverless sources without PawnIO.
+- 2026-11-11 (M11 sustained mode, [notes](notes/cpu.md)): runner-level, any test: loops a test for
+  `sustain_s` (≥ 2 passes, ≤ 500), reports the median over passes with min / max / CV in `spread[]`, per-pass
+  values in `sustained[]` / `sustain_passes[]`. **Sustained mode overrides repeat.** `drop_pct` > 0 = slower
+  at the end (inverted for lower-is-better units).
+- 2026-11-11 (M12 multi-adapter, [notes](notes/gpu-compute.md)): `BenchParams::gpu_adapters` bitmask; the
+  primary adapter (monitor, save name, `params.gpu`) is the lowest selected. One adapter: metric names
+  unchanged; several: `<short name>: <metric>` (`rtx5060-laptop: Throughput`, duplicates `#<index>`). A
+  failure on any adapter fails the test, a skip on all skips it. ini `gpus=A;B`, TOON `params.gpus: A + B`
+  only when several.
+- 2026-11-11 (file kinds): non-benchmark TOON files carry a top-level `kind:` — `stability` (stability
+  report), `frames` (frame capture, same layout as a run so the compare window loads it), `sensor-log`.
+  Benchmark results have no `kind` (= `benchmark`). The compare window accepts `benchmark` and `frames`
+  only; History skips any other kind.
+- 2026-11-11 (M8 disk):
+  - `BENCH_CONFIRM` flag for heavy tests (sustained write, surface scan): the GUI asks first with a dialog
+    listing them, the CLI drops them unless `--yes`, presets (Extended included) never select them.
+  - Percentiles p50..max in every engine-based test; the full distribution is its own series test
+    (`disk.lat.hist`, fixed 61-point grid) because a result has one kind. Fixed x grids (also the sustained
+    write's 100 GB marks) so repeats and compares line up.
+  - Requests still in flight at the end of a pass are drained for up to 1 s and their latency recorded.
+  - Sustained write uses 4 files in parallel (extending writes are synchronous on NTFS; `SetFileValidData`
+    needs a privilege and exposes stale data).
+  - The test file is held without `FILE_SHARE_DELETE`: POSIX-semantics `DeleteFileW` let a second instance's
+    stale-file cleanup unlink it under a running test.
+  - Raw-device tests open `\\.\PhysicalDriveN` with `GENERIC_READ` only. CDM profiles are test selections;
+    the display unit only changes the GUI, files keep every number.
+  - Health: status rules CDI-like (Bad / Caution with per-drive thresholds in `health\health.ini`);
+    self-tests and AAM / APM only from a button + confirmation, admin only; history sample when ≥ 1 h old or
+    a wear / error counter changed; drive key = model + FNV-1a of model|serial (the serial never appears in
+    a file name); USB vendor CDBs only for their own VID, SAT for the rest.
+- 2026-11-11 (M9 stability): own tool, no shared path with the runner; GPU tests D3D12 only. Workers at
+  normal priority (HIGHEST starves the OS sensor threads, below-normal starved under other load), 1 Hz
+  monitor at HIGHEST. Verdict `fail` also on any WHEA event during the run (corrected ones included). Memory
+  test leaves ≥ 2 GiB available (default 70 % of available), VRAM 85 % of the free budget. Known answers
+  from optimized scalar code (`_mm_*_ss`; `optnone` references made setup take 8–15 s).
+- 2026-11-11 (M12 on-screen present mode, [notes](notes/gpu-present.md)): `gpu_onscreen` (default off =
+  offscreen as before) + `gpu_fullscreen` (borderless vs window); setting "Present mode", ini
+  `gpu_onscreen`, CLI / GUI `--gpu-present`, TOON `params.gpu_present`. Same rendering as offscreen, then a
+  copy into a flip-model swapchain, vsync off with tearing; frame time stays present-to-present, plus
+  displayed-frame stats (D3D12 frame statistics on vblank change, Vulkan present_wait). The benchmark window
+  lives on the worker thread; closing it fails that test. Offscreen stays the mode for throughput numbers.
+- 2026-11-11 (M12 frame capture): ETW real-time session with the DXGI and DxgKrnl manifest providers,
+  filtered to their present event ids, payloads decoded by offset (no TDH); frame time = Present_Start
+  delta (PresentMon's MsBetweenPresents); no displayed-frame reconstruction. Needs admin or Performance Log
+  Users.
+- 2026-11-11 (M12 system details): three cost tiers — `g_cpux` at startup, `g_dev` (PnP walk) lazily,
+  `g_gpux` (Vulkan instance + D3D12 device) only on request because it wakes a sleeping dGPU. No MAC / IP
+  addresses. `system.details` in results files; compare ignores it.
+- 2026-11-11 (M12 memory / sensors): `mem_init` raises the working-set minimum by the arena + 64 MiB (trimmed
+  pages made a 1 GiB chase read 1.4 µs under load). Loaded latency's x = delay cycles, not measured
+  bandwidth, so runs align. `sensors_start` is reference counted (window, log, overlay); thermal zones and
+  the battery are polled on their own threads. TOON `env` gained `bat_discharge_w` (appended, 16 columns);
+  `TOON_MAX_FIELDS` was raised from 16 to 24 when the streams were merged.
+- 2026-11-11 (M12 GPU compute): D3D12 cooperative matrix skipped (no matrix HLSL in the released DXC; SM 6.9
+  cooperative vectors need the preview Agility SDK = new dependency). Cold PSOs get a new seed per pipeline:
+  Vulkan specialization constant, D3D12 by patching the seed literal in the DXIL and recomputing the
+  container checksum (changing only the hash part hit NVIDIA's cache).
 - 2026-11-11 (branches): day-to-day work on `dev`; `main` only gets finished work via `git merge --no-ff dev`.
 - 2026-11-11 (M7 run monitor):
   - Sampled every 250 ms on a TIME_CRITICAL thread. CPU load from `SystemProcessorPerformanceInformation`; CPU
@@ -703,3 +936,57 @@ hardware scope, network, resident mode) are in [FUTURE.md](FUTURE.md) §0.
 - 2026-11-11: the PC hard-froze once during development (Kernel-Power 41, no low-memory event logged;
   two similar resets on 11/10 predate this project). No benchmark was running then. Precautions since:
   builds use `-- -j 6`, memory arenas capped to ¼ of free RAM, no parallel heavy runs.
+
+M8–M12 streams (2026-11-11, AC + "Best performance", not elevated, mostly under the other streams' build
+load; details and full tables in [notes/](notes/)):
+- Query stalls under all-core load: `IOCTL_BATTERY_QUERY_STATUS` 0.02–1.7 ms idle → **2.4 s**; PDH
+  "% Processor Performance" up to 2.1 s; one sensor sample took 3157 ms (battery 2367 + PDH 556 + EMI 213).
+  Battery, thermal zones and PCIe link now poll on their own threads / slower cadence.
+- With stability workers at normal priority the ACPI zone did follow load (52 °C idle → 64–74 °C); it
+  still isn't a die temperature. D3DKMT reports no power for the RTX 5060 Laptop.
+- Disk, C: Samsung PM9C1a: QD1 4K read avg 58.7 µs (p99 112, p99.99 461), write 21 µs. 4K write +
+  `FlushFileBuffers` **544 µs**; with FUA (write-through) 21 µs, same as a plain write — the flush costs, FUA
+  is free on this drive / StorNVMe.
+- QD1 read next to SEQ1M Q8 writes: p99 678 µs, p99.9 3.8 ms (idle p99 131 µs; possibly disturbed run).
+  Wake-up after 1 s idle: median 1.67 ms (max 10 ms); PS3 / PS4 exit latency 9 / 44 ms.
+- RND4K Q32T4 write torture cut sequential reads 7x (5.8 → 0.85 GB/s); 30 s idle restored 5.5 GB/s (GC).
+  `FSCTL_FILE_LEVEL_TRIM` fails on C: with error 326. Compressibility (0–100 % zeros) has no effect.
+- QD sweep, 4K random read: 15.4K IOPS QD1 → 133K QD16 (one thread tops out ~130K) → 788K QD256 (8 threads).
+  Sustained write 2 GiB: 4974 MB/s average, no SLC drop (cache is larger). Metadata: file create 302/s, p50
+  1.25 ms, mostly Defender's on-access scan.
+- NVMe without admin, on a query-only handle: Identify, logs 1/2/3/6, most Get Features, temperatures and
+  partition layout work; opening with GENERIC_READ fails, so pass-through, SMART IOCTLs and self-tests need
+  admin. The drive is DRAM-less (64 MiB HMB), PCIe 4.0 x4.
+- Memory: one core already pulls 43 GB/s, two saturate the fabric (54–60 GB/s). Loaded latency 127 ns at
+  0.06 GB/s → 196 ns at 34 GB/s → 688 ns at 55 GB/s. SeLockMemoryPrivilege isn't granted even to admins.
+- Zen 4 instruction table matches published figures (add 1, imul 3, FMA ymm 4 clk; zmm at half rate).
+  4-byte NOPs run ~12 / clk up to 32 KiB of code, ~3.9 beyond the op cache, 2.0 at 2 MiB. int8 VNNI ~108
+  ops/clk ST (85 % of peak). π 1M digits 1.66 s ST / 0.645 s MT.
+- CPU ST numbers measured next to parallel compiles were 2–5x low and some MT / ST ratios exceeded 16; the
+  score's `background` flag fired (mem.lat.chase at 29 % CPU vs ~6 % alone).
+- **DXC `[unroll(N)]`**: DXIL treats N as "at most N iterations" (D3D12 took 8 of 128 texture samples,
+  14x too fast); SPIR-V treats it as a hint. Don't use `unroll(N)` on loops longer than N.
+- **NVIDIA PSO cache**: changing only the DXIL hash + checksum still hit the driver cache (~1.2 ms vs ~35
+  ms cold); the shader body must change. Cold PSOs take 25–45 ms on both GPUs and APIs (a visible hitch at
+  60 fps), cached ones are 100–2000x faster; NVIDIA D3D12 pipeline libraries load ~6x slower than its Vulkan
+  pipeline cache.
+- **Tessellation**: RTX 5060 D3D12 1.06 ms (17.8 Gtri/s) vs Vulkan 2.87 ms (6.6 Gtri/s) for the same HLSL;
+  the 780M is equal. Likely DXC's hull-shader → TCS lowering on NVIDIA's Vulkan path; not investigated.
+- dp4a: D3D12 1.5x (NVIDIA) / 1.7x (AMD) faster than the same HLSL via SPIR-V `OpSDot`. RTX 5060: FP64 =
+  1/64 of FP32 (0.24 TFLOPS); cooperative matrix 35.9 TFLOPS FP16 / 133 TOPS INT8 (Vulkan). One-address
+  atomics are aggregated per wave (76 G/s into one word).
+- RTX 5060 memory hierarchy: L1 ~18 ns to 64 KiB, L2 ~117 ns to 32 MiB, VRAM ~340 ns. 780M: steps at 16 KiB,
+  ~256 KiB, 2 MiB, then shared DDR5 at 200–300 ns / ~80 GB/s.
+- Features, RTX 5060: 4.6 Grays/s per frame (1.45 ms with BLAS refit + TLAS rebuild); mesh shaders +146 %
+  (VK) / +236 % (D3D12) over the vertex pipeline; async compute +75 % — but ~0 with a pixel-shaded graphics
+  load (no free shader slots), so the test's graphics part is depth-only. Sampler feedback on every pixel:
+  +319 % (RTX 5060), 16x (780M). 780M terrain BLAS full build 12 ms vs 0.6 ms.
+- On-screen present adds ~0.35–0.45 ms per frame on **both** GPUs (not just the dGPU's cross-adapter copy),
+  capping on-screen runs near 1400–1700 fps. D3D12 frame statistics must be logged on `SyncQPCTime` change
+  (per-present logging gave "95 % displayed"); NVIDIA present_wait completes ~3 ms after the call, not at
+  scan-out.
+- ETW: `StartTraceW` returns ERROR_ACCESS_DENIED without admin or Performance Log Users.
+- Battery: design 60 Wh, full 60 Wh, 59 cycles; −20.5 W at desktop load on battery; on AC at 42 % it reports
+  charging at 0 W (conservation mode). EMI: 9 meters (package + 8 cores) readable without admin; package
+  holds ~39 W under all-core load on AC (platform limit).
+- VRAM budget with nothing else on the dGPU: 7119 MiB of 8 GiB.
