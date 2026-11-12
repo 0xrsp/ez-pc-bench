@@ -1,6 +1,7 @@
 // Advanced sensors in the GUI (see adv_ui.h). Histories live here, fed from the core snapshots whenever a new
 // sample arrived; the table matches the Sensors window's temperature tables.
 #include "app/adv_ui.h"
+#include "app/graph.h"
 #include "app/theme.h"
 #include "core/adv_sensors.h"
 #include "core/pawnio_modules.h"
@@ -130,12 +131,16 @@ static void draw_table() {
         if (s->count) temp_text(s->max, g_pal.on_surface_variant);
         ImGui::TableNextColumn();
         if (s->count > 1) {
-            f32 lo = s->min - 2.0f, hi = s->max + 2.0f;
-            if (hi - lo < 10.0f) { const f32 mid = (hi + lo) * 0.5f; lo = mid - 5.0f; hi = mid + 5.0f; }
-            ImGui::PushStyleColor(ImGuiCol_PlotLines, g_pal.primary);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-            ImGui::PlotLines("##hist", s->hist, (int)s->count, 0, nullptr, lo, hi, ImVec2(-FLT_MIN, line * 2.0f));
-            ImGui::PopStyleColor(2);
+            Graph g;
+            g.kind = GK_TEMP;
+            g.unit = "\xC2\xB0""C";
+            g.min_span = 10.0f;
+            g.step_s = 1.0f;
+            g.flags = GF_NO_CAPTION;
+            GraphLine l;
+            l.y = s->hist;
+            l.n = s->count;
+            graph_time("##hist", &g, &l, 1, ImVec2(0.0f, line * 2.0f));
         }
         ImGui::PopID();
     }

@@ -2,6 +2,7 @@
 // status, errors per logical processor, sensor graphs, WHEA count and the first errors on the right. The report
 // is saved to the results folder when a run ends (stability_<date>_<time>_<cpu>.toon.txt).
 #include "app/stability_ui.h"
+#include "app/graph.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/runner.h"
@@ -375,12 +376,22 @@ static void graph(const char* name, StabSeries s, const char* fmt, f32 lo, f32 h
             a -= 2.0f;
             b += 2.0f;
         }
-        ImGui::PushStyleColor(ImGuiCol_PlotLines, g_pal.primary);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
+        static const GraphKind kinds[SH_COUNT] = { GK_FREQ, GK_LOAD, GK_TEMP, GK_FREQ, GK_LOAD, GK_TEMP, GK_POWER, GK_TEMP };
+        Graph g;
+        g.kind = kinds[s];
+        g.lo = a;
+        g.hi = b;
+        g.unit = s == SH_CPU_UTIL || s == SH_GPU_UTIL || s == SH_GPU_POWER ? "%" : s == SH_CPU_MHZ || s == SH_GPU_MHZ ? "MHz" : "\xC2\xB0" "C";
+        g.title = name;
+        g.flags = GF_NO_CAPTION;
+        g.window = n < 60 ? 60 : n;
+        g.step_s = 1.0f;
+        GraphLine line;
+        line.y = vals;
+        line.n = n;
         ImGui::PushID((int)s);
-        ImGui::PlotLines("##g", vals, (int)n, 0, nullptr, a, b, ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 2.2f));
+        graph_time("##g", &g, &line, 1, ImVec2(0.0f, ImGui::GetTextLineHeight() * 2.6f));
         ImGui::PopID();
-        ImGui::PopStyleColor(2);
     } else {
         ImGui::TextDisabled(n ? "Collecting\xE2\x80\xA6" : "Not reported");
         ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight() * 1.2f));
