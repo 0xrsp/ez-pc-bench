@@ -8,6 +8,7 @@ void ui_start_run();                    // start a run with the current selectio
 void ui_set_duration(u32 ms);
 void ui_select_only(const char* ids);   // dev: comma-separated test ids / prefixes ("smoke.preview,cpu.int")
 void ui_set_dev(bool dev);              // dev: show the smoke-test suite
+void ui_set_tab(const char* name);      // dev: results / charts / score / ranking
 void ui_set_preview(void* texture, u32 w, u32 h);   // GPU test preview (ImTextureID), null when inactive
 void ui_apply_style(f32 dpi_scale);     // (re)build style for a DPI scale
 void ui_draw();                         // one frame of the whole UI
@@ -16,3 +17,4 @@ void ui_request_tool(ToolWindow t);     // open (or focus) a tool window after t
 u32 ui_take_tool_requests();            // bit per ToolWindow requested since the last call
 void ui_results_dir(wchar_t* dir);      // "results" folder next to the exe (created on demand), MAX_PATH chars
 BenchParams* ui_params();               // the settings the next run uses (settings window edits them)
+bool* ui_selection();                   // selected tests (g_bench_count bools), e.g. for applying a preset

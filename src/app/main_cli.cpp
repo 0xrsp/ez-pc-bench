@@ -3,9 +3,13 @@
 #include "core/baseline.h"
 #include "core/bench.h"
 #include "core/disk_health.h"
+#include "core/compare.h"
 #include "core/elevation.h"
+#include "core/history.h"
+#include "core/integrity.h"
 #include "core/monitor.h"
 #include "core/presets.h"
+#include "core/report.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sensors.h"
@@ -13,6 +17,9 @@
 #include "core/sysinfo_spd.h"
 #include "core/timer.h"
 #include "frames/frame_capture.h"
+#include "core/score.h"
+#include "core/sysinfo.h"
+#include "core/toon.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,8 +42,13 @@ static void print_usage() {
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
         "  --passes <n>           Disk passes (default 3)\n"
         "  --repeat <n>           Run each test n times (max 10) and report the median and spread\n"
-        "  --preset <name>        quick, standard or extended: selection + duration / repeat / disk settings;\n"
-        "                         --run and later options override it\n"
+        "  --preset <name>        quick, standard, extended or score: selection + duration / repeat / disk\n"
+        "                         settings; --run and later options override it\n"
+        "  --score [files...]     Print the overall score breakdown (score v1, preliminary): of the given\n"
+        "                         results files without running anything, or of this run after it finishes\n"
+        "  --score-write          With --score files: also (re)write each file's score block\n"
+        "  --html <file.html>     Write a self-contained HTML report of this run\n"
+        "  --no-history           Don't save this run to results\\history\\ next to the exe\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --health [--hide-serial]  Print the disk health report of every drive and exit\n"
         "  --log-sensors <file>   Log sensors (clocks, load, temperatures, battery, power rails) to a .csv or\n"
@@ -373,6 +385,10 @@ int wmain(int argc, wchar_t** argv) {
     char capture_target[256] = {};
     f64 capture_seconds = 20.0;
     bool capture = false, capture_check = false;
+    const wchar_t* html_path = nullptr;
+    const wchar_t* score_files[64];
+    u32 score_file_count = 0;
+    bool score = false, score_write = false, no_history = false;
     BenchParams params;
     params.gpu_adapter = sysinfo_default_gpu();
 
@@ -398,6 +414,14 @@ int wmain(int argc, wchar_t** argv) {
         }
         else if (!wcscmp(a, L"--capture-etl") && has_val) { capture = true; capture_etl = argv[++i]; }
         else if (!wcscmp(a, L"--capture-selftest")) capture_check = true;
+        else if (!wcscmp(a, L"--score")) {
+            score = true;
+            while (i + 1 < argc && wcsncmp(argv[i + 1], L"--", 2) != 0 && score_file_count < ARRAY_COUNT(score_files))
+                score_files[score_file_count++] = argv[++i];
+        }
+        else if (!wcscmp(a, L"--score-write")) score_write = true;
+        else if (!wcscmp(a, L"--no-history")) no_history = true;
+        else if (!wcscmp(a, L"--html") && has_val) html_path = argv[++i];
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
@@ -425,7 +449,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--repeat") && has_val) { params.repeat = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--preset") && has_val) {
             const RunPreset* pr = preset_find(val);
-            if (!pr) { fprintf(stderr, "unknown preset '%s' (quick, standard, extended)\n", val); return 3; }
+            if (!pr) { fprintf(stderr, "unknown preset '%s' (quick, standard, extended, score)\n", val); return 3; }
             bool preset_sel[MAX_BENCHES] = {};
             preset_apply(pr, &params, preset_sel);
             if (!any_run) { memcpy(selected, preset_sel, sizeof(selected)); any_run = from_preset = true; }
@@ -455,6 +479,33 @@ int wmain(int argc, wchar_t** argv) {
         if (!capture_etl && !capture_target[0]) { fprintf(stderr, "--capture needs a process name, pid or *\n"); return 3; }
         if (capture_seconds < 1.0) capture_seconds = 1.0;
         return run_capture(capture_target, capture_seconds, capture_etl, out_path);
+    }
+    if (score_file_count) {     // score of saved files: no run
+        int rc = 0;
+        for (u32 f = 0; f < score_file_count; ++f) {
+            ToonReader r;
+            char err[160];
+            char* buf = toon_read_file(score_files[f], &r, err, sizeof(err));
+            ScoreResult sr;
+            if (!buf || !score_from_text(r.p, (u32)(r.end - r.p), &sr)) {
+                fwprintf(stderr, L"%s: ", score_files[f]);
+                fprintf(stderr, "%s\n", buf ? "not an EzPcBench results file" : err);
+                toon_free_file(buf);
+                rc = 3;
+                continue;
+            }
+            const IntegrityState integ = integrity_check(r.p, (u32)(r.end - r.p));
+            toon_free_file(buf);
+            wprintf(L"%s\n", score_files[f]);
+            printf("Integrity: %s\n", integrity_name(integ));
+            score_print(stdout, &sr);
+            if (score_write) {
+                if (score_rewrite_file(score_files[f], err, sizeof(err))) printf("Score block written.\n");
+                else { fprintf(stderr, "Cannot write the score block: %s\n", err); rc = 1; }
+            }
+            printf("\n");
+        }
+        return rc;
     }
 
     if (elevate && !g_sys.elevated) {
@@ -517,6 +568,20 @@ int wmain(int argc, wchar_t** argv) {
     if (out_path) {
         if (results_write_toon(out_path, &g_run.params)) wprintf(L"Wrote %s\n", out_path);
         else { fwprintf(stderr, L"Failed to write %s\n", out_path); exit_code = 1; }
+    }
+    wchar_t hist[MAX_PATH];
+    if (!no_history && history_save(hist)) wprintf(L"History: %s\n", hist);
+    if (score) {
+        ScoreResult sr;
+        score_current(&sr);
+        printf("\n");
+        score_print(stdout, &sr);
+    }
+    if (html_path) {
+        char err[160];
+        compare_clear();
+        if (compare_add_current(err, sizeof(err)) && report_write_html(html_path)) wprintf(L"Wrote %s\n", html_path);
+        else { fwprintf(stderr, L"Failed to write %s\n", html_path); exit_code = 1; }
     }
     if (pause) {
         printf("Press Enter to exit...");

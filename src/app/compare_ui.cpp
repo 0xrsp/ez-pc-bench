@@ -3,10 +3,14 @@
 #include "app/compare_ui.h"
 #include "app/frames_graph.h"
 #include "app/library.h"
+#include "app/score_ui.h"
+#include "app/snapshot.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/baseline.h"
 #include "core/compare.h"
+#include "core/integrity.h"
+#include "core/report.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "imgui.h"
@@ -25,6 +29,8 @@ struct CompareUi {
     bool show_change = true;
     bool show_system = true;
     bool show_summary = true;
+    bool show_score = true;
+    bool about;                 // "About the score" requested
     bool library_request;       // "Library..." clicked: open the popup this frame
     bool lib_selected[256];
     i32 set_open = -1;          // "Expand all" (1) / "Collapse all" (0) for the next table frame
@@ -177,6 +183,7 @@ static void header_cell(u32 c) {
         ImGui::TextUnformatted(run->label);
         ImGui::PopFont();
         for (u32 i = 0; i < CI_COUNT; ++i) ImGui::Text("%s: %s", g_cmp_info_names[i], run->info[i]);
+        if (run->integrity >= 0) ImGui::Text("Integrity: %s", integrity_name((IntegrityState)run->integrity));
         ImGui::TextDisabled("Click: use as reference  \xC2\xB7  Right-click: more");
         ImGui::EndTooltip();
     }
@@ -364,6 +371,53 @@ static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
     }
 }
 
+// Score rows (score.h): profiles and components per run, flags on hover. Computed from each run's raw results.
+static void draw_score(u32 runs) {
+    bool any = false;
+    for (u32 c = 0; c < runs; ++c) any |= g_cmp.runs[c].score.any;
+    if (!any) return;
+    char title[64];
+    snprintf(title, sizeof(title), "Score v%u (%s)", g_score.version, g_score.status);
+    const bool open = group_row(title);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Derived from each run's raw results: reference machine = 1000, higher is faster.\n"
+                          "Hover a value for its breakdown; \"About the score\" has the formula and weights.");
+    if (!open) return;
+    char t[32];
+    for (u32 k = 0; k < SP_COUNT + SC_COUNT; ++k) {
+        const bool profile = k < SP_COUNT;
+        summary_label(profile ? g_score_profile_names[k] : g_score_comp_names[k - SP_COUNT],
+                      profile ? g_score_profile_desc[k] : nullptr, k == SP_OVERALL);
+        for (u32 c = 0; c < runs; ++c) {
+            const ScoreResult* s = &g_cmp.runs[c].score;
+            ImGui::TableSetColumnIndex((int)(2 + c));
+            const f64 v = profile ? s->profile[k] : s->comp[k - SP_COUNT];
+            if (!isfinite(v)) { dash_cell(); continue; }
+            snprintf(t, sizeof(t), "%.0f", v);
+            if (k == SP_OVERALL) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
+            else theme_push_numbers();
+            const bool flagged = (s->flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
+            ImGui::TextColored(flagged ? g_pal.warn : g_pal.on_surface, "%s", t);
+            ImGui::PopFont();
+            if (ImGui::IsItemHovered()) score_ui_tooltip(s, g_cmp.runs[c].label);
+        }
+    }
+}
+
+static void export_png() {
+    wchar_t path[MAX_PATH];
+    snapshot_export_path("compare", L"png", path);
+    snapshot_request(TOOL_COMPARE, path);
+}
+
+static void export_html() {
+    wchar_t path[MAX_PATH];
+    snapshot_export_path("report", L"html", path);
+    char path8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
+    status(report_write_html(path) ? "Saved %s" : "Failed to write %s", path8);
+}
+
 static void draw_table() {
     const u32 runs = g_cmp.run_count, cols = 2 + runs;
     const f32 fs = ImGui::GetFontSize();
@@ -409,6 +463,7 @@ static void draw_table() {
     const char* suites[CMP_MAX_TESTS];
     const u32 suite_count = suite_list(suites);
     if (s_cu.show_summary && runs > 1) draw_summary(runs, suites, suite_count);
+    if (s_cu.show_score) draw_score(runs);
 
     if (s_cu.show_system && group_row("System")) {
         const CmpRun* ref = &g_cmp.runs[g_cmp.reference];
@@ -610,11 +665,22 @@ void compare_ui_draw() {
     if (theme_button("Copy table")) copy_table();
     ImGui::SameLine();
     if (theme_button("Clear")) { compare_clear(); s_cu.status[0] = 0; }
+    ImGui::SameLine();
+    if (theme_button("Save PNG")) export_png();
+    theme_help("Screenshot of this window as a PNG in the results folder (for sharing, like a CrystalDiskMark screenshot).");
+    ImGui::SameLine();
+    if (theme_button("Save HTML")) export_html();
+    theme_help("Self-contained HTML report of these runs (score, system, every raw value) in the results folder.");
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_button("About the score")) s_cu.about = true;
+    char snap[300];
+    if (snapshot_take_status(TOOL_COMPARE, snap, sizeof(snap))) status("%s", snap);
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%u / %u runs%s%s", g_cmp.run_count, CMP_MAX_RUNS, s_cu.status[0] ? "  |  " : "", s_cu.status);
     draw_library();
+    score_ui_about(&s_cu.about);
 
     if (g_cmp.run_count == 0) {
         ImGui::Spacing();
@@ -643,6 +709,8 @@ void compare_ui_draw() {
     theme_checkbox("Show change", &s_cu.show_change);
     ImGui::SameLine();
     theme_checkbox("Summary", &s_cu.show_summary);
+    ImGui::SameLine();
+    theme_checkbox("Score", &s_cu.show_score);
     ImGui::SameLine();
     theme_checkbox("System info", &s_cu.show_system);
     ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);

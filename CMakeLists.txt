@@ -116,6 +116,11 @@ add_library(ezbench_core STATIC
     src/core/battery.cpp
     src/core/emi.cpp
     src/core/presets.cpp
+    src/core/runfile.cpp
+    src/core/score.cpp
+    src/core/integrity.cpp
+    src/core/history.cpp
+    src/core/report.cpp
     src/core/disk_health.cpp
     src/core/ata.cpp
     src/core/nvme_dev.cpp
@@ -150,7 +155,7 @@ add_library(ezbench_core STATIC
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
-    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi)
+    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi bcrypt)
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
@@ -199,13 +204,16 @@ add_executable(ez-pc-bench WIN32
     src/app/frames_ui.cpp
     src/app/frames_graph.cpp
     src/app/library.cpp
+    src/app/score_ui.cpp
+    src/app/history_ui.cpp
+    src/app/snapshot.cpp
     src/app/settings.cpp
     src/app/theme.cpp
     src/app/gui.rc
     ${CMAKE_BINARY_DIR}/library.rc
     ${CMAKE_BINARY_DIR}/pawnio_modules.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet)
+    shell32 cabinet windowscodecs)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

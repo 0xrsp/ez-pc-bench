@@ -1,8 +1,10 @@
 // Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
+#include "app/score_ui.h"
 #include "app/settings.h"
 #include "app/theme.h"
 #include "core/elevation.h"
+#include "core/history.h"
 #include "core/monitor.h"
 #include "core/presets.h"
 #include "core/results.h"
@@ -27,12 +29,20 @@ struct UiState {
     f64 last_power_refresh;
     bool quit;
     bool dev;           // --dev: show the smoke-test suite (runner / UI self-tests)
+    f64 history_end;    // end time of the last run saved to results\history
 };
 static UiState s_ui;
 
 static bool suite_visible(u32 suite) { return suite != SUITE_SMOKE || s_ui.dev; }
 
 void ui_set_dev(bool dev) { s_ui.dev = dev; }
+
+static int s_tab;       // output panel: 0 Results, 1 Charts, 2 Score, 3 Ranking
+void ui_set_tab(const char* name) {
+    static const char* const names[] = { "results", "charts", "score", "ranking" };
+    for (int i = 0; i < (int)ARRAY_COUNT(names); ++i)
+        if (!strcmp(name, names[i])) s_tab = i;
+}
 
 #define COL_DIM  g_pal.on_surface_variant
 #define COL_OK   g_pal.ok
@@ -162,7 +172,9 @@ static const ToolButton s_tool_buttons[] = {
                                               "power-on time from each drive's SMART / NVMe health log." },
     { TOOL_FRAMES, ICON_FRAMES, "Frames", "Frame capture of any running game or app (like PresentMon / CapFrameX): fps, "
                                           "frame times, 1% / 0.1% lows and a frame-time graph. Needs administrator rights." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution and present mode, disk test file and passes, theme." },
+    { TOOL_HISTORY, ICON_HISTORY, "History", "Every finished run is saved to results\\history. Trend of the score or any "
+                                             "metric across runs (driver / BIOS / Windows update regressions)." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
 };
 
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
@@ -332,6 +344,7 @@ u32 ui_take_tool_requests() {
 }
 
 BenchParams* ui_params() { return &s_ui.params; }
+bool* ui_selection() { return s_ui.selected; }
 
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
 // Preset combo: shows the preset the current selection + settings match, "Custom" otherwise.
@@ -923,12 +936,20 @@ void ui_draw() {
         ImGui::Spacing();
         theme_begin_panel("output", ImVec2(0, 0), false);
         // Segmented tabs.
-        static int tab = 0;
+        int& tab = s_tab;
         if (theme_tab("Results", tab == 0)) tab = 0;
         ImGui::SameLine(0.0f, 4.0f);
         if (theme_tab("Charts", tab == 1)) tab = 1;
+        ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab("Score", tab == 2)) tab = 2;
+        ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab("Ranking", tab == 3)) tab = 3;
         if (tab == 0) {
             draw_results();
+        } else if (tab == 2) {
+            score_ui_draw();
+        } else if (tab == 3) {
+            ranking_ui_draw();
         } else {
             ImGui::BeginChild("charts", ImVec2(0, 0));
             draw_charts();
@@ -939,4 +960,10 @@ void ui_draw() {
     }
     ImGui::End();
     if (!runner_is_running()) settings_tick(&s_ui.params, s_ui.selected);
+    // Automatic run history: every finished run goes to results\history (FUTURE.md section 11).
+    if (!runner_is_running() && g_run.total && g_run.end_time != s_ui.history_end) {
+        s_ui.history_end = g_run.end_time;
+        if (history_save(nullptr) && !s_ui.status_msg[0])
+            snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Run saved to results\\history");
+    }
 }

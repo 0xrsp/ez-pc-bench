@@ -3,4 +3,4 @@
 // context (see main_gui.cpp); asking for one that is already open just brings it to the front.
 #include "core/types.h"
 
-enum ToolWindow : u8 { TOOL_COMPARE, TOOL_SETTINGS, TOOL_TEMPS, TOOL_HEALTH, TOOL_FRAMES, TOOL_COUNT };
+enum ToolWindow : u8 { TOOL_COMPARE, TOOL_SETTINGS, TOOL_TEMPS, TOOL_HEALTH, TOOL_FRAMES, TOOL_HISTORY, TOOL_COUNT };

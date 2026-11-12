@@ -1,7 +1,9 @@
 #include "core/results.h"
 #include "core/baseline.h"
+#include "core/integrity.h"
 #include "core/monitor.h"
 #include "core/runner.h"
+#include "core/score.h"
 #include "core/sysinfo.h"
 #include "core/sysinfo_spd.h"
 #include "core/toon.h"
@@ -359,7 +361,10 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     }
     write_spread(f);
     write_env(f);
+    ScoreResult score;      // derived values last, then the integrity hashes (integrity.h)
+    score_current(&score);
+    score_write_toon(f, &score);
     const bool ok = ferror(f) == 0;
     fclose(f);
-    return ok;
+    return ok && integrity_append(path);
 }

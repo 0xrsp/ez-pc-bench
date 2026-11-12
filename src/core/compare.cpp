@@ -1,6 +1,7 @@
 // Comparison set: loads result files (and the current run) into one aligned table, see compare.h.
 #include "core/compare.h"
 #include "core/baseline.h"
+#include "core/integrity.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -390,6 +391,8 @@ bool compare_add_buffer(const char* label, const char* data, u32 size, char* err
     CmpRun* c = &g_cmp.runs[run];
     copy_str(c->label, sizeof(c->label), label);
     fill_info(c);
+    score_from_text(data, size, &c->score);
+    c->integrity = integrity_check(data, size);
     return true;
 }
 
@@ -415,6 +418,8 @@ bool compare_peek(const char* data, u32 size, CmpRun* out, char* err, u32 err_si
     memset(&s_file, 0, sizeof(s_file));
     if (!parse_file(&r, UINT32_MAX, err, err_size)) return false;
     fill_info(out);
+    score_from_text(data, size, &out->score);
+    out->integrity = integrity_check(data, size);
     return true;
 }
 
@@ -475,5 +480,7 @@ bool compare_add_current(char* err, u32 err_size) {
     format_power(c->info[CI_POWER], sizeof(c->info[0]), s->power.on_ac, power_mode_name(s->power.mode));
     copy_str(c->info[CI_ADMIN], sizeof(c->info[0]), s->elevated ? "yes" : "no");
     snprintf(c->info[CI_DURATION], sizeof(c->info[0]), "%g s", p->duration_ms / 1000.0);
+    score_current(&c->score);
+    c->integrity = INTEGRITY_NONE;
     return true;
 }
