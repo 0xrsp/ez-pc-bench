@@ -49,8 +49,8 @@ sets it and `preset_match` compares it. CLI `--preset sustained`.
 | `cpu.img.resize` | Image | WIC high-quality cubic scaler 1920x1080 -> 1280x720 | MPix/s of source pixels | on |
 | `cpu.parse.json` | Parsing | validating recursive-descent JSON parser on a generated 1 MiB document | MB/s | on |
 | `cpu.parse.text` | Parsing | tokenize 1 MiB of prose, lowercase, FNV hash, count in an open-addressing table | MB/s | on |
-| `cpu.sci.fft` | Science | 64K-point complex FP64 FFT, radix-4 Stockham, forward + inverse per call | GFLOPS (5 n log2 n per transform) | on |
-| `cpu.sci.nbody` | Science | 2048-body all-pairs gravity, FP32 SoA + leapfrog, one system per thread | Ginteractions/s | on |
+| `cpu.sci.fft` | Science | 16K-point complex FP64 FFT (L2-resident), radix-4 Stockham, forward + inverse per call | GFLOPS (5 n log2 n per transform) | on |
+| `cpu.sci.nbody` | Science | 2048-body all-pairs gravity, FP32 SoA, AVX2 (exact sqrt + divide) + leapfrog, one system per thread | Ginteractions/s | on |
 | `cpu.sci.raybox` / `raytri` | Science | slab test vs 4096 boxes / Moller-Trumbore vs 1024 triangles, 1024 rays | Mtests/s | on |
 | `cpu.crypto.aes_gcm` | Crypto | AES-128-GCM through Windows CNG (BCrypt), 64 KiB per call | GB/s | on |
 | `cpu.crypto.chacha20` | Crypto | own ChaCha20, AVX2, 8 blocks per iteration | GB/s | on |
@@ -167,9 +167,9 @@ constant inputs.
   it is what Windows TLS / BitLocker-style code uses, and our own AES-CTR test already covers the raw AES-NI
   / VAES rate; the AVX-VNNI int8 path is untested (Zen 4 has AVX-512 VNNI, so that path runs instead);
   ChaCha20 is the cipher only (no Poly1305).
-- [x] P2 Pi / big-number workload — done (`cpu.work.pi`, default off). MT parallelizes only the series
-  (binary-splitting ranges + pairwise merges); the last merges and the Newton steps are single-threaded,
-  so MT / ST stays well below the core count, like y-cruncher's small sizes.
+- [x] P2 Pi / big-number workload — done (`cpu.work.pi`, default off). MT runs one series range per thread, then each merge level's 3-4 products per pair
+  as parallel tasks and the two Newton iterations side by side; every single multiplication is still
+  single-threaded, so MT / ST is ~2.6x here (y-cruncher parallelizes inside the FFT too).
 - [x] P3 Instruction latency / throughput table — done (`cpu.micro.instr`, 19 instructions).
 - [x] P3 Branch predictor and op-cache / code-footprint microbenchmarks — done (`cpu.micro.branch`,
   `cpu.micro.code`). Only the pattern-length sweep for one branch (no branch-count x history grid) and
