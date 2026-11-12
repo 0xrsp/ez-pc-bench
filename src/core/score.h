@@ -4,7 +4,7 @@
 //
 //   ratio_i     = value_i / ref_i            (ref_i / value_i for lower-is-better metrics)
 //   component_c = 1000 * exp(sum_i w_i ln ratio_i / sum_i w_i)        over the inputs of c that are present
-//   profile_p   = 1000 * exp(sum_c W_pc ln(component_c / 1000) / sum_c W_pc)   only when every input is present
+//   overall     = 1000 * exp(sum_c W_c ln(component_c / 1000) / sum_c W_c)     only when every input is present
 //
 // The reference run scores exactly 1000 everywhere. Inputs, weights, directions and the frozen reference
 // values live in one static table per version (score.cpp); a new version only changes data. Scores of
@@ -14,8 +14,6 @@
 
 enum ScoreComp : u8 { SC_CPU_ST, SC_CPU_MT, SC_MEM, SC_GPU, SC_DISK };
 constexpr u32 SC_COUNT = 5;
-enum ScoreProfile : u8 { SP_OVERALL, SP_GAMING, SP_CREATOR, SP_EVERYDAY };
-constexpr u32 SP_COUNT = 4;
 
 enum ScoreInputFlags : u8 {
     SI_DRIVE = 1u << 0,     // disk metric named without its "C: " prefix; uses C: if tested, else the first drive
@@ -41,16 +39,13 @@ struct ScoreVersion {
     const char* reference_desc;
     const ScoreInput* inputs;
     u32 input_count;
-    f32 profile_weights[SP_COUNT][SC_COUNT];    // % per component
+    f32 overall_weights[SC_COUNT];  // % per component
     const char* calibration;        // calibration state shown on the About page
 };
 extern const ScoreVersion g_score;  // the current version
 
 extern const char* const g_score_comp_names[SC_COUNT];      // "CPU single-thread", ...
 extern const char* const g_score_comp_ids[SC_COUNT];        // "cpu_st", ... (results file)
-extern const char* const g_score_profile_names[SP_COUNT];
-extern const char* const g_score_profile_ids[SP_COUNT];
-extern const char* const g_score_profile_desc[SP_COUNT];
 
 // Every test score v1 reads; the Score preset (presets.cpp) runs exactly these at default settings.
 #define SCORE_V1_TESTS                                                                                        \
@@ -91,12 +86,12 @@ struct ScoreInputValue {
 struct ScoreResult {
     u32 version;
     bool any;               // at least one input present
-    bool complete;          // every input present: overall and profiles exist
+    bool complete;          // every input present: overall exists
     char drive;             // disk letter the storage inputs came from, 0 if none
     u32 flags;              // ScoreFlags
     f64 comp[SC_COUNT];     // NaN when the component has no input
     f32 coverage[SC_COUNT]; // present weight / total weight (1 = all inputs)
-    f64 profile[SP_COUNT];  // NaN unless complete
+    f64 overall;            // NaN unless complete
     ScoreInputValue in[SCORE_MAX_INPUTS];
 };
 
@@ -105,6 +100,10 @@ bool score_from_text(const char* data, u32 size, ScoreResult* out);  // false: n
 void score_current(ScoreResult* out);                               // the run in memory
 void score_flag_text(u32 flags, char* buf, u32 size);               // "on battery, power mode" / ""
 void score_inputs_of(ScoreComp c, u32* present, u32* total, const ScoreResult* s);
+// Overall and the components as one list (pickers, table rows): item 0 = Overall, 1 + c = component c.
+constexpr u32 SCORE_ITEM_COUNT = 1 + SC_COUNT;
+const char* score_item_name(u32 item);
+f64 score_item(const ScoreResult* s, u32 item);
 // `score:` block of a results file (derived values with the version; readers recompute from the raw data).
 void score_write_toon(FILE* f, const ScoreResult* s);
 // Plain-text breakdown (CLI --score).

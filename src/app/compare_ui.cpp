@@ -370,7 +370,7 @@ static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
     }
 }
 
-// Score rows (score.h): profiles and components per run, flags on hover. Computed from each run's raw results.
+// Score rows (score.h): Overall and the components per run, flags on hover. Computed from each run's raw results.
 static void draw_score(u32 runs) {
     bool any = false;
     for (u32 c = 0; c < runs; ++c) any |= g_cmp.runs[c].score.any;
@@ -383,17 +383,15 @@ static void draw_score(u32 runs) {
                           "Hover a value for its breakdown; \"About the score\" has the formula and weights.");
     if (!open) return;
     char t[32];
-    for (u32 k = 0; k < SP_COUNT + SC_COUNT; ++k) {
-        const bool profile = k < SP_COUNT;
-        summary_label(profile ? g_score_profile_names[k] : g_score_comp_names[k - SP_COUNT],
-                      profile ? g_score_profile_desc[k] : nullptr, k == SP_OVERALL);
+    for (u32 k = 0; k < SCORE_ITEM_COUNT; ++k) {
+        summary_label(score_item_name(k), k == 0 ? "How fast the PC is overall: a weighted mix of the five components." : nullptr, k == 0);
         for (u32 c = 0; c < runs; ++c) {
             const ScoreResult* s = &g_cmp.runs[c].score;
             ImGui::TableSetColumnIndex((int)(2 + c));
-            const f64 v = profile ? s->profile[k] : s->comp[k - SP_COUNT];
+            const f64 v = score_item(s, k);
             if (!isfinite(v)) { dash_cell(); continue; }
             snprintf(t, sizeof(t), "%.0f", v);
-            if (k == SP_OVERALL) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
+            if (k == 0) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
             else theme_push_numbers();
             const bool flagged = (s->flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
             ImGui::TextColored(flagged ? g_pal.warn : g_pal.on_surface, "%s", t);

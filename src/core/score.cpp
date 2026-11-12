@@ -64,26 +64,13 @@ const ScoreVersion g_score = {
     1, "preliminary", "2026-11-11_r7-250_rtx5060-laptop",
     "Ryzen 7 250 + RTX 5060 Laptop, 32 GB DDR5-5600, Samsung PM9C1a NVMe (AC, Best performance)",
     s_v1_inputs, ARRAY_COUNT(s_v1_inputs),
-    {   // CPU ST, CPU MT, Memory, GPU, Storage (%)
-        { 30, 20, 15, 20, 15 },     // Overall (balanced)
-        { 25, 10, 15, 45, 5 },      // Gaming
-        { 10, 40, 20, 20, 10 },     // Creator / workstation
-        { 40, 10, 15, 5, 30 },      // Everyday / office
-    },
+    { 30, 20, 15, 20, 15 },     // Overall: CPU ST, CPU MT, Memory, GPU, Storage (%)
     "Not calibrated yet: the weights are an initial guess. Calibration fits them so the score ranks reference "
     "machines like their real-task timings (game fps, compile, app launch, photo export, file copy).",
 };
 
 const char* const g_score_comp_names[SC_COUNT] = { "CPU single-thread", "CPU multi-thread", "Memory", "GPU", "Storage" };
 const char* const g_score_comp_ids[SC_COUNT] = { "cpu_st", "cpu_mt", "memory", "gpu", "storage" };
-const char* const g_score_profile_names[SP_COUNT] = { "Overall", "Gaming", "Creator", "Everyday" };
-const char* const g_score_profile_ids[SP_COUNT] = { "overall", "gaming", "creator", "everyday" };
-const char* const g_score_profile_desc[SP_COUNT] = {
-    "Balanced: how fast the PC is overall.",
-    "Games: GPU first, then single-thread CPU and memory latency.",
-    "Creator / workstation: multi-thread CPU, memory bandwidth, GPU compute.",
-    "Everyday / office: single-thread CPU and storage latency.",
-};
 
 const char* const g_score_flag_ids[SF_COUNT] = { "incomplete", "settings", "battery", "power-mode", "throttle", "background",
                                                  "memory-integrity", "not-admin", "large-pages", "noisy", "no-conditions" };
@@ -165,15 +152,14 @@ void score_compute(const RunFile* rf, ScoreResult* out) {
         out->coverage[c] = w_total[c] > 0.0 ? (f32)(w_present[c] / w_total[c]) : 0.0f;
         out->complete &= w_present[c] >= w_total[c];
     }
-    for (u32 p = 0; p < SP_COUNT; ++p) {
-        out->profile[p] = NAN;
-        if (!out->complete) continue;
+    out->overall = NAN;
+    if (out->complete) {
         f64 sum = 0.0, wsum = 0.0;
         for (u32 c = 0; c < SC_COUNT; ++c) {
-            sum += v->profile_weights[p][c] * log(out->comp[c] / 1000.0);
-            wsum += v->profile_weights[p][c];
+            sum += v->overall_weights[c] * log(out->comp[c] / 1000.0);
+            wsum += v->overall_weights[c];
         }
-        out->profile[p] = 1000.0 * exp(sum / wsum);
+        out->overall = 1000.0 * exp(sum / wsum);
     }
     if (!out->any) return;
 
@@ -234,6 +220,10 @@ void score_inputs_of(ScoreComp c, u32* present, u32* total, const ScoreResult* s
     }
 }
 
+const char* score_item_name(u32 item) { return item ? g_score_comp_names[item - 1] : "Overall"; }
+
+f64 score_item(const ScoreResult* s, u32 item) { return item ? s->comp[item - 1] : s->overall; }
+
 // ---- output -------------------------------------------------------------------------------------------
 
 static f64 rounded(f64 v) { return isfinite(v) ? floor(v + 0.5) : NAN; }
@@ -244,14 +234,7 @@ void score_write_toon(FILE* f, const ScoreResult* s) {
     toon_num(f, 1, "version", s->version);
     toon_str(f, 1, "status", g_score.status);
     toon_str(f, 1, "reference", g_score.reference);
-    toon_num(f, 1, "overall", rounded(s->profile[SP_OVERALL]));
-    toon_table(f, 1, "profiles", SP_COUNT, "id,value");
-    for (u32 p = 0; p < SP_COUNT; ++p) {
-        ToonRow r = toon_row(f, 2);
-        toon_cell_str(&r, g_score_profile_ids[p]);
-        toon_cell_num(&r, rounded(s->profile[p]));
-        toon_row_end(&r);
-    }
+    toon_num(f, 1, "overall", rounded(s->overall));
     toon_table(f, 1, "components", SC_COUNT, "id,value,inputs,of");
     for (u32 c = 0; c < SC_COUNT; ++c) {
         u32 present, total;
@@ -325,11 +308,8 @@ void score_print(FILE* f, const ScoreResult* s) {
         fprintf(f, "  No score inputs in this run (run the Score preset: --preset score).\n");
         return;
     }
-    fprintf(f, " ");
-    for (u32 p = 0; p < SP_COUNT; ++p) {
-        fprintf(f, "  %s ", g_score_profile_names[p]);
-        print_num(f, s->profile[p]);
-    }
+    fprintf(f, "  %-18s", "Overall");
+    print_num(f, s->overall);
     fprintf(f, "%s\n", s->complete ? "" : "  (incomplete run: component scores only)");
     char flags[300];
     score_flag_text(s->flags & ~SF_INCOMPLETE, flags, sizeof(flags));

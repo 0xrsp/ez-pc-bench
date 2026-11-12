@@ -611,11 +611,6 @@ score:
   status: preliminary
   reference: 2026-11-11_r7-250_rtx5060-laptop
   overall: 1000
-  profiles[4]{id,value}:
-    overall,1000
-    gaming,1000
-    creator,1000
-    everyday,1000
   components[5]{id,value,inputs,of}:
     cpu_st,1000,9,9
     cpu_mt,1000,9,9
