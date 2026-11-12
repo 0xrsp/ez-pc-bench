@@ -108,7 +108,7 @@ src/
   app/compare_ui.*     Compare window;  app/score_ui.*, history_ui.*: score tab / About, History window
   app/snapshot.*       Window back buffer -> PNG (WIC): file (Score tab) or clipboard (compare)
   app/mem_charts.*     Memory grid table, loaded-latency plot
-  app/temps_ui.*, overlay.*, adv_ui.*   Sensors window (+ log), click-through overlay, PawnIO section
+  app/temps_ui.*, overlay.*   Sensors window (+ log), click-through overlay
   app/health_ui.*      Drive health window
   app/system_ui.*      System details window
   app/stability_ui.*, stability_cli.*   Stability tester window and `--stress`
@@ -122,10 +122,9 @@ src/
   core/presets.*       Run presets (quick, standard, extended, score, sustained)
   core/monitor.*, hwread.*  Run monitor (env[] per test), driverless CPU / GPU readers
   core/sensors.*, battery.*, emi.*   Sensors sampler + channels + log, battery IOCTLs, Energy Metering Interface
-  core/pawnio.*, adv_*.cpp/.h        PawnIO client, advanced sensors (AMD / Intel CPU, SMBus DIMMs, UMC timings)
   core/sysinfo.cpp/.h  CPUID, SMBIOS RAM, adapters, drives, power, OS, admin
-  core/sysinfo_cpu/devices/display/gpu/win/spd.cpp, sysinfo_ext.h   CPU details, PCI/USB tree, EDID, GPU API
-                       details, Windows state, SPD + timings
+  core/sysinfo_cpu/devices/display/gpu/win.cpp, sysinfo_ext.h   CPU details, PCI/USB tree, EDID, GPU API
+                       details, Windows state
   core/sysreport.cpp   System report model -> window / text / TOON
   core/disk_health.*, ata.*, nvme_dev.*, scsi_pt.*, csmi.*, smart_attr.*, health_store.*, physdisk.*
                        Drive health: SMART / NVMe logs over every transport, status rules, text report
@@ -507,15 +506,8 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   (`combined`) or until stopped; temperature / battery limits, stop on first error, state always restored;
   WHEA-Logger counter (`core/whea.*`); report as TOON `kind: stability`. `--inject` self-test proved
   detection end to end for every test. **Not done:** WHEA in benchmark runs, Vulkan GPU tests, settings
-  persistence, CPU temperature limit from PawnIO. **Untested:** a real WHEA event (none in this PC's log).
-- **M10 PawnIO sensors** — ✅ code done 2026-11-11 on `dev` ([pawnio](notes/pawnio.md)): license / HVCI /
-  anti-cheat research (decision log), plain-`DeviceIoControl` client (`core/pawnio.*`), advanced sensors
-  (`core/adv_sensors.*`, `adv_cpu.cpp`: AMD Tctl / Tdie / CCDs / RAPL / APERF-MPERF / SVI2 / PM table, Intel
-  DTS / RAPL / limit bits; `adv_smbus.cpp`: SPD5118 / TSE2004 temperatures + SPD base config; `adv_umc.cpp`:
-  AMD UMC timings), `sysinfo_spd.*` (`system.ram.timings` / `spd` in results), Sensors-window section,
-  Settings row, CLI `--adv-report` / `--no-adv-sensors`, run monitor `cpu_temp` when available. **Untested:
-  all of it** — PawnIO isn't installed here and no module `.bin` is shipped. Hawk Point PM table only has
-  Tctl + PPT mapped. Not done: XMP / EXPO (needs an SPD page-select write, §11), Intel MCHBAR, Super I/O.
+  persistence. **Untested:** a real WHEA event (none in this PC's log).
+- **M10 Kernel-driver sensors** — built 2026-11-11, removed 2026-11-12 (decision log).
 - **M11 Score + CPU kernels** — ✅ done 2026-11-11 on `dev` ([cpu](notes/cpu.md),
   [score-results](notes/score-results.md)). CPU: 26 new tests (`cpu/cpu_{topo,compress,image,parse,sci,hash,
   ai,pi,micro}.cpp`; per-core pass, hybrid split, Windows Compression API + own LZ77, WIC, JSON / text,
@@ -543,8 +535,7 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   (`core/battery.*`, `emi.*`, `app/overlay.*`). **Untested:** `mem.lat.pages` (needs SeLockMemoryPrivilege),
   D3D12 debug layer (not installed). **Not done:** GPU memory
   type / bus width. Wired at merge time: GPU suite setup queries the GPU API details (ReBAR, feature tiers),
-  the run monitor records EMI package power (`env[].cpu_pkg_w`) and WHEA events (`env[].whea`), the stability
-  CPU limit uses PawnIO's temperature when present.
+  the run monitor records EMI package power (`env[].cpu_pkg_w`) and WHEA events (`env[].whea`).
 
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).
 
@@ -629,20 +620,23 @@ Waiting on the user (2026-11-11):
 - **FUTURE.md §0 hardware scope**: which machines beyond this laptop (Intel hybrid, multi-CCD / X3D,
   > 64 LPs, NUMA, non-AVX2, ARM64), and test hardware or volunteers. §12 hardware generality and ARM64 wait.
 - **§0 network**: may anything else talk to the network (email alerts, leaderboard)? Network access today:
-  the PawnIO "Download & install" button (click-only) and the startup update check (`dist` builds, §12).
+  only the startup update check (`dist` builds, §12).
 - **§0 resident mode**: may the GUI stay resident (tray, health / temperature alerts)?
-- **PawnIO SPD page select**: allow one SMBus write to the SPD hub's page register (MR11 on SPD5118, SPA0 /
-  SPA1 on DDR4), restored afterwards, to read XMP / EXPO and the DDR5 manufacturing data? (HWiNFO, CPU-Z,
-  ZenTimings and Linux `spd5118` do.)
-- **PawnIO module `.bin` files**: ship them (LGPL-2.1 allows it, with COPYING + a README naming the
-  release), and if so embedded via `third_party/pawnio/` or as a `pawnio\` folder next to the exe?
-- **Install PawnIO on this PC** to test M10 at all (driver install is the user's call; Settings > Download &
-  install now does it), then map the Hawk Point PM table from an `--adv-report` dump. Also: may SMBus DIMM polling run during stability runs?
 - **Admin needed** to test the raw-device disk tests and drive self-tests live.
 - **Score calibration needs other machines' data**: real-task timings + Score-preset runs from 8–15
   machines (issue form) before the weights can be fitted and "preliminary" dropped.
 
 ## 12. Decision log
+
+- 2026-11-12 (PawnIO removed, user decision): PawnIO and the advanced sensors built on it (M10) are gone because
+  they added nothing useful (never even tested with the driver loaded here). Removed: `core/pawnio*`, `adv_*`,
+  `unzip.*`, `sysinfo_spd.*`, `app/adv_ui.*`, the Settings row with Download & install, the Sensors "Advanced"
+  device, CLI `--adv-report` / `--no-adv-sensors` / `--pawnio-modules`, ini `adv_sensors`. Lost readouts: MSR /
+  SMN CPU temperatures (Tctl / Tdie / CCDs), RAPL power, effective clocks and voltages; DIMM temperatures and SPD
+  over SMBus; AMD UMC memory timings (`system.ram.timings` / `system.ram.spd` in results, the sysinfo timings
+  line). The run monitor no longer has a CPU temperature (`env[].cpu_temp_max` column dropped; older files with it
+  and with the `cpu-hot` flag still read); the stability CPU limit uses the hottest ACPI zone only. The update
+  check is now the app's only network access.
 
 - 2026-11-12 (auto-update, user request): the GUI checks for updates on startup.
   - Background thread, `GET https://api.github.com/repos/0xrsp/ez-pc-bench/releases/latest` (WinHTTP, system
@@ -666,7 +660,7 @@ Waiting on the user (2026-11-11):
   line and its fill use the unit hue, taken from the current theme (`g_pal.series`).
 
 - 2026-11-12 (look and graphs; details in [notes/theme-refresh.md](notes/theme-refresh.md),
-  [notes/graphs.md](notes/graphs.md), [notes/pawnio.md](notes/pawnio.md) §10):
+  [notes/graphs.md](notes/graphs.md)):
   - Theme replaces the Material 3 trial below: blue-black surfaces (dark page #0B0E14), cyan primary for actions and
     data, orchid secondary for navigation / selection, all text WCAG AA. Radii 2-4 px (no pills), 1 px outlines on
     frames, secondary buttons, tabs, cards and popups. `theme_group_begin/end`: titled outlined boxes, used by
@@ -676,12 +670,9 @@ Waiting on the user (2026-11-11):
     unit (load cyan, clock violet, power amber, temperature rose, memory magenta, latency blue, disk green, compute
     orange), self-contained in graph.cpp and independent of the theme palette.
   - Sensors window Overview is Task Manager-like: device list with sparklines (CPU, GPU n, Memory, Drives, Power,
-    Temperatures, Advanced; the "All" entry was removed 2026-11-12, CPU is the default, a search lists every match) and the selected device's graphs, stats and tile grids (per-LP load, per-core power);
+    Temperatures; the "All" entry was removed 2026-11-12, CPU is the default, a search lists every match) and the
+    selected device's graphs, stats and tile grids (per-LP load, per-core power);
     span 1 / 2 / 5 / 10 min; ini `[sensors] graph_window`, `device`.
-  - PawnIO modules: downloaded with the driver (or a "Download modules" button) from the PawnIO.Modules release named by
-    `PAWNIO_MODULES_VERSION`, checked against `PAWNIO_MODULES_SHA256` (`core/pawnio_modules.h`), unpacked by our own
-    zip reader (`core/unzip.*`) into `%LOCALAPPDATA%\ez-pc-bench\pawnio\<version>\` with COPYING; no embedded
-    modules any more. The driver verifies module signatures at load. CLI `--pawnio-modules`.
 
 - 2026-11-12 (x86-64-v2 baseline): the exes no longer need AVX2 (they used to crash at launch on pre-Haswell /
   pre-Ryzen CPUs and on Pentium / Celeron parts up to ~2021, which had AVX switched off).
@@ -729,9 +720,6 @@ Waiting on the user (2026-11-11):
   - UI: Benchmark settings window (`--tool bench`, sliders button next to Run) holds the preset-driven values
     (duration, repeat, sustained mode, disk file size, passes, interval); Settings (gear) keeps the rest; same
     ini keys. GPU combo: theme checkboxes, compact popup, VRAM column (`--open-gpu-combo`). Base font 15 → 16.5 px.
-  - PawnIO "Download & install" (user request): `URLDownloadToFileW` of the PawnIO.Setup latest-release
-    `PawnIO_setup.exe` to %TEMP%, Authenticode check (signer "namazso"), run (UAC from its manifest), delete,
-    re-detect. The app's first network access, only on that click; `--adv-report` prints the installer URL.
 - 2026-11-11 (M11 score v1, [notes](notes/score-results.md)):
   - ratio = value / ref (ref / value when lower is better); component = 1000 · weighted geometric mean of
     its input ratios; Overall = weighted geometric mean of the components (30/20/15/20/15; the Gaming /
@@ -748,24 +736,6 @@ Waiting on the user (2026-11-11):
     adds it to old files); `integrity:` block hashes everything except `score` / `integrity` (weak by
     design). Runs auto-save to `<exe dir>\results\history\` (CLI `--no-history`).
   - Rule reworded (CLAUDE.md, §1): raw numbers stay primary; the score is the only aggregate.
-- 2026-11-11 (M10 PawnIO, [notes](notes/pawnio.md)):
-  - License: our client is an independent program talking to the driver only through `DeviceIoControl`,
-    which the driver's GPL-2.0 special exception allows; we don't use PawnIOLib (LGPL) and never ship or
-    install the driver (users get it from pawnio.eu; since the trim, Settings' Download & install fetches and
-    starts the official signed installer on the user's click). The signed module `.bin` files are LGPL-2.1 and may be
-    shipped unmodified with COPYING + a README naming the release (as LibreHardwareMonitor does); not shipped
-    yet (§11). Not legal advice.
-  - HVCI: no official statement; very likely compatible (in-driver bytecode interpreter, no code generation;
-    a user report with memory integrity on). Untested here.
-  - Anti-cheat: FACEIT blocked `PawnIO.sys` in 2025 (signing certificate shared with cheat software),
-    re-signed and fixed as of PawnIO 2.1.0; no reports for Vanguard / EAC / BattlEye / Javelin. Our switch
-    only closes our handles: users who must satisfy an anti-cheat have to uninstall PawnIO.
-  - Read-only: we only call read functions (`ioctl_read_msr`, `ioctl_read_smn`, PM table, `ioctl_smbus_xfer`
-    reads); never `ioctl_write_*`, SMU commands, PIIX4 port select, clock setting, SPD page select, Super I/O
-    port writes. Bus mutexes `Global\Access_PCI` / `Global\Access_SMBUS.HTP.Method` around every batch.
-  - Polling: one TIME_CRITICAL 1 Hz thread, PM table ≤ 1 Hz; while a benchmark runs only package-scope reads
-    (no per-LP hopping, no SMBus); any SMBus timeout / collision stops SMBus for the session (EC-owned bus).
-    `adv_sensors=1` by default; everything falls back to driverless sources without PawnIO.
 - 2026-11-11 (M11 sustained mode, [notes](notes/cpu.md)): runner-level, any test: loops a test for
   `sustain_s` (≥ 2 passes, ≤ 500), reports the median over passes with min / max / CV in `spread[]`, per-pass
   values in `sustained[]` / `sustain_passes[]`. **Sustained mode overrides repeat.** `drop_pct` > 0 = slower
@@ -835,8 +805,8 @@ Waiting on the user (2026-11-11):
     median of 3 replaces the best of 3 at the same SSD wear.
 
 - 2026-11-11 (roadmap, details in [FUTURE.md](FUTURE.md)): kernel-level sensors (per-core CPU and RAM
-  temperatures, package power, SPD, memory timings) will use the existing signed **PawnIO** driver, opt-in
-  and never bundled-installed by us; no WinRing0 or other blocklisted drivers. Stability testing (CPU, memory
+  temperatures, package power, SPD, memory timings) will use an existing signed third-party driver, opt-in
+  (removed again 2026-11-12); no WinRing0 or other blocklisted drivers. Stability testing (CPU, memory
   error test, VRAM test, GPU error detection, WHEA) becomes its own tool, separate from benchmarks. An
   **overall score** derived from the raw results (versioned formula, component breakdown, weights calibrated
   against real-task timings) will be added; raw numbers stay primary and the "no scores" rule gets reworded

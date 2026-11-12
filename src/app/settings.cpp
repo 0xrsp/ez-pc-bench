@@ -1,7 +1,6 @@
 // Settings persistence. Each frame the UI state is compared with the previous frame's snapshot; a change is
 // written to the ini one second after the last edit ([settings] and [tests] sections, rewritten whole).
 #include "app/settings.h"
-#include "core/adv_sensors.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
 #include "disk/disk.h"
@@ -15,7 +14,6 @@
 struct Snapshot {
     BenchParams params;
     ThemeMode theme = THEME_SYSTEM;
-    bool adv_sensors = true;                    // PawnIO advanced sensors switch (core/adv_sensors.h)
     bool selected[MAX_BENCHES];
 };
 
@@ -123,8 +121,6 @@ void settings_load(BenchParams* p, bool* selected) {
         p->disk_passes = read_u32(L"disk_passes", p->disk_passes, 1, 99);
         p->disk_write_through = read_u32(L"disk_write_through", p->disk_write_through, 0, 1) != 0;
         p->repeat = read_u32(L"repeat", p->repeat, 1, MAX_REPEAT);
-        adv_set_enabled(read_u32(L"adv_sensors", 1, 0, 1) != 0);
-        s_file.adv_sensors = adv_enabled();
         p->sustain_s = read_u32(L"sustain_s", p->sustain_s, 0, MAX_SUSTAIN_S);
 
         // Disk options (DiskOptions, disk/disk.h).
@@ -162,7 +158,6 @@ void settings_load(BenchParams* p, bool* selected) {
 static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
     s->params = *p;
     s->theme = theme_mode();
-    s->adv_sensors = adv_enabled();
     memcpy(s->selected, selected, g_bench_count);
 }
 
@@ -174,7 +169,7 @@ static bool disk_same(const DiskOptions* x, const DiskOptions* y) {
 
 static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
-    return a->theme == b->theme && a->adv_sensors == b->adv_sensors && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
+    return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
            x->gpu_adapter == y->gpu_adapter && x->gpu_adapters == y->gpu_adapters && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->gpu_onscreen == y->gpu_onscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
@@ -245,7 +240,6 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);
     sec_add(&s, L"repeat=%u", p->repeat);
-    sec_add(&s, L"adv_sensors=%u", out.adv_sensors ? 1u : 0u);
     sec_add(&s, L"sustain_s=%u", p->sustain_s);
     const DiskOptions* o = &p->disk;
     wchar_t mode[16];

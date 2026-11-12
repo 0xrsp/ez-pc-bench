@@ -9,8 +9,8 @@
 //   - Battery charge / discharge rate, voltage, level (core/battery.*) and Energy Metering Interface power
 //     rails such as CPU package / per-core power (core/emi.*).
 // Every value is also published as a flat list of channels (id, name, unit, now / min / max / avg, one-second
-// history) that the sensor log and the overlay use. More sources (e.g. PawnIO CPU / RAM temperatures) add
-// channels in publish() without changing this interface.
+// history) that the sensor log and the overlay use. More sources add channels in publish() without changing
+// this interface.
 #include "core/battery.h"
 #include "core/hwread.h"
 

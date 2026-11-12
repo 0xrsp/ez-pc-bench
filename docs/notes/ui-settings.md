@@ -1,7 +1,8 @@
-# UI: settings split, bigger font, GPU combo, PawnIO download
+# UI: settings split, bigger font, GPU combo
 
 Stream written 2026-11-11. Files: `src/app/settings_ui.{h,cpp}`, `ui.{h,cpp}`, `main_gui.cpp`, `tool_windows.h`,
-`theme.{h,cpp}`, `adv_ui.{h,cpp}`, `src/core/adv_sensors.{h,cpp}`, `CMakeLists.txt`.
+`theme.{h,cpp}`, `CMakeLists.txt`. (A fourth part, a download button for an optional kernel driver, was removed
+2026-11-12 together with that driver.)
 
 ## 1. Settings split in two windows
 
@@ -10,7 +11,7 @@ everything else is an **app setting**.
 
 | Window | Opened from | Settings |
 |---|---|---|
-| **Settings** (`TOOL_SETTINGS`, `--tool settings`, 680 x 720) | gear button, right end of the System row | Theme; Threads; GPU present mode; disk write-through, read / write passes + mixed-pass share, test data*, disk results unit, test folder, buffered I/O, sustained-write amount; custom disk rows*; advanced sensors (PawnIO) |
+| **Settings** (`TOOL_SETTINGS`, `--tool settings`, 680 x 720) | gear button, right end of the System row | Theme; Threads; GPU present mode; disk write-through, read / write passes + mixed-pass share, test data*, disk results unit, test folder, buffered I/O, sustained-write amount; custom disk rows* |
 | **Benchmark settings** (`TOOL_BENCH`, `--tool bench`, 680 x 580) | new sliders icon button right after Run / Cancel | Duration per phase, repeat each test, sustained mode; GPU render resolution (moved here 2026-11-12); disk test file size, passes, interval between tests |
 
 \* rows the disk-trim stream deletes; they were left where they were.
@@ -27,7 +28,7 @@ everything else is an **app setting**.
 - **Reset to defaults** in each window resets only its own settings. Settings: threads, GPU present
   mode, write-through, disk options except the folder, the custom rows and the interval. Benchmark settings:
   duration, repeat, sustain, render resolution, file size, passes, interval (= the Standard preset's values). Neither touches the
-  theme, advanced sensors, the test selection or the GPU / drives picked in the main window.
+  theme, the test selection or the GPU / drives picked in the main window.
 - **ini unchanged**: same file (`%APPDATA%\ez-pc-bench\settings.ini`), same `[settings]` keys; `settings.cpp`
   wasn't touched.
 - New icon `ICON_SLIDERS` (theme.h) for the toolbar button.
@@ -56,47 +57,8 @@ looked at (the frames stream removes it).
 - Dev flag `--open-gpu-combo`: opens the popup on the 3rd frame (for screenshots; the capture script can't
   click).
 
-## 4. PawnIO "Download & install"
-
-Settings > Sensors > Advanced sensors (PawnIO), when PawnIO is not installed: "Not installed" + **Download &
-install** (was a "(https://pawnio.eu) [Copy link]").
-
-Flow (`adv_ui.cpp`, worker thread; the UI thread only reads an atomic state):
-1. Click -> state *Downloading*: the row shows "Downloading the PawnIO installer..." (animated dots; no
-   percentage: `URLDownloadToFileW` progress needs a COM callback object, not worth it for ~3.4 MB).
-2. `URLDownloadToFileW(ADV_PAWNIO_SETUP_URL)` =
-   `https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe` into
-   `%TEMP%\ezpcbench_pawnio\PawnIO_setup.exe`.
-3. Signature check before anything runs: `WinVerifyTrust` (valid, trusted Authenticode) **and** the signing
-   certificate's organization must be `namazso` (PawnIO's author; checked on the real file:
-   `E=admin@namazso.eu, CN=namazso.eu, O=namazso`). Otherwise an error line and nothing is started.
-4. `ShellExecuteExW` (verb "open"): the installer's manifest is `requireAdministrator`, so Windows elevates it
-   (no UAC prompt when EzPcBench already runs as admin). State *Installer running*.
-5. Wait for it to exit, delete the file and the folder, `adv_redetect()` (new in `adv_sensors`: re-runs the
-   existing detection and reopens the modules, restarting the sampling thread if the Sensors window uses it).
-   The row then shows the normal on / off switch, or "Not installed" again with "The installer closed without
-   installing PawnIO." (or the exit code).
-6. Errors are shown in the error color under the button (download HRESULT, rejected signature, administrator
-   rights refused, couldn't start); the button stays for a retry.
-
-2026-11-12: between the signature check and starting the installer, the worker also downloads the signed
-PawnIO modules (state *Downloading the PawnIO modules*), and with the driver installed but the modules missing
-the row shows a **Download modules** button instead. Details: docs/notes/pawnio.md §10.
-
-**Network access:** this is the app's first and only network access, and it only happens on that explicit
-click. Nothing is contacted at startup or in the background. The row's help text says so.
-
-CLI: `--adv-report` "not installed" now also prints `installer: <ADV_PAWNIO_SETUP_URL>`; the detail line
-points to the GUI button. New GUI link libraries: `urlmon wintrust crypt32` (Windows SDK).
-
-Tested: download + signature check through the app's own code (a temporary, uncommitted build that skipped
-`ShellExecuteExW`): 3 410 960 bytes, signature by namazso accepted, file and folder deleted afterwards. **Not
-tested: running the installer** (the user hand-tests the real install), the "administrator rights refused"
-path, and the redetect after a real install.
-
-## 5. Screenshots
+## 4. Screenshots
 
 In the stream's scratchpad (`shots\`): `main_light/dark`, `main_results_light/dark` (smoke run),
 `gpucombo_light/dark` (popup open), `gpucombo2_light` / `gpu2_preview_dark` (both GPUs ticked, via a temporary
-ini edit that was restored), `settings_light/dark`, `bench_light/dark`, `pawnio_row_light`,
-`pawnio_downloading_dark`, `pawnio_dltest_result_light`, `tool_*` (other tool windows at their default sizes).
+ini edit that was restored), `settings_light/dark`, `bench_light/dark`, `tool_*` (other tool windows at their default sizes).

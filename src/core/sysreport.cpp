@@ -152,9 +152,8 @@ static void memory_section(SysReport* r) {
         rep_row(r, "%s|%llu GiB|%s|%u MT/s|%u MT/s|%s|%s", k->locator, k->size_bytes / GiB, k->type, k->speed_mts,
                 k->configured_mts, k->manufacturer, k->part);
     }
-    // SPD contents and current timings need SMBus / memory-controller access (PawnIO, FUTURE.md section 8); they
-    // belong here as more key / value lines and an SPD table per module.
-    rep_note(r, "SPD and memory timings need the optional PawnIO driver (not available yet).");
+    // SPD contents and current timings need SMBus / memory-controller access, i.e. a kernel driver.
+    rep_note(r, "SPD contents and memory timings aren't read: they need a kernel driver, which EzPcBench doesn't install.");
 }
 
 static void board_section(SysReport* r) {

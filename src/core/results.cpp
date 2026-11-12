@@ -5,7 +5,6 @@
 #include "core/runner.h"
 #include "core/score.h"
 #include "core/sysinfo.h"
-#include "core/sysinfo_spd.h"
 #include "core/sysinfo_ext.h"
 #include "core/toon.h"
 #include "disk/disk.h"
@@ -171,7 +170,6 @@ void results_write_system(FILE* f) {
         toon_cell_str(&r, m->locator);
         toon_row_end(&r);
     }
-    memdetail_write_toon(f, 2);     // system.ram.timings / .spd, only with PawnIO
 
     toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id,driver,hags");
     for (u32 i = 0; i < s->gpu_count; ++i) {
@@ -348,7 +346,7 @@ static void write_env(FILE* f) {
     u32 n = 0;
     for (u32 i = 0; i < g_bench_count; ++i) n += env_valid(&g_env[i]);
     if (!n) return;
-    toon_table(f, 0, "env", n, "id,samples,cpu_mhz,cpu_mhz_max,cpu_util,cpu_temp_max,gpu_mhz,gpu_mhz_max,gpu_mem_mhz,"
+    toon_table(f, 0, "env", n, "id,samples,cpu_mhz,cpu_mhz_max,cpu_util,gpu_mhz,gpu_mhz_max,gpu_mem_mhz,"
                                "gpu_util,gpu_temp_max,gpu_power,cpu_drop,gpu_drop,flags,bat_discharge_w,cpu_pkg_w,whea");
     for (u32 i = 0; i < g_bench_count; ++i) {
         const TestEnv* e = &g_env[i];
@@ -358,7 +356,7 @@ static void write_env(FILE* f) {
         ToonRow row = toon_row(f, 1);
         toon_cell_str(&row, g_benches[i].cli_id);
         toon_cell_num(&row, e->samples);
-        const f32 v[] = { e->cpu_mhz, e->cpu_mhz_max, e->cpu_util, e->cpu_temp_max, e->gpu_mhz, e->gpu_mhz_max,
+        const f32 v[] = { e->cpu_mhz, e->cpu_mhz_max, e->cpu_util, e->gpu_mhz, e->gpu_mhz_max,
                           e->gpu_mem_mhz, e->gpu_util, e->gpu_temp_max, e->gpu_power, e->cpu_drop, e->gpu_drop };
         for (u32 k = 0; k < ARRAY_COUNT(v); ++k) toon_cell_num(&row, round(v[k] * 10.0) / 10.0);
         toon_cell_str(&row, flags);

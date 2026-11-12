@@ -1,5 +1,4 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
-#include "core/adv_sensors.h"
 #include "app/stability_cli.h"
 #include "core/baseline.h"
 #include "core/bench.h"
@@ -9,14 +8,12 @@
 #include "core/history.h"
 #include "core/integrity.h"
 #include "core/monitor.h"
-#include "core/pawnio_modules.h"
 #include "core/presets.h"
 #include "core/report.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sensors.h"
 #include "core/sysinfo.h"
-#include "core/sysinfo_spd.h"
 #include "core/timer.h"
 #include "core/score.h"
 #include "core/sysinfo.h"
@@ -75,10 +72,6 @@ static void print_usage() {
         "  --sustained-gib <n>    Cap of the sustained-write test (default 64)\n"
         "  --yes                  Allow tests that write a lot or run very long (disk.sustained.write, disk.raw.scan)\n"
         "  --elevate              Relaunch as administrator in a new console\n"
-        "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
-        "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
-        "  --pawnio-modules       Download the signed PawnIO modules (github.com/namazso/PawnIO.Modules, LGPL-2.1)\n"
-        "                         into %%LOCALAPPDATA%%\\ez-pc-bench\\pawnio\\<version>\\ (needs internet)\n"
 
         "  --pause                Wait for Enter before exiting\n"
         "  --stress <tests> ...   Stability tester mode (options below)\n\n");
@@ -235,8 +228,6 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
         printf("%s %llu GiB %s-%u", i ? "," : " |", s->ram.modules[i].size_bytes / GiB, s->ram.modules[i].type,
                s->ram.modules[i].configured_mts);
     printf("\n");
-    char timings[192];      // PawnIO only (core/sysinfo_spd.h)
-    if (memdetail_timings_line(timings, sizeof(timings))) printf("      %s\n", timings);
     for (u32 i = 0; i < s->gpu_count; ++i)
         printf("GPU%u  %s, driver %s%s\n", i, s->gpus[i].name, s->gpus[i].driver[0] ? s->gpus[i].driver : "?",
                s->gpus[i].hags < 0 ? "" : s->gpus[i].hags ? ", HW scheduling on" : ", HW scheduling off");
@@ -285,16 +276,6 @@ static int print_health(bool hide_serial) {
     disk_health_close();
     if (!g_sys.elevated) printf("Not running as administrator: SATA / USB SMART data and self-tests need --elevate.\n");
     return 0;
-}
-
-// --pawnio-modules: download the signed PawnIO modules into the per-user folder (an explicit network access).
-static int download_pawnio_modules() {
-    char url[192], msg[512];
-    pawnio_modules_url(url, sizeof(url));
-    printf("Downloading %s ...\n", url);
-    const bool ok = pawnio_modules_download(msg, sizeof(msg));
-    fprintf(ok ? stdout : stderr, "%s\n", msg);
-    return ok ? 0 : 1;
 }
 
 // --sysinfo: full system report on stdout, optionally saved as text + TOON.
@@ -400,7 +381,7 @@ int wmain(int argc, wchar_t** argv) {
 
     bool selected[MAX_BENCHES] = {};
     bool any_run = false, from_preset = false, list = false, pause = false, elevate = false, health = false,
-         hide_serial = false, adv_report = false, yes = false;
+         hide_serial = false, yes = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     const wchar_t* sensor_log = nullptr;
@@ -426,9 +407,6 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--cpu-baseline")) {}      // applied right after sysinfo_init
         else if (!wcscmp(a, L"--elevate")) elevate = true;
-        else if (!wcscmp(a, L"--adv-report")) adv_report = true;
-        else if (!wcscmp(a, L"--no-adv-sensors")) adv_set_enabled(false);
-        else if (!wcscmp(a, L"--pawnio-modules")) return download_pawnio_modules();
         else if (!wcscmp(a, L"--sysinfo")) return print_report(has_val && argv[i + 1][0] != L'-' ? argv[i + 1] : nullptr);
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--seconds") && has_val) { log_seconds = (u32)atoi(val); ++i; }     // length of a sensor log
@@ -546,12 +524,6 @@ int wmain(int argc, wchar_t** argv) {
     if (elevate && !g_sys.elevated) {
         if (relaunch_elevated(L"--pause")) return 0;
         fprintf(stderr, "Elevation declined or failed; continuing without admin rights.\n");
-    }
-
-    adv_init();         // PawnIO advanced sensors: no-op unless installed (and not --no-adv-sensors)
-    if (adv_report) {
-        adv_print_report();
-        return 0;
     }
 
     if (!any_run)

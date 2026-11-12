@@ -172,14 +172,6 @@ add_library(ezbench_core STATIC
     src/core/sensors.cpp
     src/core/monitor.cpp
     src/core/hwread.cpp
-    src/core/pawnio.cpp
-    src/core/pawnio_modules.cpp
-    src/core/unzip.cpp
-    src/core/adv_sensors.cpp
-    src/core/adv_cpu.cpp
-    src/core/adv_smbus.cpp
-    src/core/adv_umc.cpp
-    src/core/sysinfo_spd.cpp
     src/core/battery.cpp
     src/core/emi.cpp
     src/core/presets.cpp
@@ -262,7 +254,7 @@ target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
     d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi
-    cabinet windowscodecs bcrypt oleaut32 cfgmgr32 iphlpapi wevtapi urlmon)
+    cabinet windowscodecs bcrypt oleaut32 cfgmgr32 iphlpapi wevtapi)
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
@@ -297,7 +289,6 @@ add_executable(ez-pc-bench WIN32
     src/app/temps_ui.cpp
     src/app/overlay.cpp
     src/app/health_ui.cpp
-    src/app/adv_ui.cpp
     src/app/mem_charts.cpp
     src/app/graph.cpp
     src/app/system_ui.cpp
@@ -312,7 +303,7 @@ add_executable(ez-pc-bench WIN32
     src/app/gui.rc
     ${CMAKE_BINARY_DIR}/library.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet windowscodecs urlmon wintrust crypt32 winhttp)
+    shell32 cabinet windowscodecs winhttp)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 # Auto-update from GitHub releases (src/app/updater.h). Only release builds for publishing turn it on (the
 # `dist` preset); in dev builds the check never runs (a local build never matches the published exe).

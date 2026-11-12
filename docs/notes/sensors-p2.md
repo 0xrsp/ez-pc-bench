@@ -38,7 +38,7 @@ Stream notes for merging into PLAN.md / FUTURE.md. Built 2026-11-11 on a worktre
   - `sensors_power()` → battery static info + status, EMI rails, EMI status text.
   - Sensor log: `sensors_log_start(path, interval_ms, patterns)` (CSV only since the trim), `_stop`, `_status`. The sampler
     samples at the log interval when it is below 1 s (min 100 ms) and runs at HIGHEST priority while logging.
-  - Room for PawnIO (or any other source): add a reader to `Sources` / `read_all` and `ch_put(...)` calls in
+  - Room for another source: add a reader to `Sources` / `read_all` and `ch_put(...)` calls in
     `publish()`; the window, log and overlay pick new channels up without changes.
 - `app/temps_ui.cpp` — Sensors window with tabs **Overview** (previous content + Power section: battery line,
   name / chemistry / design / full / wear / cycles, EMI rails with per-core grid), **Sensors** (all channels:
@@ -160,8 +160,7 @@ ever parse `env` (today they skip it).
   "Temperatures", "Power"), so `temp` lists every temperature and `cpu power` the CPU rails. Sensors tab: rows
   filtered (the "Per-core rows" toggle still applies; "(N more per-core rows match)" when it hides matches),
   "No sensor matches" when empty. Overview: CPU summary / LP cells / CPU rails, GPU rows, battery, other
-  rails and temperature rows are filtered through their channels; sections without a match are hidden; the
-  PawnIO section (adv_ui, not filtered row by row) shows when the search matches its topics.
+  rails and temperature rows are filtered through their channels; sections without a match are hidden.
 - **CPU power with the CPU.** `EmiChannel.cpu` (package, PP0, per-core rails) and `PowerLive.rail_cpu /
   rail_id`. Overview: the CPU section is "CPU clock, load and power": package power on the load / clock line,
   "Power per core" grid under the LP grid. "Power" keeps the battery and non-CPU rails (graphics, DRAM, PSYS,

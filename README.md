@@ -52,9 +52,6 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   board / BIOS / chipset, GPUs (driver, feature level, Vulkan extensions, Resizable BAR), displays, PCI
   tree with link speeds, USB, network and audio devices, Windows settings that skew results (VBS, memory
   integrity, Game Mode, HAGS); exportable report (`--sysinfo`).
-- [x] **Advanced sensors (opt-in PawnIO driver):** per-core CPU temperatures, power and clocks, RAM
-  temperatures, SPD and memory timings. Settings has a Download & install button that fetches the official
-  installer and the PawnIO modules (checked against a pinned hash). Not yet tested with the driver loaded.
 
 **Results**
 - [x] TOON text files; a compare window for up to 16 runs (summary, per-suite tabs, change vs a reference,
@@ -73,13 +70,11 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
 The full plan, with priorities and sources, is in [docs/FUTURE.md](docs/FUTURE.md); open questions are
 in [docs/PLAN.md](docs/PLAN.md) §11.
 
-- [ ] **Test what this PC can't:** the PawnIO sensors (install PawnIO), the raw-disk tests and drive
-  self-tests (admin), SATA / USB / RAID drives, hybrid P / E cores.
+- [ ] **Test what this PC can't:** the raw-disk tests and drive self-tests (admin), SATA / USB / RAID
+  drives, hybrid P / E cores.
 - [ ] **Score calibration:** results and real-task timings from other machines, so the weights can be
   fitted and the "preliminary" label dropped; then score v2 with the new CPU and disk-latency tests.
 - [ ] **Stability:** GPU tests on Vulkan, VRAM test on every GPU in one run, saved stability settings.
-- [ ] **PawnIO:** XMP / EXPO profiles (needs one SPD write), the Hawk Point PM table, Intel memory
-  timings, desktop-board fans and voltages.
 - [ ] **GPU:** memory type and bus width, ray-tracing pipelines (DXR 1.0), present-timing stats on Vulkan.
 - [ ] **App:** keyboard navigation, localization; support for more hardware (processor groups, NUMA,
   ARM64), tray mode waits on a decision in FUTURE.md §0.
@@ -164,5 +159,4 @@ RTX 5060 Laptop / Samsung NVMe laptop on AC, Best performance, as admin:
 
 Design notes and measurements: [docs/PLAN.md](docs/PLAN.md).
 
-MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1). PawnIO
-(driver GPL-2.0, modules LGPL-2.1) isn't bundled: it's downloaded only when you click Download & install.
+MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1).

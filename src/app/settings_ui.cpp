@@ -2,7 +2,6 @@
 // has a detailed tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by
 // settings.cpp (one ini for both windows).
 #include "app/settings_ui.h"
-#include "app/adv_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/presets.h"
@@ -255,12 +254,6 @@ void settings_ui_draw() {
         end_group();
     }
 
-    if (begin_group("Sensors")) {
-        row("Advanced sensors (PawnIO)", adv_ui_settings_help());
-        adv_ui_settings_control();
-        end_group();
-    }
-
     ImGui::Spacing();
     ImGui::Spacing();
     if (theme_button("Reset to defaults")) {
@@ -276,9 +269,8 @@ void settings_ui_draw() {
         wcscpy_s(p->disk.folder, keep.folder);
         p->disk.interval_ms = keep.interval_ms;
     }
-    theme_help("Restores the CPU, GPU and disk settings above to their defaults. The theme, advanced sensors, the "
-               "benchmark settings (render resolution included) and the GPU / disks picked in the main window stay as "
-               "they are.");
+    theme_help("Restores the CPU, GPU and disk settings above to their defaults. The theme, the benchmark settings "
+               "(render resolution included) and the GPU / disks picked in the main window stay as they are.");
     ImGui::EndDisabled();
     ImGui::End();
 }

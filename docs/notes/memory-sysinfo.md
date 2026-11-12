@@ -133,8 +133,7 @@ board, bios, chipset, host_bridge), `gpu0`.. (name, pci_id, memory, driver with 
 video_bios, pcie_link, max memory clock / bandwidth; plus the D3D12 / Vulkan keys once `g_gpux` is filled), `displays`
 (tearing, VRR setting, `displays[N]{name,maker,connector,adapter,mode,native,vrr_range,hdr,size}`). Values are display
 strings ("3294 MHz"). `compare.cpp` ignores the block (verified: unknown keys / tables are skipped). Memory section:
-"SPD and memory timings need the optional PawnIO driver" note — that's the place for the pawnio stream's SPD / timings
-(`memory_section` in sysreport.cpp; add an `in_results` flag there if they should go into results files).
+a note that SPD contents and memory timings need a kernel driver (not read; `memory_section` in sysreport.cpp).
 
 ## Verification
 
@@ -151,7 +150,7 @@ strings ("3294 MHz"). `compare.cpp` ignores the block (verified: unknown keys / 
 ## FUTURE.md status
 
 §4: grid **done**; loaded latency **done**; read/write mix **done**; per-thread-count scaling **done**; 4 KiB vs 2 MiB
-**done** (skips without the privilege — couldn't be measured here); SPD/timings left to the pawnio stream.
+**done** (skips without the privilege — couldn't be measured here); SPD/timings not read (need a kernel driver).
 §9: CPU details **done** (boost = SMBIOS max speed, vendor-filled); chipset **done** (AMD table, Intel by INF name);
 GPU details **mostly done** (no memory type / bus width; ReBAR via Vulkan; VRR via EDID range + tearing); displays
 **done**; PCI tree with links **done**; report export + clipboard **done**; network / audio / USB **done** (USB without

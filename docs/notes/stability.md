@@ -172,7 +172,7 @@ Measured facts:
 | P1 GPU error detection (compute + render, known answers) | done, D3D12 only |
 | P1 Combined CPU + GPU load | done (`combined` / "All at once"; any tests can be combined) |
 | P1 WHEA monitoring | done for the stability tester; runner wiring left to the lead (API above) |
-| P1 Live sensor graphs, temperature limits, stop on first error, restore state | done. CPU limit = ACPI zone (best effort until PawnIO, FUTURE.md §8). Limits are session-only settings. |
+| P1 Live sensor graphs, temperature limits, stop on first error, restore state | done. CPU limit = ACPI zone (best effort; no kernel driver). Limits are session-only settings. |
 | P2 Per-core cycling | done (one thread per core, kernel choice shared with the CPU test) |
 | P2 Cache test | done |
 | P2 Disk verify | done (default 256 MiB file, choice 64 MiB-4 GiB) |
