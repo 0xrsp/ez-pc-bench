@@ -233,7 +233,6 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_present.cpp
     src/gpu/gpu_present_d3d12.cpp
     src/gpu/gpu_present_vk.cpp
-    src/frames/frame_capture.cpp
     src/core/whea.cpp
     src/stability/stability.cpp
     src/stability/stab_cpu.cpp
@@ -306,8 +305,6 @@ add_executable(ez-pc-bench WIN32
     src/app/overlay.cpp
     src/app/health_ui.cpp
     src/app/adv_ui.cpp
-    src/app/frames_ui.cpp
-    src/app/frames_graph.cpp
     src/app/mem_charts.cpp
     src/app/system_ui.cpp
     src/app/stability_ui.cpp

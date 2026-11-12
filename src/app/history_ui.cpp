@@ -127,7 +127,7 @@ static void load() {
         if (!buf) { s_hu.skipped++; continue; }
         const bool ok = rf_parse(r.p, (u32)(r.end - r.p), rf, err, sizeof(err));
         toon_free_file(buf);
-        // Only benchmark runs: other kinds (stability, frame captures) have their own tools.
+        // Only benchmark runs: other kinds (stability reports) have their own tools.
         if (!ok || (rf->kind[0] && strcmp(rf->kind, "benchmark") != 0) || !rf->metric_count) { s_hu.skipped++; continue; }
         WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, h->name, sizeof(h->name), nullptr, nullptr);
         if (char* ext = strstr(h->name, ".toon.txt")) *ext = 0;
