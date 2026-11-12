@@ -54,7 +54,7 @@ void disk_fs_meta(void*, const BenchParams* p, BenchLive* live, BenchResult* out
     if (!disk_begin_test(p, live, out, cancel)) return;
     static LatHist h[META_OPS];
     u8 data[META_BYTES];
-    fill_pattern(data, META_BYTES, disk_zero_pct(), 77);
+    fill_pattern(data, META_BYTES, 0, 77);
     char error[96] = {};
     const f64 seconds = p->duration_ms / 1000.0;
     res_begin(out, RESULT_VALUES);
@@ -197,7 +197,7 @@ void disk_files_copy(void*, const BenchParams* p, BenchLive* live, BenchResult* 
     constexpr u64 BUF = 4 * MiB;
     u8* buf = (u8*)disk_alloc(BUF);
     if (!buf) { res_fail(out, "out of memory"); return; }
-    fill_pattern(buf, BUF, disk_zero_pct(), 99);
+    fill_pattern(buf, BUF, 0, 99);
     char error[96] = {};
     res_begin(out, RESULT_VALUES);
     for (u32 i = 0; i < g_disk.count && !cancelled(cancel); ++i) {

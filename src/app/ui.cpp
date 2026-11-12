@@ -516,22 +516,6 @@ static void draw_targets() {
         ImGui::TextColored(COL_WARN, "folder");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The disk suite tests in the folder set in Settings > Disk, not on these drives.");
     }
-    // CrystalDiskMark profile: shows the profile the disk test selection matches, "Custom" otherwise.
-    ImGui::SameLine(0.0f, ImGui::GetFontSize());
-    ImGui::TextDisabled("Disk profile");
-    ImGui::SameLine();
-    const DiskProfile* dp = disk_profile_match(s_ui.selected);
-    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Real World").x + ImGui::GetFrameHeight() * 2.0f);
-    if (ImGui::BeginCombo("##dprofile", dp ? dp->name : "Custom")) {
-        for (u32 i = 0; i < g_disk_profile_count; ++i) {
-            if (ImGui::Selectable(g_disk_profiles[i].name, dp == &g_disk_profiles[i])) disk_profile_apply(&g_disk_profiles[i], s_ui.selected);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_disk_profiles[i].desc);
-        }
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##dprofile"))
-        ImGui::SetTooltip("%s", dp ? dp->desc : "Disk profile (CrystalDiskMark): picks the disk tests in the tree. Your "
-                                                "selection matches none of them.");
     ImGui::EndDisabled();
 }
 

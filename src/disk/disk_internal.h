@@ -33,7 +33,6 @@ struct DiskSuite {
     u32 count;
     u64 file_bytes;
     bool write_through, buffered;
-    u8 data;                        // DiskData
     u32 tests_started;              // for the interval between tests
 };
 extern DiskSuite g_disk;
@@ -47,9 +46,9 @@ void pause_ms(u32 ms, const CancelFlag* cancel);
 bool cancelled(const CancelFlag* cancel);
 
 u64 rng_next(u64* s);
-// Test data: zero_pct % of every 4 KiB is 0x00, the rest random (0 = incompressible, 100 = all zero).
+// Test data: zero_pct % of every 4 KiB is 0x00, the rest random (0 = incompressible, what every test but the
+// compressibility sweep uses).
 void fill_pattern(u8* buf, u64 bytes, u32 zero_pct, u64 seed);
-u32 disk_zero_pct();                // from DiskOptions::data
 void* disk_alloc(u64 bytes);        // page-aligned, zeroed; disk_free
 void disk_free(void* p);
 
@@ -130,14 +129,14 @@ struct IoRun {
     f64 seconds;
     u32 live_group;                 // group shown in the live panel
     LiveKind live;
-    u32 zero_pct;                   // write data (fill_pattern); disk_zero_pct() for the user's setting
+    u32 zero_pct;                   // write data (fill_pattern); 0 = random
     f32 prog_from, prog_to;
 };
 
 // Runs all groups for run->seconds; out has group_count entries. False on an I/O error (message in error).
 bool io_run(const DiskTarget* t, const IoRun* run, IoResult* out, BenchLive* live, const CancelFlag* cancel,
             char* error, u32 error_size);
-// One group, the user's test data.
+// One group, random data.
 bool io_run1(const DiskTarget* t, const IoSpec* spec, f64 seconds, LiveKind lk, f32 from, f32 to, IoResult* out,
              BenchLive* live, const CancelFlag* cancel, char* error, u32 error_size);
 
@@ -155,9 +154,9 @@ void add_io_metrics(BenchResult* out, const char* label, const char* phase, cons
 void add_hist_metrics(BenchResult* out, const char* label, const char* phase, const LatHist* h, u32 flags);
 
 // A CrystalDiskMark-style row: best of N passes per direction on every target (disk_cdm.cpp).
+// Passes: read / write (/ mix) by DiskOptions::mode.
 struct RowSpec {
     u32 block, qd, threads;
     bool random;
-    u8 read_pct;                    // DISK_ROW_RW = read / write (/ mix) passes by DiskOptions::mode
 };
 void disk_run_row(const RowSpec* row, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel);

@@ -83,10 +83,6 @@ BENCH_FN(disk_rnd4k_q32t1);
 BENCH_FN(disk_rnd4k_q1t1);
 BENCH_FN(disk_seq128k_q32t1);
 BENCH_FN(disk_rnd4k_q32t16);
-BENCH_FN(disk_custom1);
-BENCH_FN(disk_custom2);
-BENCH_FN(disk_custom3);
-BENCH_FN(disk_custom4);
 BENCH_FN(disk_lat_read);
 BENCH_FN(disk_lat_write);
 BENCH_FN(disk_lat_flush);
@@ -189,11 +185,6 @@ const BenchDesc g_benches[] = {
     { SUITE_DISK, "Random",     "RND4K Q1T1",           "disk.rnd4k_q1t1",    disk_rnd4k_q1t1,    0 },
     { SUITE_DISK, "Random",     "RND4K Q32T16 (NVMe)",  "disk.rnd4k_q32t16",  disk_rnd4k_q32t16,  BENCH_DEFAULT_OFF },
     { SUITE_DISK, "Random",     "Queue depth sweep QD1-256", "disk.sweep.qd", disk_sweep_qd,   BENCH_DEFAULT_OFF },
-    // User-defined rows (BenchParams::disk.custom); skipped while empty.
-    { SUITE_DISK, "Custom", "Custom row 1", "disk.custom1", disk_custom1, BENCH_DEFAULT_OFF },
-    { SUITE_DISK, "Custom", "Custom row 2", "disk.custom2", disk_custom2, BENCH_DEFAULT_OFF },
-    { SUITE_DISK, "Custom", "Custom row 3", "disk.custom3", disk_custom3, BENCH_DEFAULT_OFF },
-    { SUITE_DISK, "Custom", "Custom row 4", "disk.custom4", disk_custom4, BENCH_DEFAULT_OFF },
     // Latency (percentiles from per-I/O histograms), file system, sustained and raw-device tests.
     { SUITE_DISK, "Latency", "4K random read QD1",             "disk.lat.read",  disk_lat_read,  0 },
     { SUITE_DISK, "Latency", "4K random write QD1",            "disk.lat.write", disk_lat_write, 0 },

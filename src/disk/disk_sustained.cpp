@@ -99,7 +99,7 @@ static bool open_writers(const DiskTarget* t, u64 blocks_per_thread, u8* bufs, s
         SusWriter* w = &s_writers[k];
         w->file = w->thread = nullptr;
         w->buf = bufs + (u64)k * SUS_BLOCK;
-        fill_pattern(w->buf, SUS_BLOCK, disk_zero_pct(), timer_ticks() + k);
+        fill_pattern(w->buf, SUS_BLOCK, 0, timer_ticks() + k);
         w->blocks = blocks_per_thread;
         w->log = s_run.log + k * blocks_per_thread;
         w->done.store(0);

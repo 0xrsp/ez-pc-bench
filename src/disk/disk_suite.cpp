@@ -40,8 +40,6 @@ void fill_pattern(u8* buf, u64 bytes, u32 zero_pct, u64 seed) {
     }
 }
 
-u32 disk_zero_pct() { return g_disk.data == DISK_DATA_ZERO ? 100 : 0; }
-
 void* disk_alloc(u64 bytes) { return VirtualAlloc(nullptr, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
 void disk_free(void* p) { if (p) VirtualFree(p, 0, MEM_RELEASE); }
 
@@ -196,7 +194,7 @@ static bool fill_file(DiskTarget* t, char* error, u32 error_size) {
     f64 last = t0;
     bool ok = true;
     for (u64 off = 0; off < g_disk.file_bytes; off += FILL_CHUNK) {
-        fill_pattern(buf, FILL_CHUNK, disk_zero_pct(), off * 0x9E3779B97F4A7C15ull + 12345);
+        fill_pattern(buf, FILL_CHUNK, 0, off * 0x9E3779B97F4A7C15ull + 12345);
         DWORD written = 0;
         if (!WriteFile(t->hold, buf, (DWORD)FILL_CHUNK, &written, nullptr) || written != FILL_CHUNK) {
             snprintf(error, error_size, "writing test file failed (error %lu)", GetLastError());
@@ -309,7 +307,6 @@ bool disk_init(const BenchParams* p, void** state, char* error, u32 error_size) 
     g_disk.file_bytes = bytes < 16 * MiB ? 16 * MiB : bytes;
     g_disk.write_through = p->disk_write_through;
     g_disk.buffered = p->disk.buffered;
-    g_disk.data = p->disk.data;
 
     for (u32 d = 0; d < DISK_MAX_TARGETS; ++d) {
         if (folder ? d != DISK_FOLDER_SLOT : d == DISK_FOLDER_SLOT || !((p->disk_drives >> d) & 1)) continue;

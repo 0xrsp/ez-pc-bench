@@ -30,7 +30,6 @@ static bool rewrite_file(const DiskTarget* t, BenchLive* live, const CancelFlag*
     run.groups = &s;
     run.group_count = 1;
     run.seconds = 3600.0;
-    run.zero_pct = disk_zero_pct();
     static IoResult r;
     static const CancelFlag never(false);
     const f32 prog = live->progress.load(std::memory_order_relaxed);
