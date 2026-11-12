@@ -1,16 +1,15 @@
 // Sensors window, three tabs:
 //   Overview          Task Manager style: a device list on the left (CPU, each GPU, memory, drives, power,
-//                     temperatures, PawnIO; each with a sparkline and a one-line summary) and the selected device's
+//                     temperatures; each with a sparkline and a one-line summary) and the selected device's
 //                     graphs on the right: a large utilization graph, big stat numbers, tiles per logical processor,
-//                     per-core power, GPU clocks / VRAM / power / temperature, battery, thermal zones. "All" stacks
-//                     every section. Graphs span 1 to 10 minutes (graph.h draws them).
+//                     per-core power, GPU clocks / VRAM / power / temperature, battery, thermal zones. Graphs
+//                     span 1 to 10 minutes (graph.h draws them).
 //   Sensors           every channel (core/sensors.h) with now / min / max / avg (resettable) and a graph;
 //                     pick channels for the log and the "Picked" view, tick channels for the overlay.
 //   Log and overlay   sensor log to CSV at a chosen interval; the on-screen overlay.
 // A search box filters the first two tabs (not saved; on the Overview it shows every matching section). Picks,
 // overlay channels, log / overlay options, the selected device and the graph span persist in settings.ini [sensors].
 #include "app/temps_ui.h"
-#include "app/adv_ui.h"
 #include "app/graph.h"
 #include "app/overlay.h"
 #include "app/settings.h"
@@ -41,9 +40,9 @@ struct Prefs {
     u32 tab;
     bool picked_only, detail;
     u32 window;                 // Overview graph span, index into WINDOWS_S
-    char device[16];            // Overview device ("all", "cpu", "gpu0", "memory", ...)
+    char device[16];            // Overview device ("cpu", "gpu0", "memory", ...; unknown keys fall back to "cpu")
 };
-static Prefs s_prefs = { "", "", 2, OVL_TOP_RIGHT, 0, false, false, 0, "all" };
+static Prefs s_prefs = { "", "", 2, OVL_TOP_RIGHT, 0, false, false, 0, "cpu" };
 static bool s_prefs_loaded;
 
 static void pref_read_str(const wchar_t* ini, const wchar_t* key, char* out, u32 size) {
@@ -88,7 +87,7 @@ static void prefs_load() {
     s_prefs.detail = pref_read_u32(ini, L"per_core", 0, 1) != 0;
     s_prefs.window = pref_read_u32(ini, L"graph_window", 0, 3);
     pref_read_str(ini, L"device", s_prefs.device, sizeof(s_prefs.device));
-    if (!s_prefs.device[0]) snprintf(s_prefs.device, sizeof(s_prefs.device), "all");
+    if (!s_prefs.device[0]) snprintf(s_prefs.device, sizeof(s_prefs.device), "cpu");
     apply_view();
 }
 
@@ -366,10 +365,8 @@ static i32 cpu_main_rail() {
     return best;
 }
 
-// CPU temperature for the stat row: a "cpu.temp*" channel (e.g. from PawnIO) or the hottest ACPI zone.
+// CPU temperature for the stat row: the hottest ACPI zone.
 static f32 cpu_temp(const char** label, u32 n_read) {
-    for (u32 i = 0; i < s_ch_count; ++i)
-        if (!strncmp(s_ch[i].id, "cpu.temp", 8) && s_ch[i].valid) { *label = "Temperature"; return s_ch[i].value; }
     f32 t = NAN;
     for (u32 i = 0; i < n_read; ++i)
         if (s_read[i].group == SG_CPU && s_read[i].valid && !(s_read[i].temp_c <= t)) t = s_read[i].temp_c;
@@ -938,28 +935,24 @@ static void draw_power(bool full) {
 // ---- Overview: device list and sections -------------------------------------------------------------------
 
 // Left-hand list entries (Task Manager style), in display order. The id is saved in settings.ini.
-enum DeviceKind : u8 { DEV_ALL, DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_DRIVES, DEV_POWER, DEV_TEMPS, DEV_ADV };
-
-static const char* const ADV_TOPICS[] = { "Advanced sensors PawnIO", "CPU temperatures power voltages", "memory RAM DIMM SPD" };
+enum DeviceKind : u8 { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_DRIVES, DEV_POWER, DEV_TEMPS };
+static const char* const DEVICE_KEYS[] = { "cpu", "gpu", "memory", "drives", "power", "temps" };
 
 static bool device_match(DeviceKind k, u32 index, u32 n_read) {
     switch (k) {
-        case DEV_ALL: return true;
         case DEV_CPU: return cpu_match();
         case DEV_GPU: return gpu_match(index);
         case DEV_MEMORY: return mem_match();
         case DEV_DRIVES: return group_match(SG_DISK, n_read);
         case DEV_POWER: return power_match();
         case DEV_TEMPS: return group_match(SG_CPU, n_read) || (!filtering() && n_read == 0);
-        case DEV_ADV: return !filtering() || filter_hit(ADV_TOPICS, ARRAY_COUNT(ADV_TOPICS));
     }
     return false;
 }
 
 static void device_key(DeviceKind k, u32 index, char* out, u32 size) {
-    static const char* const keys[] = { "all", "cpu", "gpu", "memory", "drives", "power", "temps", "adv" };
     if (k == DEV_GPU) snprintf(out, size, "gpu%u", index);
-    else snprintf(out, size, "%s", keys[k]);
+    else snprintf(out, size, "%s", DEVICE_KEYS[k]);
 }
 
 static void draw_temps_section(bool full, u32 n_read, f64 age) {
@@ -972,8 +965,7 @@ static void draw_temps_section(bool full, u32 n_read, f64 age) {
     if (filtering()) return;
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("Windows' ACPI thermal zones; on most laptops one of them follows the CPU package. Exact per-core "
-                        "CPU temperatures and RAM temperatures need a kernel driver, which EzPcBench doesn't install; they "
-                        "come from PawnIO when you have installed it (Settings, Advanced sensors).");
+                        "CPU temperatures and RAM temperatures need a kernel driver, which EzPcBench doesn't install.");
     ImGui::PopTextWrapPos();
 }
 
@@ -985,14 +977,12 @@ static void draw_drives(bool full, u32 n_read) {
 
 static void draw_device(DeviceKind k, u32 index, bool full, u32 n_read, f64 age) {
     switch (k) {
-        case DEV_ALL: break;
         case DEV_CPU: draw_cpu(full, n_read); break;
         case DEV_GPU: draw_gpu(index, full); break;
         case DEV_MEMORY: draw_memory(full); break;
         case DEV_DRIVES: draw_drives(full, n_read); break;
         case DEV_POWER: draw_power(full); break;
         case DEV_TEMPS: draw_temps_section(full, n_read, age); break;
-        case DEV_ADV: adv_ui_draw_sensors(); break;
     }
 }
 
@@ -1061,9 +1051,9 @@ static void draw_device_list(u32 gpus, u32 n_read, DeviceKind* sel, u32* sel_ind
     f32* v = s_h[0];
     auto entry = [&](DeviceKind k, u32 index, const char* title, const char* subtitle, u32 n, GraphKind kind, f32 lo,
                      f32 hi, bool thumb) {
-        if (filter && k != DEV_ALL && !device_match(k, index, n_read)) return;
+        if (filter && !device_match(k, index, n_read)) return;
         device_key(k, index, key, sizeof(key));
-        const bool selected = filter ? k == DEV_ALL : *sel == k && (k != DEV_GPU || *sel_index == index);
+        const bool selected = !filter && *sel == k && (k != DEV_GPU || *sel_index == index);
         if (device_entry(key, title, subtitle, thumb ? v : nullptr, n, kind, lo, hi, selected)) {
             *sel = k;
             *sel_index = index;
@@ -1072,10 +1062,6 @@ static void draw_device_list(u32 gpus, u32 n_read, DeviceKind* sel, u32* sel_ind
             prefs_save();
         }
     };
-    if (filter) snprintf(sub, sizeof(sub), "Matches for \"%s\"", s_filter);
-    else snprintf(sub, sizeof(sub), "Every section");
-    entry(DEV_ALL, 0, "All", sub, 0, GK_OTHER, NAN, NAN, false);
-
     u32 n = history(channel_index("cpu.load"), v);
     graph_format(a, sizeof(a), s_cpu.busy_mhz, "MHz");
     snprintf(sub, sizeof(sub), "%.0f%%  %s", s_cpu.avg_util, isnan(s_cpu.busy_mhz) ? "" : a);
@@ -1126,20 +1112,17 @@ static void draw_device_list(u32 gpus, u32 n_read, DeviceKind* sel, u32* sel_ind
     if (isnan(t)) snprintf(sub, sizeof(sub), n_read ? "No reading" : "None found");
     else snprintf(sub, sizeof(sub), "hottest %.0f \xC2\xB0" "C", t);
     entry(DEV_TEMPS, 0, "Temperatures", sub, n, GK_TEMP, NAN, NAN, n > 0);
-
-    entry(DEV_ADV, 0, "Advanced", "PawnIO sensors", 0, GK_OTHER, NAN, NAN, false);
 }
 
 static bool device_from_key(const char* key, u32 gpus, DeviceKind* k, u32* index) {
-    static const char* const keys[] = { "all", "cpu", "gpu", "memory", "drives", "power", "temps", "adv" };
     *index = 0;
     if (!strncmp(key, "gpu", 3) && key[3] >= '0' && key[3] <= '9') {
         *index = (u32)atoi(key + 3);
         *k = DEV_GPU;
         return *index < gpus;
     }
-    for (u32 i = 0; i < ARRAY_COUNT(keys); ++i)
-        if (!strcmp(key, keys[i])) { *k = (DeviceKind)i; return *k != DEV_GPU; }
+    for (u32 i = 0; i < ARRAY_COUNT(DEVICE_KEYS); ++i)
+        if (!strcmp(key, DEVICE_KEYS[i])) { *k = (DeviceKind)i; return *k != DEV_GPU; }
     return false;
 }
 
@@ -1159,7 +1142,7 @@ static void draw_overview(u32 n_read, f64 age) {
     const bool filter = filtering();
     DeviceKind sel;
     u32 sel_index;
-    if (!device_from_key(s_prefs.device, gpus, &sel, &sel_index)) { sel = DEV_ALL; sel_index = 0; }
+    if (!device_from_key(s_prefs.device, gpus, &sel, &sel_index)) { sel = DEV_CPU; sel_index = 0; }  // e.g. old "all"
 
     const f32 fs = ImGui::GetFontSize();
     const f32 list_w = fs * 14.0f;
@@ -1172,14 +1155,14 @@ static void draw_overview(u32 n_read, f64 age) {
     ImGui::BeginChild("##detail", ImVec2(0.0f, 0.0f));
     draw_window_tabs();
 
-    if (!filter && sel != DEV_ALL) {
+    if (!filter) {
         draw_device(sel, sel_index, true, n_read, age);
         ImGui::EndChild();
         return;
     }
-    // All sections (with a search: the ones with a match).
+    // A search: every section with a match.
     bool any = false;
-    const DeviceKind order[] = { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_POWER, DEV_DRIVES, DEV_TEMPS, DEV_ADV };
+    const DeviceKind order[] = { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_POWER, DEV_DRIVES, DEV_TEMPS };
     for (u32 o = 0; o < ARRAY_COUNT(order); ++o) {
         const u32 count = order[o] == DEV_GPU ? gpus : 1;
         for (u32 i = 0; i < count; ++i) {
@@ -1468,14 +1451,12 @@ static void draw_log_overlay() {
 void temps_ui_on_open() {
     prefs_load();
     sensors_start();
-    adv_ui_sensors_open();      // PawnIO sampling (no-op without PawnIO)
 }
 
 void temps_ui_on_close() {
     if (SensorLogStatus st; sensors_log_status(&st), st.active) stop_log();
     s_filter[0] = 0;
     s_mem_count = 0;
-    adv_ui_sensors_close();
     sensors_stop();
 }
 

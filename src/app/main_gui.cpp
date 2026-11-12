@@ -13,7 +13,6 @@
 #include "app/theme.h"
 #include "app/ui.h"
 #include "app/updater.h"
-#include "core/adv_sensors.h"
 #include "core/elevation.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -430,7 +429,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     if (cmdline && wcsstr(cmdline, L"--cpu-baseline")) sysinfo_cap_to_baseline();   // dev: act like a pre-AVX CPU
     runner_init();
     ui_init();
-    adv_init();     // PawnIO advanced sensors, after the settings (their on / off switch) are loaded
     // Update check (app/updater.h): `dist` builds only and never with --dev / --no-update; --check-update forces
     // it (testing: a local build never matches the release, so it always offers the update).
     const bool flag_dev = cmdline && (wcsstr(cmdline, L"--dev") || wcsstr(cmdline, L"--no-update"));

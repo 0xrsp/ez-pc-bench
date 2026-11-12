@@ -1,7 +1,6 @@
 // Run monitor (see monitor.h). One sampling thread per run; per-test aggregates are published to g_env
 // when the runner moves on to the next test (or the run ends).
 #include "core/monitor.h"
-#include "core/adv_sensors.h"
 #include "core/battery.h"
 #include "core/emi.h"
 #include "core/whea.h"
@@ -26,13 +25,11 @@ static bool s_run_on_battery;      // the run started on battery: the banner alr
 constexpr u32 SAMPLE_MS = 250;
 constexpr u32 SERIES_MAX = 8192;            // per test, ~34 minutes at 4 Hz; later samples only count in the averages
 constexpr f32 DROP_FLAG_PCT = 10.0f;
-constexpr f32 CPU_HOT_C = 95.0f;
 
 // ---- sampling -------------------------------------------------------------------------------------------
 // Readers in hwread.*. The CPU clock query stalls under all-core load (see hwread.h), so samples get further
-// apart during multi-thread tests; averages are time-weighted for that reason. The ACPI thermal-zone counter
-// stalls for 5-20 s under load and on many laptops doesn't follow the CPU, so CPU temperature comes only from the
-// PawnIO sensors (adv_sensors.h, 1 Hz); without PawnIO cpu_temp_max stays NaN.
+// apart during multi-thread tests; averages are time-weighted for that reason. No CPU temperature: the ACPI
+// thermal-zone counter stalls for 5-20 s under load and on many laptops doesn't follow the CPU.
 
 struct Sources {
     CpuReader cpu;
@@ -44,7 +41,7 @@ struct Sources {
 };
 
 struct Sample {
-    f32 cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp;
+    f32 cpu_mhz, cpu_mhz_max, cpu_util;
     f32 gpu_mhz, gpu_mem_mhz, gpu_util, gpu_temp, gpu_power;
     f32 bat_w;              // battery discharge W (NaN on AC)
     f32 cpu_pkg_w;          // CPU package power (EMI), NaN if not exposed
@@ -73,7 +70,6 @@ static void close_sources(Sources* s) {
 
 static void sample_cpu(Sources* s, Sample* out) {
     out->cpu_mhz = out->cpu_mhz_max = out->cpu_util = NAN;
-    out->cpu_temp = adv_cpu_temp(2.5f);     // NaN without PawnIO or when the 1 Hz sample is stale
     f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
     const u32 n = cpu_reader_sample(&s->cpu, util, mhz);
     if (!n) return;
@@ -179,7 +175,7 @@ static void trend_add(Trend* t, const char* phase, f32 v) {
 struct Acc {
     i32 id;
     u32 samples;
-    Stat cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power, bat_w, cpu_pkg;
+    Stat cpu_mhz, cpu_mhz_max, cpu_util, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power, bat_w, cpu_pkg;
     u32 whea0;              // WHEA events counted when the test started
     bool opened;            // first (partial) sample seen
     bool ac_seen, battery_seen;
@@ -208,7 +204,6 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
     e.cpu_mhz = stat_avg(&a->cpu_mhz);
     e.cpu_mhz_max = stat_max(&a->cpu_mhz_max);
     e.cpu_util = stat_avg(&a->cpu_util);
-    e.cpu_temp_max = stat_max(&a->cpu_temp);
     e.gpu_mhz = stat_avg(&a->gpu_mhz);
     e.gpu_mhz_max = stat_max(&a->gpu_mhz);
     e.gpu_mem_mhz = stat_avg(&a->gpu_mem);
@@ -228,7 +223,6 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
     if (a->battery_seen && a->ac_seen) e.flags |= ENV_POWER_CHANGED;
     if (e.cpu_drop >= DROP_FLAG_PCT) e.flags |= ENV_CPU_DROP;
     if (e.gpu_drop >= DROP_FLAG_PCT) e.flags |= ENV_GPU_DROP;
-    if (e.cpu_temp_max >= CPU_HOT_C) e.flags |= ENV_CPU_HOT;
     if (e.gpu_temp_max >= gpu_warn_c) e.flags |= ENV_GPU_HOT;
     if (e.whea) e.flags |= ENV_WHEA;
     g_env[a->id] = e;
@@ -238,7 +232,6 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
 static void acc_add(Acc* a, const Sample* s, const char* phase) {
     ++a->samples;
     stat_add(&a->cpu_util, s->cpu_util, s->dt);
-    stat_add(&a->cpu_temp, s->cpu_temp, s->dt);
     stat_add(&a->gpu_mem, s->gpu_mem_mhz, s->dt);
     stat_add(&a->gpu_util, s->gpu_util, s->dt);
     stat_add(&a->gpu_temp, s->gpu_temp, s->dt);
@@ -309,7 +302,6 @@ void monitor_begin(u32 gpu_adapter) {
     SYSTEM_POWER_STATUS ps;
     s_run_on_battery = GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0;
     acc_reset(&s_acc, -1);
-    adv_start();            // PawnIO CPU temperature (no-op without PawnIO)
     whea_start();           // hardware error events (reference counted; the stability tester uses it too)
     s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_thread = CreateThread(nullptr, 0, monitor_thread, nullptr, 0, nullptr);
@@ -324,7 +316,6 @@ void monitor_end() {
     CloseHandle(s_thread);
     CloseHandle(s_stop);
     s_thread = s_stop = nullptr;
-    adv_stop();
     whea_stop();
 }
 
@@ -360,7 +351,6 @@ void env_describe(const TestEnv* e, bool gpu, char* buf, u32 size) {
         append(buf, size, ",");
     }
     if (!isnan(e->cpu_util)) append(buf, size, " %.0f%% busy", e->cpu_util);
-    if (!isnan(e->cpu_temp_max)) append(buf, size, ", %.0f \xC2\xB0""C", e->cpu_temp_max);
     if (!isnan(e->cpu_pkg_w)) append(buf, size, ", package %.1f W", e->cpu_pkg_w);
     if (e->bat_discharge_w > 0.0f) append(buf, size, ", battery %.1f W", e->bat_discharge_w);
     if (!gpu) return;
@@ -402,7 +392,6 @@ void env_warnings(const TestEnv* e, char* buf, u32 size) {
     else if ((e->flags & ENV_BATTERY) && !s_run_on_battery) { append(buf, size, "on battery"); sep = ", "; }
     if (e->flags & ENV_CPU_DROP) { append(buf, size, "%sCPU clock -%.0f%%", sep, e->cpu_drop); sep = ", "; }
     if (e->flags & ENV_GPU_DROP) { append(buf, size, "%sGPU clock -%.0f%%", sep, e->gpu_drop); sep = ", "; }
-    if (e->flags & ENV_CPU_HOT) { append(buf, size, "%sCPU %.0f \xC2\xB0""C", sep, e->cpu_temp_max); sep = ", "; }
     if (e->flags & ENV_GPU_HOT) { append(buf, size, "%sGPU %.0f \xC2\xB0""C", sep, e->gpu_temp_max); sep = ", "; }
     if (e->flags & ENV_WHEA) append(buf, size, "%s%u WHEA hardware error%s", sep, e->whea, e->whea == 1 ? "" : "s");
 }

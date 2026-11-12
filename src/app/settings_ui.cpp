@@ -2,7 +2,6 @@
 // has a detailed tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by
 // settings.cpp (one ini for both windows).
 #include "app/settings_ui.h"
-#include "app/adv_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/presets.h"
@@ -205,8 +204,8 @@ static void locked_note(bool running) {
 
 void settings_ui_draw() {
     begin_window("##settings", "Hover a setting for details. Changes apply to the next run and are saved automatically. "
-                               "Phase duration, repeat, sustained mode and the disk passes are in Benchmark settings "
-                               "(next to Run).");
+                               "Phase duration, repeat, sustained mode, the GPU render resolution and the disk passes "
+                               "are in Benchmark settings (next to Run).");
     BenchParams* p = ui_params();
     const bool running = runner_is_running();
 
@@ -237,16 +236,6 @@ void settings_ui_draw() {
     }
 
     if (begin_group("GPU")) {
-        const char* help = "Size of the offscreen image the 3D and 2D GPU tests render into. Higher resolutions load "
-                           "pixel fill and memory bandwidth harder, so frame times and fill rates change with it: only "
-                           "compare runs made at the same resolution. Default 1920 x 1080.";
-        row("Render resolution", help);
-        int res[2] = { (int)p->gpu_width, (int)p->gpu_height };
-        if (ImGui::InputInt2("##res", res)) {
-            p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0] > 7680 ? 7680 : res[0]);
-            p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1] > 4320 ? 4320 : res[1]);
-        }
-
         const char* present_help = "Where the 3D and 2D tests show their frames. Offscreen (default) renders into an "
                                    "image that never reaches the screen: clean GPU throughput, no compositor or vsync in "
                                    "the way. On-screen opens a benchmark window (or covers the screen) and presents every "
@@ -274,19 +263,11 @@ void settings_ui_draw() {
         end_group();
     }
 
-    if (begin_group("Sensors")) {
-        row("Advanced sensors (PawnIO)", adv_ui_settings_help());
-        adv_ui_settings_control();
-        end_group();
-    }
-
     ImGui::Spacing();
     ImGui::Spacing();
     if (theme_button("Reset to defaults")) {
         const BenchParams d;            // keeps the GPU and disk(s) picked in the main window
         p->thread_count = d.thread_count;
-        p->gpu_width = d.gpu_width;
-        p->gpu_height = d.gpu_height;
         p->gpu_onscreen = d.gpu_onscreen;
         p->gpu_fullscreen = d.gpu_fullscreen;
         p->disk_write_through = d.disk_write_through;
@@ -297,13 +278,14 @@ void settings_ui_draw() {
         wcscpy_s(p->disk.folder, keep.folder);
         p->disk.interval_ms = keep.interval_ms;
     }
-    theme_help("Restores the CPU, GPU and disk settings above to their defaults. The theme, advanced sensors, the "
-               "benchmark settings and the GPU / disks picked in the main window stay as they are.");
+    theme_help("Restores the CPU, GPU and disk settings above to their defaults. The theme, the benchmark settings "
+               "(render resolution included) and the GPU / disks picked in the main window stay as they are.");
     ImGui::EndDisabled();
     ImGui::End();
 }
 
-// Benchmark settings: exactly what presets set (preset_apply, core/presets.cpp) plus the disk interval.
+// Benchmark settings: exactly what presets set (preset_apply, core/presets.cpp) plus the disk interval and the GPU
+// render resolution, which presets leave alone.
 void bench_settings_ui_draw() {
     begin_window("##bench_settings", "Hover a setting for details. Changes apply to the next run and are saved "
                                      "automatically.");
@@ -312,8 +294,9 @@ void bench_settings_ui_draw() {
     const RunPreset* cur = preset_match(p, ui_selection());
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::Text("Presets change these values: picking one in the main window's Preset box sets them, and changing "
-                "one here turns the preset into \"Custom\". Current preset: %s.", cur ? cur->name : "Custom");
+    ImGui::Text("Presets change the run and disk values: picking one in the main window's Preset box sets them, and "
+                "changing one here turns the preset into \"Custom\" (the render resolution and disk interval are never "
+                "changed by a preset). Current preset: %s.", cur ? cur->name : "Custom");
     ImGui::PopTextWrapPos();
     locked_note(running);
     ImGui::BeginDisabled(running);
@@ -344,6 +327,19 @@ void bench_settings_ui_draw() {
         int sustain_min = (int)((p->sustain_s + 59) / 60);
         if (ImGui::SliderInt("##sustain", &sustain_min, 0, 60, sustain_min ? "%d min per test" : "off"))
             p->sustain_s = (u32)sustain_min * 60;
+        end_group();
+    }
+
+    if (begin_group("GPU")) {
+        const char* help = "Size of the image the 3D and 2D GPU tests render into. Higher resolutions load pixel fill and "
+                           "memory bandwidth harder, so frame times and fill rates change with it: only compare runs made "
+                           "at the same resolution. Presets don't change it. Default 1920 x 1080.";
+        row("Render resolution", help);
+        int res[2] = { (int)p->gpu_width, (int)p->gpu_height };
+        if (ImGui::InputInt2("##res", res)) {
+            p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0] > 7680 ? 7680 : res[0]);
+            p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1] > 4320 ? 4320 : res[1]);
+        }
         end_group();
     }
 
@@ -380,12 +376,14 @@ void bench_settings_ui_draw() {
         p->duration_ms = d.duration_ms;
         p->repeat = d.repeat;
         p->sustain_s = d.sustain_s;
+        p->gpu_width = d.gpu_width;
+        p->gpu_height = d.gpu_height;
         p->disk_file_bytes = d.disk_file_bytes;
         p->disk_passes = d.disk_passes;
         p->disk.interval_ms = d.disk.interval_ms;
     }
-    theme_help("Restores the run and disk settings above to their defaults (the Standard preset's values). The test "
-               "selection and the settings in the Settings window stay as they are.");
+    theme_help("Restores the run, GPU and disk settings above to their defaults (the Standard preset's values, 1920 x "
+               "1080). The test selection and the settings in the Settings window stay as they are.");
     ImGui::EndDisabled();
     ImGui::End();
 }

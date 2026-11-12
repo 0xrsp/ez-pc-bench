@@ -13,7 +13,6 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
-#include "core/sysinfo_spd.h"
 #include "core/sysinfo_ext.h"
 #include "core/timer.h"
 #include "stability/stability.h"
@@ -253,8 +252,8 @@ static const ToolButton s_tool_buttons[] = {
                                              "metric across runs (driver / BIOS / Windows update regressions)." },
     { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "
                                                "check their results for errors, with WHEA monitoring and temperature limits." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: theme, threads, GPU resolution and present mode, disk options, "
-                                         "advanced sensors. The run settings presets change are next to Run." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: theme, threads, GPU present mode, disk options. The run settings "
+                                         "and the GPU render resolution are next to Run." },
 };
 
 // Update button (app/updater.h) at the right end of the tool row, only while there is an update.
@@ -333,8 +332,6 @@ static void draw_sysinfo() {
         sys_line("", "%s: %llu GiB %s @ %u MT/s (rated %u)  %s %s", m->locator, m->size_bytes / GiB, m->type,
                  m->configured_mts, m->speed_mts, m->manufacturer, m->part);
     }
-    char timings[192];      // PawnIO only (core/sysinfo_spd.h)
-    if (memdetail_timings_line(timings, sizeof(timings))) sys_line("", "Timings: %s", timings);
     for (u32 i = 0; i < s->gpu_count; ++i) {
         const GpuInfo* g = &s->gpus[i];
         sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)  \xC2\xB7  driver %s%s", i, g->name, g->dedicated_vram / MiB,
@@ -664,8 +661,8 @@ static void draw_toolbar() {
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (theme_icon_button("##bench_settings", ICON_SLIDERS, nullptr, ImGui::GetFrameHeight(),
-                          "Benchmark settings: duration per phase, repeat, sustained mode, disk test file size, passes "
-                          "and interval. Presets change these."))
+                          "Benchmark settings: duration per phase, repeat, sustained mode, GPU render resolution, disk "
+                          "test file size, passes and interval. Presets change the run and disk values."))
         ui_request_tool(TOOL_BENCH);
 
     ImGui::SameLine();

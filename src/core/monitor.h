@@ -13,7 +13,7 @@ enum EnvFlags : u32 {
     ENV_POWER_CHANGED = 1u << 1,    // AC <-> battery switch during the test
     ENV_CPU_DROP      = 1u << 2,    // CPU clock fell >= 10 % from the first to the last third of a phase
     ENV_GPU_DROP      = 1u << 3,    // same for the GPU core clock
-    ENV_CPU_HOT       = 1u << 4,    // thermal zone >= 95 C
+    ENV_CPU_HOT       = 1u << 4,    // CPU >= 95 C; no longer measured, only read from older results files
     ENV_GPU_HOT       = 1u << 5,    // GPU at or above its driver warning temperature
     ENV_WHEA          = 1u << 6,    // Windows logged hardware errors (WHEA-Logger) during the test
 };
@@ -23,7 +23,6 @@ struct TestEnv {
     f32 cpu_mhz;            // clock of a busy core, average over the samples where a core was busy
     f32 cpu_mhz_max;        // highest of those samples
     f32 cpu_util;           // % of all logical processors, average
-    f32 cpu_temp_max;       // C; from PawnIO (adv_sensors.h) when installed, else NaN
     f32 gpu_mhz, gpu_mhz_max;   // test GPU core clock (where the driver reports it)
     f32 gpu_mem_mhz;        // memory clock, average
     f32 gpu_util;           // % of the busiest engine, average

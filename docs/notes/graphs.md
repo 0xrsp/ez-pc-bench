@@ -88,22 +88,19 @@ Charts of disk tests use `GK_DISK` for throughput units whatever the unit string
 | Sensors window | see below | |
 | Overlay (overlay.cpp, GDI) | gray labels | each label in its unit's graph color (dark shades); values stay white |
 
-Not converted: `adv_ui.cpp` (PawnIO section, the PawnIO stream's file) still has one `PlotLines` per PawnIO
-sensor row. Switching it is a five-line change: `Graph g; g.kind = GK_TEMP; g.lo = lo; g.hi = hi; g.flags =
-GF_NO_CAPTION; graph_time("##hist", &g, &line, 1, ImVec2(0, line * 2))`.
-
 ## Sensors window
 
 - **Overview** is now Task Manager-like: a device list on the left, the selected device on the right.
-  - List entries: All, CPU, GPU n, Memory, Drives, Power, Temperatures, Advanced (PawnIO). Each has a sparkline
+  - List entries: CPU, GPU n, Memory, Drives, Power, Temperatures (All and a driver-sensor entry were removed
+    2026-11-12). Each has a sparkline
     thumbnail (CPU load, GPU load, memory in use, hottest drive, battery rate, hottest thermal zone) and a
     one-line summary ("12%  4.63 GHz", "20.8 GiB / 31.3 GiB (66%)", "On AC, 100%", "hottest 42 °C"). The
     selected entry is tinted in its color with an accent bar.
-  - **All** stacks every section; with a search active the right side always shows the matching sections and
-    the list only the devices with a match ("All" highlighted). Picking a device clears the search.
+  - **All** stacked every section (entry removed 2026-11-12; CPU is now the default device). With a search active
+    the right side shows the matching sections and the list only the devices with a match (none highlighted).
+    Picking a device clears the search.
   - CPU: "% Utilization over 60 seconds" (large), stats (Utilization, Speed of busy cores, Fastest core, Highest
-    seen, package power, Temperature: a `cpu.temp*` channel if one appears (PawnIO), else the hottest ACPI zone,
-    labelled "(ACPI)"; Logical processors), clock graph (busy cores + fastest core, two lines) beside the package
+    seen, package power, Temperature: the hottest ACPI zone, labelled "(ACPI)"; Logical processors), clock graph (busy cores + fastest core, two lines) beside the package
     power graph, one load tile per logical processor (4 columns up to 16 LPs, the LP clock in the caption), then
     per-core power tiles.
   - GPU (per adapter): utilization graph, stats (load, core / memory clock, dedicated memory used / total, power
@@ -117,10 +114,8 @@ GF_NO_CAPTION; graph_time("##hist", &g, &line, 1, ImVec2(0, line * 2))`.
   - Graph span: 1 / 2 / 5 / 10 minutes (tabs above the detail; the channel history holds 10 min).
 - **Sensors** tab: the row graphs are `graph_time` in the unit's color (no caption, no grid at row height).
 - **Log and overlay** tab: the two parts are `theme_group_begin("Sensor log")` / `("Overlay")` boxes.
-- `adv_ui_draw_sensors()` is the "Advanced" device and the last section of All (shown under a search when the
-  search matches its topics, as before).
-- New `[sensors]` ini keys: `graph_window` (0..3) and `device` ("all", "cpu", "gpu0", "memory", "drives",
-  "power", "temps", "adv").
+- New `[sensors]` ini keys: `graph_window` (0..3) and `device` ("cpu" (default), "gpu0", "memory", "drives", "power",
+  "temps"; the old "all" and unknown keys fall back to "cpu").
 - New GUI dev flag `--sensor-view <overview|sensors|log|device>`: session-only tab or Overview device (a device
   key opens the Overview on it), for screenshots. Parsed in main_gui.cpp next to `--sensor-filter`.
 
@@ -130,8 +125,7 @@ GF_NO_CAPTION; graph_time("##hist", &g, &line, 1, ImVec2(0, line * 2))`.
   (`--sensor-view`, 4 lines), `src/app/ui.cpp` (include, `chart_kind`, `draw_live` graph block, `draw_series` /
   `draw_series_lines` / `draw_sustain` rewritten, `draw_series(r, b->suite)` call), `stability_ui.cpp` (the
   PlotLines block in `graph()` and an include), `history_ui.cpp` (`draw_chart` rewritten, include),
-  `score_ui.cpp` (`bar` body), `mem_charts.cpp` (`draw_loaded`), `overlay.cpp`. Not touched: theme.*, adv_ui.*,
-  core/*.
+  `score_ui.cpp` (`bar` body), `mem_charts.cpp` (`draw_loaded`), `overlay.cpp`. Not touched: theme.*, core/*.
 - CLAUDE.md: add `--sensor-view overview|sensors|log|<device>` to the GUI dev flags.
 - PLAN.md: decision log entry for the shared graph widget and the unit → color table (graph colors are
   independent of the theme palette); Sensors window description (device list, All, graph span, memory section);

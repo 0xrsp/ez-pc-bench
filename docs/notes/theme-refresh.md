@@ -103,7 +103,7 @@ up to 8 nested groups.
   weights, Inputs, Validity flags. Bullets now wrap (ImGui's `BulletText` doesn't).
 - **Main window**: the expanded System info is an untitled group under the System header.
 - Settings and Benchmark settings already used groups; they pick up the new look unchanged.
-- Not touched: Sensors window (being rebuilt), adv_ui (PawnIO), Compare layout (already a card + toolbar).
+- Not touched: Sensors window (being rebuilt), Compare layout (already a card + toolbar).
 
 ## Screenshots
 

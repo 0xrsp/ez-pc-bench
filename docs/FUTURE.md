@@ -23,11 +23,10 @@ library, CLI.
 
 ## 0. Decisions
 
-- [x] **Kernel driver → PawnIO, opt-in** (decided 2026-11-11). Use the existing signed PawnIO driver and
-  its signed modules instead of writing or signing our own. Never WinRing0 / inpoutx64 / RTCore64 or
-  other known-vulnerable drivers (Defender flags them, Microsoft's vulnerable-driver blocklist blocks
-  them, and loading them looks like malware). Without PawnIO everything falls back to driverless sources.
-  Details in §8.
+- [x] **Kernel driver → none** (decided 2026-11-12). An opt-in third-party signed driver was integrated in
+  M10 and removed again: it added nothing useful (PLAN.md decision log, §8). Never WinRing0 / inpoutx64 /
+  RTCore64 or other known-vulnerable drivers (Defender flags them, Microsoft's vulnerable-driver blocklist
+  blocks them, and loading them looks like malware). Everything uses driverless sources.
 - [x] **Overall score → yes, as an addition** (decided 2026-11-11). Raw numbers stay the primary output;
   the score is derived from them by a published, versioned formula and always shown with its breakdown.
   The "never invented scores" rule in CLAUDE.md / PLAN.md gets reworded when §10 is built. Details in §10.
@@ -42,9 +41,8 @@ library, CLI.
   *Open, waiting on the user (PLAN.md §11). §12 hardware generality waits on it.*
 - [ ] **Network features.** Update check, online result browser/leaderboard, email alerts all need
   network access. Decide what (if anything) talks to the network, always opt-in.
-  *Open, waiting on the user for anything beyond PawnIO and the update check. The user asked for the PawnIO
-  "Download & install" button (2026-11-11, §8): the app's first network access, only on that click; and for
-  an update check on startup (2026-11-12, §12, `dist` builds only). Health / tray alerts wait on the rest.*
+  *Open, waiting on the user for anything beyond the update check. The user asked for an update check on
+  startup (2026-11-12, §12, `dist` builds only). Health / tray alerts wait on the rest.*
 - [ ] **Resident mode.** CrystalDiskInfo/HWiNFO-style tray monitoring means a long-running process (and
   probably a scheduled task to start elevated at logon). Decide if the GUI exe may stay resident.
   *Open, waiting on the user. Tray icon and threshold alerts wait on it.*
@@ -219,10 +217,8 @@ feel slow, and it's the most indicative disk number for the overall score (§10)
   *Done (M12): `mem.bw.mix`, `mem.bw.scaling`.*
 - [x] **P2** Page-size effects: 4 KiB vs 2 MiB pages side by side when large pages are available.
   *Done (M12): `mem.lat.pages`, default off. Untested: skipped here without SeLockMemoryPrivilege.*
-- [ ] **P2** (PawnIO, §8) SPD and current timings shown in sysinfo and stored with every result.
-  *Partial (M10): AMD UMC timings and the SPD base configuration go into `system.ram.timings` /
-  `system.ram.spd`, code only, untested (PawnIO not installed). XMP / EXPO waits on the SPD page-select
-  decision (PLAN.md §11).*
+- [ ] **P2** SPD and current timings shown in sysinfo and stored with every result.
+  *Dropped 2026-11-12: needs a kernel driver (§0, §8).*
 
 ## 5. GPU — 3DMark feature tests, GPU-Z
 
@@ -291,10 +287,9 @@ Tests (tick any combination, run together or in sequence, duration or until stop
   count corrected/uncorrected hardware errors during the run (also shown during benchmark runs).
   *Done (M9): `core/whea.*` in stability runs; benchmark runs count them per test (`env[].whea`, flag `whea`,
   a warning under the result).*
-- [x] **P1** Live sensor graphs (§7, §8) and safety limits: stop at a CPU / GPU / drive temperature the
+- [x] **P1** Live sensor graphs (§7) and safety limits: stop at a CPU / GPU / drive temperature the
   user sets; optional stop on first error; always restore state.
-  *Done (M9). CPU limit = PawnIO Tdie / package temperature (`adv_cpu_temp`) when installed, else the hottest
-  ACPI zone. Limits are session-only.*
+  *Done (M9). CPU limit = the hottest ACPI zone (best effort). Limits are session-only.*
 - [x] **P2** Per-core cycling (CoreCycler): one core at a time under a heavy ST load for X minutes each —
   the Curve Optimizer / undervolt tuning use case.
   *Done (M9): `cores`.*
@@ -310,14 +305,14 @@ Tests (tick any combination, run together or in sequence, duration or until stop
 
 ## 7. Live monitoring — HWiNFO, HWMonitor, Task Manager
 
-Driverless sources (always available; §8 adds the rest when PawnIO is installed):
+Driverless sources (no kernel driver, §0):
 - [x] **P1** CPU per-core **effective clock** without a driver: PDH "Processor Information\% Processor
   Performance" × base frequency (and "Processor Frequency"); per-core utilization; current power plan.
   *Done (M7): Sensors window, `core/hwread.*`. Utilization comes from `SystemProcessorPerformanceInformation`.*
 - [x] **P1** **Record sensors during every benchmark**: sample clocks, temperatures, GPU clock/power/
   util in the background and store per-test avg/max with the results (clock, max temp, "throttled?").
   Makes every number explainable and comparable — no other benchmark does this well.
-  *Done (M7): `core/monitor.*`, `env[]` table in TOON, a line under each result. CPU temperature waits for §8.*
+  *Done (M7): `core/monitor.*`, `env[]` table in TOON, a line under each result. No CPU temperature (§8).*
 - [x] **P1** GPU sensors (GPU-Z): core/memory clock, utilization per engine (PDH "GPU Engine"), VRAM used,
   power, fan, temperature; PCIe link speed/width current vs max (SetupAPI `DEVPKEY_PciDevice_*`, no driver).
   *Done (M7). The NVIDIA laptop driver reports a core clock only while the GPU is awake.*
@@ -339,56 +334,11 @@ Driverless sources (always available; §8 adds the rest when PawnIO is installed
 - [x] **P3** Overlay: small top-most transparent window with chosen sensors and fps (no injection into games).
   *Done (M12): `app/overlay.*`, GUI `--overlay`. Not over exclusive fullscreen (no injection).*
 
-## 8. Advanced sensors via PawnIO (opt-in)
+## 8. Kernel-driver sensors (removed)
 
-PawnIO (pawnio.eu, by namazso) is a signed kernel driver that only runs small signed modules (written in
-Pawn) exposing narrow IOCTLs: MSR access, AMD SMN / SMU mailbox, SMBus controllers, Super I/O. It replaced
-WinRing0 in LibreHardwareMonitor, FanControl, OpenRGB, ZenTimings and SMUDebugTool in 2025. It provides
-register access, not sensors: the per-CPU-family decoding is ours (LibreHardwareMonitor, MPL-2.0, and
-ZenTimings are good references for register addresses).
-
-- [x] **P1** Before building: confirm the licenses (client library LGPL-2.1+; check the PawnIO and
-  PawnIO.Modules licenses for using / shipping the signed module `.bin` files), HVCI (memory integrity)
-  compatibility, and that common anti-cheats don't object. Record the findings in PLAN.md.
-  *Done (M10): PLAN.md decision log 2026-11-11. HVCI very likely fine but untested here.*
-- [x] **P1** Integration: detect the PawnIO device; if missing, Settings shows "Advanced sensors: off"
-  with a link to the official installer (we don't install drivers ourselves). Talk to the driver with
-  plain `DeviceIoControl` from C (load module, call function) — no library dependency. Everything works
-  without it; sensors just show "needs PawnIO".
-  *Done (M10): `core/pawnio.*`, `core/adv_sensors.*`, Settings row, `--adv-report`. Untested against the
-  driver (not installed here); module `.bin` files not shipped yet. In-app installer (2026-11-11, user
-  request): the link became a "Download & install" button that downloads the official `PawnIO_setup.exe`
-  (PawnIO.Setup latest GitHub release) to %TEMP%, checks its Authenticode signature (signer "namazso"), runs
-  it (its own UAC prompt), deletes it and re-detects; `--adv-report` prints the installer URL. Download +
-  signature check tested; the real install isn't.*
-- [ ] **P1** CPU, AMD Zen: Tctl/Tdie and per-CCD temperatures (SMN), per-core temperatures and clocks
-  from the SMU PM table where the family exposes them, package power (RAPL MSRs), per-core effective
-  clock (APERF/MPERF), core voltage (SVI telemetry).
-  *Partial (M10), code only, untested: Tctl / Tdie, CCDs, RAPL, APERF / MPERF, SVI2 (Zen 1-3). Zen 4+ voltage
-  (SVI3) and per-core PM-table fields on Phoenix / Hawk Point (this PC) not mapped yet.*
-- [x] **P1** CPU, Intel: per-core and package temperature (IA32_THERM_STATUS / PACKAGE_THERM_STATUS),
-  package / core / uncore power (RAPL), per-core effective clock, throttling reasons (thermal, power
-  limit, PROCHOT) from the perf-limit-reason MSRs.
-  *Done (M10), code only, untested. Limit reasons come from the THERM_STATUS status bits; the
-  perf-limit-reason MSRs aren't on IntelMSR's read allow-list.*
-- [ ] **P1** RAM: DDR5 module temperature from the SPD hub's sensor (SPD5118) and DDR4 thermal sensors
-  over SMBus (PIIX4 on AMD, I801 on Intel); SPD contents (manufacturer, part, die, ranks, JEDEC +
-  XMP/EXPO profiles). On laptops the embedded controller may lock SMBus — handle "not available".
-  *Partial (M10), code only, untested: SPD5118 / TSE2004 temperatures and SPD base configuration, bus errors
-  stop SMBus use. XMP / EXPO and the DDR5 manufacturing block need an SPD page-select write: waiting on the
-  user (PLAN.md §11).*
-- [ ] **P2** Memory timings and clocks: AMD UMC registers (tCL, tRCD, tRP, tRAS, tRFC, ..., MCLK / FCLK /
-  UCLK, gear/ratio) like ZenTimings; Intel from MCHBAR. Stored in sysinfo with every result.
-  *Partial (M10): AMD UMC timings (DDR4 / DDR5) in code, untested; FCLK / UCLK only where the PM table is
-  mapped. Intel MCHBAR skipped.*
-- [ ] **P2** Desktop boards: fan RPM, voltages and board temperatures from Super I/O chips (Nuvoton,
-  ITE, Fintek) via the LPC module.
-  *Skipped (M10): needs Super I/O port writes, and this laptop has an EC, not a Super I/O, to test on.*
-- [x] **P2** Polling rules: SMU / PM-table reads at most once per second (AMD's own guidance for its SDK);
-  no SMBus or Super I/O polling during benchmark phases that it could disturb; one sampling thread.
-  *Done (M10): one TIME_CRITICAL 1 Hz thread, package-scope reads only while a benchmark runs.*
-- [x] **P3** Clock stretching detection on AMD (effective vs requested clock under load).
-  *Done (M10), code only, untested; only while no benchmark runs.*
+Removed 2026-11-12 together with the opt-in kernel driver they needed (§0, PLAN.md decision log): they added
+nothing useful. Per-core CPU temperatures and voltages, RAM temperatures, SPD contents and memory timings stay
+out of reach of the driverless sources (§7).
 
 ## 9. System information — CPU-Z, GPU-Z, HWiNFO summary, Speccy
 
@@ -522,15 +472,13 @@ PLAN.md §8). What is still open per milestone:
    write past the SLC cache. Alerts wait on §0 resident mode.
 3. **M9 Stability** (§6) — GPU tests on Vulkan, VRAM test on every adapter in one run, stability settings
    persistence.
-4. **M10 PawnIO sensors** (§8, §4 SPD) — all code untested until PawnIO is installed (user decision, PLAN.md
-   §11); then map the Hawk Point PM table from an `--adv-report` dump. XMP / EXPO and shipping the module
-   `.bin` files wait on the user. Zen 4+ SVI3 voltage, Intel MCHBAR timings, Super I/O not done.
+4. **M10 Kernel-driver sensors** (§8) — removed 2026-11-12, nothing left open.
 5. **M11 Score + CPU kernels** (§3, §10, §11) — calibration against real-task timings (needs other
    machines' data), score v2 inputs (new CPU kernels, disk latency percentiles), CPU ST numbers re-measured
    on an idle machine, `cpu.topo.hybrid` on a hybrid CPU.
 6. **M12 Breadth** (§4, §5, §7, §9) — GPU memory type / bus width, Vulkan `VK_EXT_present_timing`, DXR
    1.0 pipelines, D3D12 debug-layer validation. Tray icon waits on §0.
-7. **Open decisions** — §0 scope, network (beyond the PawnIO download), resident mode; §12 waits on them
+7. **Open decisions** — §0 scope, network (beyond the update check), resident mode; §12 waits on them
    (keyboard navigation and localization just haven't been started).
 8. **Later** — §14.
 
@@ -570,11 +518,4 @@ Big projects with their own art/engine work; start only after M7–M12.
 - Geekbench 6 workloads: [CPU workloads](https://Geekbench.com/doc/geekbench6-cpu-workloads.pdf),
   [GPU compute workloads](https://Geekbench.com/doc/geekbench6-gpu-compute-workloads.pdf)
 - GPU-Z (sensors, PCIe render test, BIOS save): [TechPowerUp](https://techpowerup.com/gpuz)
-- PawnIO (signed modules, WinRing0 replacement, adoption): [OpenRGB merge request](https://gitlab.com/CalcProgrammer1/OpenRGB/-/merge_requests/2833),
-  [OpenRGB commit](https://gitea.marinkevich.ru/grayhook/OpenRGB/commit/30a250c7df4b38380b24eacd871eaa75d125b9b3),
-  [ZenTimings](https://github.com/irusanov/ZenTimings/discussions/90),
-  [FanControl V238](https://newreleases.io/project/github/Rem0o/FanControl.Releases/release/V238),
-  [SidebarDiagnostics](https://newreleases.io/project/github/thewriteway/SidebarDiagnostics/release/v3.7.4),
-  [OCCT announcement](https://ocbase.com/news/winring-driver-alternative-announcement),
-  [nwinfo driver notes](https://deepwiki.com/a1ive/nwinfo/6.2-kernel-drivers-and-low-level-hardware-access)
 - AMD Ryzen Master Monitoring SDK (per-core temperature/frequency, SMU polling ≤ 1 Hz): [AMD](https://www.amd.com/en/developer/ryzen-master-monitoring-sdk.html)

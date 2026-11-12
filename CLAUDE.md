@@ -37,14 +37,6 @@ keep it updated (decision log, open questions, measured facts).
   embedded in both exes as resource 100 and used for the window icons) and `site/favicon.*` /
   `site/apple-touch-icon.png`. Commit the generated files.
 
-## PawnIO modules
-
-- The app downloads the PawnIO.Modules release named by `PAWNIO_MODULES_VERSION` and checks it against
-  `PAWNIO_MODULES_SHA256` (both in `src/core/pawnio_modules.h`). When a new release is out
-  (https://github.com/namazso/PawnIO.Modules/releases), bump both together: download the new zip, take its
-  hash with `Get-FileHash` (lowercase it), update the two constants and test `--pawnio-modules` +
-  `--adv-report` (steps in docs/notes/pawnio.md §10).
-
 ## Code style
 
 - C-style C++: procedural, data-oriented. Plain structs + free functions, flat arrays indexed by id,
@@ -71,7 +63,7 @@ keep it updated (decision log, open questions, measured facts).
   `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
 - CLI modes (besides `--run`): `--health [--hide-serial]` (drive health report), `--sysinfo [base]` (system
   report), `--stress <tests>` (stability tester), `--log-sensors <file>` (CSV) / `--list-sensors`,
-  `--score [files...]` (`--score-write`), `--html <file>`, `--adv-report` (PawnIO sensors), `--pawnio-modules` (download them); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
+  `--score [files...]` (`--score-write`), `--html <file>`; run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
   `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests), `--cpu-baseline` (dev: act as if the CPU had no
   AVX / FMA / AVX-512). `-h` prints the full usage.
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
