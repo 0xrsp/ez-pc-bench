@@ -353,10 +353,11 @@ void history_ui_draw() {
         ImGui::End();
         return;
     }
+    theme_group_begin("Trend");
     draw_picker();
     ImGui::Spacing();
     draw_chart(ImGui::GetFontSize() * 16.0f);
-    ImGui::Spacing();
+    theme_group_end();
 
     // Runs, newest first.
     theme_begin_panel("hist_runs", ImVec2(0, 0), false);

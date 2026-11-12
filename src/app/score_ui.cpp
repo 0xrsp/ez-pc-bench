@@ -28,9 +28,9 @@ static void bar(f32 frac, f32 marker, f32 w, f32 h, const ImVec4& col) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const f32 y = p.y + (ImGui::GetTextLineHeight() - h) * 0.5f;
-    dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + h), ImGui::GetColorU32(g_pal.container_high), h * 0.5f);
+    dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + h), ImGui::GetColorU32(g_pal.container_high), ImGui::GetStyle().GrabRounding);
     const f32 fw = w * (frac < 0.0f ? 0.0f : frac > 1.0f ? 1.0f : frac);
-    if (fw > 0.5f) dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + fw, y + h), ImGui::GetColorU32(col), h * 0.5f);
+    if (fw > 0.5f) dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + fw, y + h), ImGui::GetColorU32(col), ImGui::GetStyle().GrabRounding);
     if (marker > 0.0f && marker < 1.0f)
         dl->AddLine(ImVec2(p.x + w * marker, y - 2.0f), ImVec2(p.x + w * marker, y + h + 2.0f),
                     ImGui::GetColorU32(g_pal.on_surface_variant), 1.5f);
