@@ -114,7 +114,8 @@ vcvars is needed.
 **GUI:**
 1. Pick a **Preset** (or your own selection), the GPU(s) and disk(s) at the top.
 2. Tick the tests you want and press **Run**. The sliders button next to it opens **Benchmark settings**
-   (phase duration, repeats, sustained mode, disk file size and passes); presets set these too.
+   (phase duration, repeats, sustained mode, GPU render resolution, disk file size and passes); presets
+   set all but the resolution.
 3. **Save results...** asks for an optional run name (Enter keeps the default, e.g.
    `ezbench_20261111_113811_r7-250_rtx5060-laptop`) and writes `results\<name>.toon.txt` next to the exe.
    Every finished run is also saved to `results\history\`.

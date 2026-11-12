@@ -10,22 +10,23 @@ everything else is an **app setting**.
 
 | Window | Opened from | Settings |
 |---|---|---|
-| **Settings** (`TOOL_SETTINGS`, `--tool settings`, 680 x 720) | gear button, right end of the System row | Theme; Threads; GPU render resolution and present mode; disk write-through, read / write passes + mixed-pass share, test data*, disk results unit, test folder, buffered I/O, sustained-write amount; custom disk rows*; advanced sensors (PawnIO) |
-| **Benchmark settings** (`TOOL_BENCH`, `--tool bench`, 680 x 580) | new sliders icon button right after Run / Cancel | Duration per phase, repeat each test, sustained mode; disk test file size, passes, interval between tests |
+| **Settings** (`TOOL_SETTINGS`, `--tool settings`, 680 x 720) | gear button, right end of the System row | Theme; Threads; GPU present mode; disk write-through, read / write passes + mixed-pass share, test data*, disk results unit, test folder, buffered I/O, sustained-write amount; custom disk rows*; advanced sensors (PawnIO) |
+| **Benchmark settings** (`TOOL_BENCH`, `--tool bench`, 680 x 580) | new sliders icon button right after Run / Cancel | Duration per phase, repeat each test, sustained mode; GPU render resolution (moved here 2026-11-12); disk test file size, passes, interval between tests |
 
 \* rows the disk-trim stream deletes; they were left where they were.
 
 - Presets write duration, repeat, disk passes, disk file size and sustain. The disk interval isn't written by
-  presets but was asked to live with the run settings, so it moved too.
+  presets but was asked to live with the run settings, so it moved too. Same for the GPU render resolution
+  (moved 2026-11-12): presets still never change it, and it doesn't affect `preset_match`.
 - Read / write passes, the mixed-pass share and the sustained-write amount stayed in Settings (presets don't
   touch them). Easy to move later: they are rows in `draw_disk_options` (`settings_ui.cpp`).
 - The Benchmark settings window says that presets change these values and shows the current preset
   (`preset_match`, "Custom" when none matches).
 - Both windows share the row / group / whole-row help code (one file, `settings_ui.cpp`) and are locked while a
   run is in progress.
-- **Reset to defaults** in each window resets only its own settings. Settings: threads, GPU resolution / present
+- **Reset to defaults** in each window resets only its own settings. Settings: threads, GPU present
   mode, write-through, disk options except the folder, the custom rows and the interval. Benchmark settings:
-  duration, repeat, sustain, file size, passes, interval (= the Standard preset's values). Neither touches the
+  duration, repeat, sustain, render resolution, file size, passes, interval (= the Standard preset's values). Neither touches the
   theme, advanced sensors, the test selection or the GPU / drives picked in the main window.
 - **ini unchanged**: same file (`%APPDATA%\ez-pc-bench\settings.ini`), same `[settings]` keys; `settings.cpp`
   wasn't touched.
