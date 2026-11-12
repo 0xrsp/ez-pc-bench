@@ -42,11 +42,12 @@ library, CLI.
   *Open, waiting on the user (PLAN.md §11). §12 hardware generality waits on it.*
 - [ ] **Network features.** Update check, online result browser/leaderboard, email alerts all need
   network access. Decide what (if anything) talks to the network, always opt-in.
-  *Open, waiting on the user. Nothing in the app talks to the network; health / tray alerts and the update
-  check wait on it.*
+  *Open, waiting on the user for anything beyond PawnIO. The user asked for the PawnIO "Download & install"
+  button (2026-11-11, §8): the app's first network access, only on that click. Health / tray alerts and the
+  update check wait on the rest of this decision.*
 - [ ] **Resident mode.** CrystalDiskInfo/HWiNFO-style tray monitoring means a long-running process (and
   probably a scheduled task to start elevated at logon). Decide if the GUI exe may stay resident.
-  *Open, waiting on the user. Tray icon, threshold alerts and AAM / APM reapply at boot wait on it.*
+  *Open, waiting on the user. Tray icon and threshold alerts wait on it.*
 
 ## 1. Disk health — CrystalDiskInfo parity
 
@@ -58,8 +59,9 @@ library, CLI.
   sector.*
 - [x] **P1** Health status rules like CDI: Good / Caution / Bad from reallocated, pending, uncorrectable
   sectors, NVMe critical warning, spare below threshold, life used; thresholds user-adjustable per drive.
-  *Done (M8): reasons listed per drive, thresholds in `health\health.ini`. NVMe tested live, ATA synthetic
-  only.*
+  *Done (M8): reasons listed per drive. NVMe tested live, ATA synthetic only. User-adjustable per-drive
+  thresholds: Removed 2026-11-11 (trim); fixed CrystalDiskInfo-style Caution limits (any reallocated /
+  pending / uncorrectable sector or NVMe media error, ≤ 10 % life left).*
 - [x] **P1** Drive info panel: model, firmware, serial (with "hide serial" toggle for screenshots),
   interface and transfer mode **current vs max** (SATA/600, PCIe Gen x lanes for NVMe), standard (ATA8,
   NVMe 1.4...), features (SMART, TRIM, NCQ, volatile write cache, DevSleep, APM/AAM, 48-bit LBA),
@@ -79,19 +81,17 @@ library, CLI.
   transition counts.
   *Done (M8): Identify summary + hex dumps, error log, features, firmware slots, power states, temperature
   sensors, thermal transitions.*
-- [x] **P2** History: persist health samples (temperature, life used, data written, reallocations) under
+- [ ] **P2** History: persist health samples (temperature, life used, data written, reallocations) under
   `%APPDATA%\ez-pc-bench\health\` and plot them (CDI's SMART graph).
-  *Done (M8): `%APPDATA%\ez-pc-bench\health\<key>.toon.txt`, per-field plot. Tested with a synthetic 30-day
-  history.*
+  *Removed 2026-11-11 (trim). (Was built in M8: per-drive TOON history and per-field plot.)*
 - [ ] **P2** Alerts (needs resident mode, §0): toast notification + optional sound on health change,
   temperature over threshold, new reallocated/pending sectors. Email alerts only if network is approved.
   *Skipped (M8): needs resident mode and network, open §0 decisions.*
-- [x] **P2** Endurance projection: data written per day from history; life-used trend → estimated date
+- [ ] **P2** Endurance projection: data written per day from history; life-used trend → estimated date
   to 100 % (no vendor TBW database needed).
-  *Done (M8): from history, needs ≥ 1 day of samples.*
+  *Removed 2026-11-11 (trim) with the history.*
 - [ ] **P3** AAM / APM control for HDDs (presets Quiet…Performance, reapply at boot).
-  *Partial (M8): SET FEATURES behind a confirmation, never applied here (no ATA drive). Reapply at boot needs
-  resident mode (§0).*
+  *Removed 2026-11-11 (trim). (Was partial in M8: SET FEATURES behind a confirmation, never applied.)*
 - [ ] **P3** RAID controllers: Intel RST / AMD RAIDXpert / MegaRAID pass-through (CSMI / vendor IOCTLs).
   *Partial (M8): CSMI for SATA members, untested. Intel RST NVMe-in-RAID and MegaRAID not done.*
 - [x] **P3** Copy/save a text report of every drive (CDI "Copy" / "Save as text").
@@ -101,13 +101,15 @@ library, CLI.
 
 - [x] **P1** CDM profiles: Default, NVMe SSD, **Peak** (max QD/threads), **Real World** (Q1T1), Demo;
   Read-only / Write-only / Read+Write modes.
-  *Done (M8): profiles are test selections (GUI combo, CLI `--disk-profile`); modes via `--disk-mode
-  rw|read|write|mix`.*
+  *Modes done (M8): `--disk-mode rw|read|write|mix`. CDM profiles: Removed 2026-11-11 (trim) (were test
+  selections, GUI combo / `--disk-profile`); the Default and NVMe rows are still tests.*
 - [x] **P1** **Mixed** read/write test (CDM Mix, default 70/30) and user-defined test rows (block size,
   queue depth, threads, read/write/mix ratio, random/sequential).
-  *Done (M8): mode "mix" (read % adjustable), 4 custom rows (`RND4K Q32T4 R70` syntax, `--disk-custom`).*
-- [x] **P1** Test data choice: random (incompressible) vs all 0x00 (shows controller compression).
-  *Done (M8): `--disk-data random|zero`.*
+  *Mixed done (M8): mode "mix" (read % adjustable). User-defined rows: Removed 2026-11-11 (trim) (were 4
+  custom rows, `disk.custom1..4`, `--disk-custom`).*
+- [ ] **P1** Test data choice: random (incompressible) vs all 0x00 (shows controller compression).
+  *Removed 2026-11-11 (trim): tests always write random data; the compressibility sweep (P3) covers
+  controller compression.*
 - [x] **P1** **Sustained write / SLC cache test**: write a large span (e.g. 50–90 % of free space, capped,
   user-confirmed) and plot MB/s vs GB written → SLC cache size, post-cache speed, folding behaviour; record
   drive temperature alongside to show thermal throttling.
@@ -253,12 +255,11 @@ feel slow, and it's the most indicative disk number for the overall score (§10)
   short name.*
 - [x] **P3** Texture format sampling rates (BC1–BC7, R32F), anisotropic filtering cost.
   *Done (M12): `tex.formats`, `tex.aniso` on both APIs.*
-- [x] **P3** Frame capture of **other applications** (PresentMon/CapFrameX replacement) via ETW present
+- [ ] **P3** Frame capture of **other applications** (PresentMon/CapFrameX replacement) via ETW present
   events (Win32, no extra dependency): fps, frame times, 1 %/0.1 % lows of any running game, saved as TOON
   and comparable in the compare window.
-  *Done (M12): `src/frames/`, tool window `--tool frames`, CLI `--capture`, TOON `kind: frames`, compare
-  overlay graph. Present-to-present only (no displayed-frame reconstruction). Untested live: ETW needs admin;
-  decoding covered by `--capture-selftest`.*
+  *Removed 2026-11-11 (trim). (Was built in M12: ETW capture, Frames window, `--capture`, compare frame
+  graph.) The on-screen present mode (P2 above) stays.*
 
 ## 6. Stability tester — separate tool (OCCT, Prime95, AIDA64 SST, MemTest86/TestMem5, memtestG80)
 
@@ -327,12 +328,12 @@ Driverless sources (always available; §8 adds the rest when PawnIO is installed
   count (`IOCTL_BATTERY_QUERY_STATUS` / `_INFORMATION`) — doubles as a system power meter on laptops.
   *Done (M12): `core/battery.*`, Sensors window, `env.bat_discharge_w` in run results.*
 - [x] **P2** Energy Metering Interface (`IOCTL_EMI_*`) power rails where the platform exposes them.
-  *Done (M12): `core/emi.*`; this laptop has CPU package + 8 per-core rails, no admin needed. Not yet a
-  run-monitor column.*
-- [x] **P2** Sensor log to CSV/TOON at a chosen interval; min / max / avg columns with reset; per-sensor
+  *Done (M12): `core/emi.*`; this laptop has CPU package + 8 per-core rails, no admin needed; the CPU rails
+  sit in the CPU section. Run monitor records package power (`env[].cpu_pkg_w`).*
+- [x] **P2** Sensor log to CSV at a chosen interval; min / max / avg columns with reset; per-sensor
   graphs; pick sensors to show.
-  *Done (M12): Sensors window tabs, CLI `--log-sensors` / `--list-sensors`, picks saved in `settings.ini
-  [sensors]`.*
+  *Done (M12): Sensors window tabs with a search box, CLI `--log-sensors` / `--list-sensors`, picks saved in
+  `settings.ini [sensors]`. The log is CSV only (TOON log: Removed 2026-11-11 (trim)).*
 - [ ] **P2** Tray icon with a chosen value (CPU or drive temperature); alerts on thresholds.
   *Skipped (M12): needs resident mode (§0).*
 - [x] **P3** Overlay: small top-most transparent window with chosen sensors and fps (no injection into games).
@@ -355,7 +356,11 @@ ZenTimings are good references for register addresses).
   plain `DeviceIoControl` from C (load module, call function) — no library dependency. Everything works
   without it; sensors just show "needs PawnIO".
   *Done (M10): `core/pawnio.*`, `core/adv_sensors.*`, Settings row, `--adv-report`. Untested against the
-  driver (not installed here); module `.bin` files not shipped yet.*
+  driver (not installed here); module `.bin` files not shipped yet. In-app installer (2026-11-11, user
+  request): the link became a "Download & install" button that downloads the official `PawnIO_setup.exe`
+  (PawnIO.Setup latest GitHub release) to %TEMP%, checks its Authenticode signature (signer "namazso"), runs
+  it (its own UAC prompt), deletes it and re-detects; `--adv-report` prints the installer URL. Download +
+  signature check tested; the real install isn't.*
 - [ ] **P1** CPU, AMD Zen: Tctl/Tdie and per-CCD temperatures (SMN), per-core temperatures and clocks
   from the SMU PM table where the family exposes them, package power (RAPL MSRs), per-core effective
   clock (APERF/MPERF), core voltage (SVI telemetry).
@@ -439,7 +444,8 @@ One number for "how fast is this PC overall", plus one per component, computed o
   - *Gaming*: GPU and CPU ST / memory latency dominate;
   - *Creator / workstation*: CPU MT, memory bandwidth, GPU compute;
   - *Everyday / office*: CPU ST and storage latency dominate.
-  *Done (M11): Overall / Gaming / Creator / Everyday, weights are the initial guess.*
+  *Done (M11): Overall, weights are the initial guess. Gaming / Creator / Everyday profiles: Removed
+  2026-11-11 (trim) (score stays v1; old files with `profiles[]` still read).*
 - [ ] **P1** **How indicative is it** — calibration before the weights are trusted: collect reference
   machines' timings of real tasks (game fps from built-in game benchmarks, code compile time, app launch,
   photo export, file copy — published reviews or volunteers) and fit / sanity-check the weights so the
@@ -455,7 +461,8 @@ One number for "how fast is this PC overall", plus one per component, computed o
 - [x] **P1** UI: overall score + component bars with their raw inputs on hover/expand, "vs reference"
   and vs library machines (§11 ranking), and the profile scores. Stored in TOON as derived values with
   the score version.
-  *Done (M11): Score and Ranking tabs, About the score, TOON `score:` block.*
+  *Done (M11): Score and Ranking tabs, About the score, TOON `score:` block. Profile scores: Removed
+  2026-11-11 (trim).*
 - [x] **P2** CLI `--score` prints the breakdown; compare window gets a score row per run.
   *Done (M11): `--score [files...]`, `--score-write`; compare window Score group.*
 - [ ] **P2** When the §14 workloads land, add them as inputs in a new score version.
@@ -476,7 +483,8 @@ One number for "how fast is this PC overall", plus one per component, computed o
   *Done (M11): `<exe dir>\results\history\`, History window (`--tool history`), CLI `--no-history`.*
 - [x] **P2** Shareable output: render the results/compare table to PNG (CDM-style screenshot) and a
   self-contained HTML report.
-  *Done (M11): Save PNG (window back buffer), self-contained HTML report (compare window, CLI `--html`).*
+  *Done (M11): PNG of the window back buffer (compare window: Copy PNG to the clipboard since the trim;
+  Score tab: Save PNG to a file), self-contained HTML report (compare window, CLI `--html`).*
 - [x] **P2** Community results without a server: submit `*.toon.txt` via a GitHub PR / issue form;
   the website renders a searchable table from the library (static, built by the Pages workflow).
   *Done (M11): issue form, `site/results.html` built from `library/` by `tools/site_library.py`. Submissions
@@ -511,7 +519,7 @@ PLAN.md §8). What is still open per milestone:
 
 2. **M8 Disk** (§1, §2, §2.1) — RAID: Intel RST NVMe and MegaRAID. Untested: every ATA / USB bridge / CSMI
    path (no such hardware here), self-test start / abort and the raw-device tests (need admin), sustained
-   write past the SLC cache. Alerts and AAM / APM reapply at boot wait on §0 resident mode.
+   write past the SLC cache. Alerts wait on §0 resident mode.
 3. **M9 Stability** (§6) — GPU tests on Vulkan, VRAM test on every adapter in one run, stability settings
    persistence.
 4. **M10 PawnIO sensors** (§8, §4 SPD) — all code untested until PawnIO is installed (user decision, PLAN.md
@@ -520,10 +528,10 @@ PLAN.md §8). What is still open per milestone:
 5. **M11 Score + CPU kernels** (§3, §10, §11) — calibration against real-task timings (needs other
    machines' data), score v2 inputs (new CPU kernels, disk latency percentiles), CPU ST numbers re-measured
    on an idle machine, `cpu.topo.hybrid` on a hybrid CPU.
-6. **M12 Breadth** (§4, §5, §7, §9) — GPU memory type / bus width, Vulkan `VK_EXT_present_timing`, displayed-frame reconstruction and a live test (admin) for frame capture, DXR
+6. **M12 Breadth** (§4, §5, §7, §9) — GPU memory type / bus width, Vulkan `VK_EXT_present_timing`, DXR
    1.0 pipelines, D3D12 debug-layer validation. Tray icon waits on §0.
-7. **Open decisions** — §0 scope, network, resident mode; §12 waits on them (keyboard navigation and
-   localization just haven't been started).
+7. **Open decisions** — §0 scope, network (beyond the PawnIO download), resident mode; §12 waits on them
+   (keyboard navigation and localization just haven't been started).
 8. **Later** — §14.
 
 ## 14. Later (not yet): real rendering workloads

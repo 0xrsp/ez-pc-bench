@@ -59,16 +59,17 @@ keep it updated (decision log, open questions, measured facts).
 - Verify with the CLI: `build/release/ez-pc-bench-cli.exe --run <ids> --out out.toon.txt` (`--list` shows ids,
   `--compare <file>` diffs against a saved result). Results files are TOON text (`*.toon.txt`, see core/toon.h).
 - CLI modes (besides `--run`): `--health [--hide-serial]` (drive health report), `--sysinfo [base]` (system
-  report), `--stress <tests>` (stability tester), `--capture <exe|pid|*>` (frame capture, needs admin),
-  `--log-sensors <file>` / `--list-sensors`, `--score [files...]` (`--score-write`), `--html <file>`,
-  `--adv-report` (PawnIO sensors); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
+  report), `--stress <tests>` (stability tester), `--log-sensors <file>` (CSV) / `--list-sensors`,
+  `--score [files...]` (`--score-write`), `--html <file>`, `--adv-report` (PawnIO sensors); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
   `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests). `-h` prints the full usage.
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
   suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark`, `--compare [files...]` (opens the compare
-  window with those results), `--tool compare|settings|sensors|health|system|stability|frames|history` (`temps` = `sensors`)
-  (opens that tool window), `--tab results|charts|score|ranking`, `--charts` (= `--tab charts`), `--sustain <minutes>`,
-  `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor overlay), `--stability-run <ids> [seconds]`
-  (`--dev --inject` adds the error self-test). Session only, never saved to the ini. Keep the build warning-free.
+  window with those results), `--tool compare|settings|bench|sensors|health|system|stability|history` (`temps` =
+  `sensors`; `bench` = Benchmark settings) (opens that tool window), `--tab results|charts|score|ranking`, `--charts`
+  (= `--tab charts`), `--sustain <minutes>`, `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor
+  overlay), `--sensor-filter <text>` (Sensors search box), `--open-gpu-combo` (GPU combo popup open, for screenshots),
+  `--stability-run <ids> [seconds]` (`--dev --inject` adds the error self-test). Session only, never saved to the ini.
+  Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.

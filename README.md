@@ -40,10 +40,10 @@ The full plan, with priorities and sources, is in [docs/FUTURE.md](docs/FUTURE.m
 
 - [ ] **Disk latency:** p50 to p99.99 and max for every test, QD1 read / write / flush latency, latency
   under background writes, latency over time, wake-from-idle latency, small-file operations.
-- [ ] **Disk benchmark:** CrystalDiskMark Peak / Real World profiles, mixed read/write, custom tests,
+- [ ] **Disk benchmark:** read-only / write-only / mixed read/write modes, compressibility sweep,
   sustained-write (SLC cache) test, queue-depth and block-size sweeps, full-drive read and surface scan.
 - [ ] **Disk health (CrystalDiskInfo):** full SATA SMART table, Good / Caution / Bad rules, drive info
-  panel, USB enclosures, self-tests, health history and alerts.
+  panel, USB enclosures, self-tests, NVMe details, text report, alerts.
 - [ ] **Stability tester (separate tool):** self-checking CPU stress with per-core error tracking,
   memory error test, VRAM test, GPU error detection, combined CPU + GPU load, Windows hardware-error
   (WHEA) logging, temperature limits.
@@ -59,7 +59,7 @@ The full plan, with priorities and sources, is in [docs/FUTURE.md](docs/FUTURE.m
 - [ ] **Overall score:** derived from the raw results with a published, versioned formula; component
   scores for CPU, memory, GPU and storage; checked against real-task timings before it's trusted.
 - [ ] **Results:** ranking against reference machines, one-click presets, repeat runs with medians,
-  run history, PNG / HTML export.
+  run history, PNG screenshots (compare window to the clipboard, score to a file) and HTML export.
 - [ ] **Later:** a Cinebench-style CPU render and a Heaven-style heavy GPU scene.
 
 ## Download

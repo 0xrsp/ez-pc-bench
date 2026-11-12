@@ -13,7 +13,7 @@ real-task timings. A CLI build runs the same benchmarks headless. Results files 
 
 Suites: **CPU**, **Memory**, **GPU** (Vulkan + Direct3D 12; Compute, 3D, 2D, Features), **Disk**
 (CrystalDiskMark-style plus latency, sweeps, raw-device tests). Separate tools (own windows / CLI modes):
-stability tester, drive health, sensors + log + overlay, frame capture, system details, history.
+stability tester, drive health, sensors + log + overlay, system details, history.
 
 Scope: only needs to work on this machine for now. No installer, no cross-platform.
 
@@ -101,17 +101,16 @@ src/
   app/main_gui.cpp     Win32 window, D3D11 device/swapchain, ImGui frame loop, tool-window table, dev flags
   app/main_cli.cpp     Arg parsing, runs selected tests, live progress lines, CLI modes (--health, --sysinfo, ...)
   app/ui.cpp/.h        Suite tree, live panel, Results / Charts / Score / Ranking tabs, warnings
-  app/settings*.cpp    settings.ini load/save, Settings window
+  app/settings*.cpp    settings.ini load/save, Settings and Benchmark settings windows
   app/theme.*          Material palette, fonts, vector icons
   app/library.*        Built-in reference runs (RCDATA, LZMS)
   app/compare_ui.*     Compare window;  app/score_ui.*, history_ui.*: score tab / About, History window
-  app/snapshot.*       Window back buffer -> PNG (WIC)
+  app/snapshot.*       Window back buffer -> PNG (WIC): file (Score tab) or clipboard (compare)
   app/mem_charts.*     Memory grid table, loaded-latency plot
   app/temps_ui.*, overlay.*, adv_ui.*   Sensors window (+ log), click-through overlay, PawnIO section
   app/health_ui.*      Drive health window
   app/system_ui.*      System details window
   app/stability_ui.*, stability_cli.*   Stability tester window and `--stress`
-  app/frames_ui.*, frames_graph.*       Frame capture window, frame-time graph (also in compare)
   app/app.rc/gui.rc/.manifest           Manifest (asInvoker, PMv2 DPI, long paths), icon, fonts, library
   core/types.h         u8..u64, f32/f64, KiB/MiB/GiB
   core/bench.h         BenchParams (+ DiskOptions), BenchLive, BenchResult, Metric, SuiteDesc, BenchDesc, flags
@@ -128,7 +127,7 @@ src/
                        details, Windows state, SPD + timings
   core/sysreport.cpp   System report model -> window / text / TOON
   core/disk_health.*, ata.*, nvme_dev.*, scsi_pt.*, csmi.*, smart_attr.*, health_store.*, physdisk.*
-                       Drive health: SMART / NVMe logs over every transport, status rules, history
+                       Drive health: SMART / NVMe logs over every transport, status rules, text report
   core/compare.*, baseline.*   Compare window model, CLI --compare baseline
   core/score.*, runfile.*, history.*, integrity.*, report.*   Score v1, flat run reader, run history,
                        integrity hash, HTML report
@@ -155,7 +154,6 @@ src/
   gpu/gpu_present*.cpp On-screen mode: benchmark window, flip-model swapchains
   gpu/shaders/*.hlsl (+ coopmat.comp)
   stability/           Stability tester: controller + report, cpu / mem / disk / gpu (D3D12) tests, stab.hlsl
-  frames/frame_capture.*   ETW present-event capture and analysis
 tools/pack_library.cpp, site_library.py, serve_site.ps1, make_icon.ps1
 third_party/imgui/
 docs/PLAN.md, FUTURE.md, notes/
@@ -376,14 +374,14 @@ Debug builds enable the Vulkan validation layer and the D3D12 debug layer.
 
 ### 6.4 Disk (CrystalDiskMark-style)
 
-Default profile mirrors CDM 8 "Default":
+The default rows mirror CDM 8 "Default":
 | Test | Block | Queue depth | Threads |
 |---|---|---|---|
 | SEQ1M Q8T1 read / write | 1 MiB | 8 | 1 |
 | SEQ1M Q1T1 read / write | 1 MiB | 1 | 1 |
 | RND4K Q32T1 read / write | 4 KiB | 32 | 1 |
 | RND4K Q1T1 read / write | 4 KiB | 1 | 1 |
-Optional NVMe profile extras: SEQ128K Q32T1, RND4K Q32T16. Optional mixed 70/30.
+Optional NVMe extras (off by default): SEQ128K Q32T1, RND4K Q32T16. Mixed 70/30 via the "mix" mode.
 
 Metrics: MB/s (decimal, like CDM), IOPS, average latency (µs). 5 passes × ~5 s, interval between
 passes, report best (CDM default).
@@ -408,11 +406,12 @@ Implementation:
 
 Added in M8: p50 / p90 / p99 / p99.9 / p99.99 / max latency per pass type in every engine-based test; QD1
 latency (`disk.lat.read` / `write` / `flush`, flush and FUA), `disk.lat.hist` (distribution series),
-`disk.lat.load`, `disk.lat.wake`; sweeps `disk.sweep.qd` / `block` / `compress`; `disk.custom1..4`;
+`disk.lat.load`, `disk.lat.wake`; sweeps `disk.sweep.qd` / `block` / `compress`;
 `disk.fs.meta`, `disk.files.copy`, `disk.recovery`; `disk.sustained.write` and raw-device `disk.raw.span` /
-`scan` / `seek` (admin, read-only handle). Modes rw / read / write / mix, test data random / zero, folder
-target, buffered option, CDM profiles as selections. `BENCH_CONFIRM` tests (sustained write, surface scan)
-ask first and are never in presets.
+`scan` / `seek` (admin, read-only handle). Modes rw / read / write / mix, folder target, buffered option.
+`BENCH_CONFIRM` tests (sustained write, surface scan) ask first and are never in presets. Custom rows
+(`disk.custom1..4`), CDM profiles and the all-zero test data were removed in the 2026-11-11 trim: tests
+always write random data.
 
 ## 7. System info & warnings
 
@@ -491,14 +490,15 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   [disk-health](notes/disk-health.md)). Benchmark: `disk/disk_bench.cpp` split into `disk/*.cpp` around one
   overlapped I/O engine (`disk_io.cpp`) with a per-thread log-bucket latency histogram (p50..max in every
   test); QD1 / flush / FUA latency, latency under load, wake-up latency, histogram series, QD / block /
-  compressibility sweeps, custom rows, mixed mode, CDM profiles, metadata and copy workloads, TRIM / idle
+  compressibility sweeps, mixed mode, metadata and copy workloads, TRIM / idle
   recovery, sustained write / SLC, raw-device span / surface scan / seek; folder target, buffered option,
   `BenchParams::disk` (`DiskOptions`), `BENCH_CONFIRM`. Health (CrystalDiskInfo parity): SMART table with
   vendor names (`core/ata.*`, `smart_attr.*`), NVMe logs / features / self-test (`nvme_dev.*`), USB bridges
-  (`scsi_pt.*`), CSMI RAID members (`csmi.*`), status rules + thresholds, history + endurance projection
-  (`health_store.*`), rewritten window, text report, CLI `--health`. **Untested:** raw-device tests and
-  self-test start (need admin), every ATA / USB / CSMI path (no such hardware; ATA checked with a synthetic
-  sector), AAM / APM (never applied), sustained write past the SLC cache (verified at 2 GiB).
+  (`scsi_pt.*`), CSMI RAID members (`csmi.*`), status rules, rewritten window, text report, CLI `--health`.
+  Removed again in the 2026-11-11 trim: custom rows, CDM profiles, zero test data, health history / endurance
+  projection, per-drive thresholds, AAM / APM. **Untested:** raw-device tests and self-test start (need
+  admin), every ATA / USB / CSMI path (no such hardware; ATA checked with a synthetic sector), sustained
+  write past the SLC cache (verified at 2 GiB).
 - **M9 Stability** — ✅ done 2026-11-11 on `dev` ([stability](notes/stability.md)): separate tool
   (`src/stability/`, window `--tool stability`, CLI `--stress`), tests `cpu`, `cores` (CoreCycler-style),
   `cache`, `mem`, `vram`, `gpu` (D3D12 compute + render with known answers), `power` (unchecked max load),
@@ -521,10 +521,11 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   FFT, n-body, rays, AES-GCM / ChaCha20 / CRC32C / xxHash, int8 / BF16, π, instruction table, branch / code
   footprint), all self-verifying; runner-level sustained mode (`sustain_s`, `sustained[]` /
   `sustain_passes[]` TOON tables, per-pass charts) and the Sustained preset. Score v1 (`core/score.*`,
-  `runfile.*`): 5 components, 4 profiles, 11 validity flags, Score preset, Score / Ranking tabs, About page,
-  compare Score group, CLI `--score` / `--score-write`; run history (`core/history.*`, History window),
-  PNG (`app/snapshot.*`) and HTML report (`core/report.*`, `--html`), `integrity:` block, issue form +
-  `site/results.html` (`tools/site_library.py`). **Untested / open:** `cpu.topo.hybrid` (one efficiency
+  `runfile.*`): 5 components + Overall (the 3 extra profiles were removed in the trim), 11 validity flags,
+  Score preset, Score / Ranking tabs, About page, compare Score group, CLI `--score` / `--score-write`; run
+  history (`core/history.*`, History window), PNG (`app/snapshot.*`; compare: Copy PNG since the trim) and
+  HTML report (`core/report.*`, `--html`), `integrity:` block, issue form + `site/results.html`
+  (`tools/site_library.py`). **Untested / open:** `cpu.topo.hybrid` (one efficiency
   class here), the AVX-VNNI int8 path, score calibration (needs other machines). CPU ST numbers from the
   stream were taken under build load (2–5x low): re-measure on an idle machine.
 - **M12 Breadth** — ✅ done 2026-11-11 on `dev` ([memory-sysinfo](notes/memory-sysinfo.md),
@@ -536,10 +537,10 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   `--tool system`, CLI `--sysinfo`). GPU: FP64, dp4a, cooperative matrix (Vulkan), atomics, memory
   hierarchy, PSO cold / cached, texture formats / aniso (`gpu_*_ext/memory/pso/texture.cpp`), several
   adapters per run (`gpu_multi.cpp`), feature tests (`gpu_*_features.cpp`), on-screen present mode
-  (`gpu_present*.cpp`), frame capture of other apps (`src/frames/`, `--tool frames`, `--capture`). Sensors:
-  battery, EMI power rails, channel list with min / max / avg, sensor log (`--log-sensors`), overlay
-  (`core/battery.*`, `emi.*`, `app/overlay.*`). **Untested:** live frame capture (needs admin),
-  `mem.lat.pages` (needs SeLockMemoryPrivilege), D3D12 debug layer (not installed). **Not done:** GPU memory
+  (`gpu_present*.cpp`); frame capture of other apps was built too and removed in the trim. Sensors:
+  battery, EMI power rails, channel list with min / max / avg, sensor log (`--log-sensors`, CSV), overlay
+  (`core/battery.*`, `emi.*`, `app/overlay.*`). **Untested:** `mem.lat.pages` (needs SeLockMemoryPrivilege),
+  D3D12 debug layer (not installed). **Not done:** GPU memory
   type / bus width. Wired at merge time: GPU suite setup queries the GPU API details (ReBAR, feature tiers),
   the run monitor records EMI package power (`env[].cpu_pkg_w`) and WHEA events (`env[].whea`), the stability
   CPU limit uses PawnIO's temperature when present.
@@ -626,32 +627,53 @@ were ~130 GB) — use 1 pass and a shorter duration for frequent runs.
 Waiting on the user (2026-11-11):
 - **FUTURE.md §0 hardware scope**: which machines beyond this laptop (Intel hybrid, multi-CCD / X3D,
   > 64 LPs, NUMA, non-AVX2, ARM64), and test hardware or volunteers. §12 hardware generality and ARM64 wait.
-- **§0 network**: may anything talk to the network (update check, email alerts)? Today nothing does.
-- **§0 resident mode**: may the GUI stay resident (tray, health / temperature alerts, AAM / APM reapply at
-  boot)?
+- **§0 network**: may anything else talk to the network (update check, email alerts)? The only network
+  access today is the PawnIO "Download & install" button (user request, click-only, §12 trim).
+- **§0 resident mode**: may the GUI stay resident (tray, health / temperature alerts)?
 - **PawnIO SPD page select**: allow one SMBus write to the SPD hub's page register (MR11 on SPD5118, SPA0 /
   SPA1 on DDR4), restored afterwards, to read XMP / EXPO and the DDR5 manufacturing data? (HWiNFO, CPU-Z,
   ZenTimings and Linux `spd5118` do.)
 - **PawnIO module `.bin` files**: ship them (LGPL-2.1 allows it, with COPYING + a README naming the
   release), and if so embedded via `third_party/pawnio/` or as a `pawnio\` folder next to the exe?
-- **Install PawnIO on this PC** to test M10 at all (driver install is the user's call), then map the Hawk
-  Point PM table from an `--adv-report` dump. Also: may SMBus DIMM polling run during stability runs?
-- **Frame capture needs admin** to test live (ETW `StartTraceW` is denied otherwise); likewise the raw-device
-  disk tests and drive self-tests.
+- **Install PawnIO on this PC** to test M10 at all (driver install is the user's call; Settings > Download &
+  install now does it), then map the Hawk Point PM table from an `--adv-report` dump. Also: may SMBus DIMM polling run during stability runs?
+- **Admin needed** to test the raw-device disk tests and drive self-tests live.
 - **Score calibration needs other machines' data**: real-task timings + Score-preset runs from 8–15
   machines (issue form) before the weights can be fitted and "preliminary" dropped.
 
 ## 12. Decision log
 
+- 2026-11-11 (trim): features cut, UI reworked (details in [notes/](notes/), marked "Removed 2026-11-11 (trim)"):
+  - Disk health: History and "Thresholds & features" tabs gone (health samples, plots, endurance projection,
+    per-drive thresholds, AAM / APM). Fixed CrystalDiskInfo-style Caution limits: any reallocated / pending /
+    uncorrectable sector or NVMe media error, or ≤ 10 % life left. `health_store.*` keeps only `[ui] hide_serial`.
+  - Disk benchmark: no custom rows (`disk.custom1..4`, `--disk-custom`, ini `disk_custom1..4`,
+    `params.disk_custom`), no CDM profiles (`--disk-profile`, GUI combo), no test-data choice (`--disk-data`,
+    ini / `params.disk_data`): tests always write random data. The compressibility sweep stays.
+  - Frame capture removed (ETW, Frames window, `--capture`, `--capture-etl`, `--capture-selftest`, compare
+    frame graph); compare accepts only `kind: benchmark` (or no kind). The GPU on-screen present mode stays.
+  - Compare: Save PNG → Copy PNG (clipboard: PNG + DIB); the Score tab keeps Save PNG (file).
+  - Score: Gaming / Creator / Everyday profiles removed; Overall (30/20/15/20/15) and the five components
+    unchanged, still v1. `score:` no longer writes `profiles[]`; older files with it read fine.
+  - Sensors: log is CSV only (`--log-sensors` keeps the given name); search box on Overview / Sensors (Ctrl+F,
+    Esc; dev flag `--sensor-filter`); CPU package / per-core rails in the CPU section (and right after the CPU
+    clocks in channel / CSV order), Power keeps battery and non-CPU rails.
+  - UI: Benchmark settings window (`--tool bench`, sliders button next to Run) holds the preset-driven values
+    (duration, repeat, sustained mode, disk file size, passes, interval); Settings (gear) keeps the rest; same
+    ini keys. GPU combo: theme checkboxes, compact popup, VRAM column (`--open-gpu-combo`). Base font 15 → 16.5 px.
+  - PawnIO "Download & install" (user request): `URLDownloadToFileW` of the PawnIO.Setup latest-release
+    `PawnIO_setup.exe` to %TEMP%, Authenticode check (signer "namazso"), run (UAC from its manifest), delete,
+    re-detect. The app's first network access, only on that click; `--adv-report` prints the installer URL.
 - 2026-11-11 (M11 score v1, [notes](notes/score-results.md)):
   - ratio = value / ref (ref / value when lower is better); component = 1000 · weighted geometric mean of
-    its input ratios; profile (Overall / Gaming / Creator / Everyday) = weighted geometric mean of the
-    components. Inputs, weights and references are one static table per version (`s_v1_inputs`,
-    `core/score.cpp`), so adding library runs never changes a score; a new version is a new table and scores
-    of different versions are never compared (the version is stored with every score).
-  - Reference = the library run `2026-11-11_r7-250_rtx5060-laptop` = 1000 in every component and profile.
+    its input ratios; Overall = weighted geometric mean of the components (30/20/15/20/15; the Gaming /
+    Creator / Everyday profiles were removed in the trim). Inputs, weights and references are one static
+    table per version (`s_v1_inputs`, `core/score.cpp`), so adding library runs never changes a score; a new
+    version is a new table and scores of different versions are never compared (the version is stored with
+    every score).
+  - Reference = the library run `2026-11-11_r7-250_rtx5060-laptop` = 1000 in every component and Overall.
     GPU inputs take the better of Vulkan / D3D12; storage uses C: (else the first tested drive). Missing
-    inputs: component from what ran (coverage shown), no Overall / profiles.
+    inputs: component from what ran (coverage shown), no Overall.
   - Labelled **preliminary** (UI, CLI, TOON `status`, website) until calibrated against real-task timings
     (method in the notes, §11). Validity problems are 11 flags shown next to the score, never hidden.
   - `score:` block at the end of every results file (derived, recomputed by every reader; `--score-write`
@@ -661,7 +683,8 @@ Waiting on the user (2026-11-11):
 - 2026-11-11 (M10 PawnIO, [notes](notes/pawnio.md)):
   - License: our client is an independent program talking to the driver only through `DeviceIoControl`,
     which the driver's GPL-2.0 special exception allows; we don't use PawnIOLib (LGPL) and never ship or
-    install the driver (users get it from pawnio.eu). The signed module `.bin` files are LGPL-2.1 and may be
+    install the driver (users get it from pawnio.eu; since the trim, Settings' Download & install fetches and
+    starts the official signed installer on the user's click). The signed module `.bin` files are LGPL-2.1 and may be
     shipped unmodified with COPYING + a README naming the release (as LibreHardwareMonitor does); not shipped
     yet (§11). Not legal advice.
   - HVCI: no official statement; very likely compatible (in-driver bytecode interpreter, no code generation;
@@ -685,9 +708,9 @@ Waiting on the user (2026-11-11):
   failure on any adapter fails the test, a skip on all skips it. ini `gpus=A;B`, TOON `params.gpus: A + B`
   only when several.
 - 2026-11-11 (file kinds): non-benchmark TOON files carry a top-level `kind:` — `stability` (stability
-  report), `frames` (frame capture, same layout as a run so the compare window loads it), `sensor-log`.
-  Benchmark results have no `kind` (= `benchmark`). The compare window accepts `benchmark` and `frames`
-  only; History skips any other kind.
+  report). Benchmark results have no `kind` (= `benchmark`). The compare window accepts `benchmark` only;
+  History skips any other kind. (`frames` and `sensor-log` went with frame capture and the TOON sensor log
+  in the trim.)
 - 2026-11-11 (M8 disk):
   - `BENCH_CONFIRM` flag for heavy tests (sustained write, surface scan): the GUI asks first with a dialog
     listing them, the CLI drops them unless `--yes`, presets (Extended included) never select them.
@@ -699,12 +722,11 @@ Waiting on the user (2026-11-11):
     needs a privilege and exposes stale data).
   - The test file is held without `FILE_SHARE_DELETE`: POSIX-semantics `DeleteFileW` let a second instance's
     stale-file cleanup unlink it under a running test.
-  - Raw-device tests open `\\.\PhysicalDriveN` with `GENERIC_READ` only. CDM profiles are test selections;
-    the display unit only changes the GUI, files keep every number.
-  - Health: status rules CDI-like (Bad / Caution with per-drive thresholds in `health\health.ini`);
-    self-tests and AAM / APM only from a button + confirmation, admin only; history sample when ≥ 1 h old or
-    a wear / error counter changed; drive key = model + FNV-1a of model|serial (the serial never appears in
-    a file name); USB vendor CDBs only for their own VID, SAT for the rest.
+  - Raw-device tests open `\\.\PhysicalDriveN` with `GENERIC_READ` only. The display unit only changes the
+    GUI, files keep every number.
+  - Health: status rules CDI-like (Bad / Caution; fixed limits since the trim, which dropped the per-drive
+    thresholds, AAM / APM and history); self-tests only from a button + confirmation, admin only; USB vendor
+    CDBs only for their own VID, SAT for the rest.
 - 2026-11-11 (M9 stability): own tool, no shared path with the runner; GPU tests D3D12 only. Workers at
   normal priority (HIGHEST starves the OS sensor threads, below-normal starved under other load), 1 Hz
   monitor at HIGHEST. Verdict `fail` also on any WHEA event during the run (corrected ones included). Memory
@@ -716,8 +738,8 @@ Waiting on the user (2026-11-11):
   copy into a flip-model swapchain, vsync off with tearing; frame time stays present-to-present, plus
   displayed-frame stats (D3D12 frame statistics on vblank change, Vulkan present_wait). The benchmark window
   lives on the worker thread; closing it fails that test. Offscreen stays the mode for throughput numbers.
-- 2026-11-11 (M12 frame capture): ETW real-time session with the DXGI and DxgKrnl manifest providers,
-  filtered to their present event ids, payloads decoded by offset (no TDH); frame time = Present_Start
+- 2026-11-11 (M12 frame capture, removed again in the trim): ETW real-time session with the DXGI and
+  DxgKrnl manifest providers, filtered to their present event ids, payloads decoded by offset (no TDH); frame time = Present_Start
   delta (PresentMon's MsBetweenPresents); no displayed-frame reconstruction. Needs admin or Performance Log
   Users.
 - 2026-11-11 (M12 system details): three cost tiers — `g_cpux` at startup, `g_dev` (PnP walk) lazily,
@@ -987,7 +1009,8 @@ load; details and full tables in [notes/](notes/)):
   capping on-screen runs near 1400–1700 fps. D3D12 frame statistics must be logged on `SyncQPCTime` change
   (per-present logging gave "95 % displayed"); NVIDIA present_wait completes ~3 ms after the call, not at
   scan-out.
-- ETW: `StartTraceW` returns ERROR_ACCESS_DENIED without admin or Performance Log Users.
+- ETW (frame capture, removed in the trim): `StartTraceW` returns ERROR_ACCESS_DENIED without admin or
+  Performance Log Users.
 - Battery: design 60 Wh, full 60 Wh, 59 cycles; −20.5 W at desktop load on battery; on AC at 42 % it reports
   charging at 0 W (conservation mode). EMI: 9 meters (package + 8 cores) readable without admin; package
   holds ~39 W under all-core load on AC (platform limit).
