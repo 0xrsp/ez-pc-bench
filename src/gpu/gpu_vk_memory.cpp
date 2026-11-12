@@ -75,12 +75,13 @@ static void latency_test(VkCtx* v, const BenchParams* p, BenchLive* live, BenchR
     bool gpu_ok = true;
     for (u32 i = 0; i < count && gpu_ok && !cancel->load(std::memory_order_relaxed); ++i) {
         const u32 lines = (u32)(sizes[i] / GE_CHASE_STRIDE);
+        const u32 mask = (u32)(sizes[i] - 1) & ~(GE_CHASE_STRIDE - 1);    // keeps the carried position in range
         gpu_ext_make_chain(next, lines);
         memcpy(r.buf[1].map, next, (u64)lines * 4);     // MEM_UPLOAD is host-coherent
         const VkxDispatch init = { &r.pipe[1], init_set, { { lines, GE_CHASE_STRIDE, 0, 0 }, {} }, (lines + 255) / 256, 1 };
         // Walk part of the chain once (fills caches / TLBs), then probe the latency with 4096 steps.
         const u32 warm_steps = (lines < (1u << 18) ? lines : (1u << 18)) / 4 * 4 + 4;
-        VkxDispatch d = { &r.pipe[0], chase_set, { { warm_steps, 0, 0, 0 }, {} }, 1, 1 };
+        VkxDispatch d = { &r.pipe[0], chase_set, { { warm_steps, 0, mask, 0 }, {} }, 1, 1 };
         gpu_ok = vkx_once(v, &init) && vkx_once(v, &d);
         d.pc.u[0] = 4096;
         if (gpu_ok) gpu_ok = vkx_timed(v, &d, 0.0, 1e-9, 0.0, "Pointer chase", "ns", 1.0, live, cancel, 0, 0, s_ms, 1) == 1;
@@ -89,7 +90,7 @@ static void latency_test(VkCtx* v, const BenchParams* p, BenchLive* live, BenchR
         f64 steps = GE_CHASE_TARGET_MS * 1e6 / (probe_ns > 1.0 ? probe_ns : 1.0);
         steps = steps < 1024 ? 1024 : steps > (1 << 22) ? (1 << 22) : steps;
         d.pc.u[0] = (u32)steps / 4 * 4;
-        const i32 n = vkx_timed(v, &d, 0.0, seconds, 0.0, "Pointer chase", "ns", 1.0, live, cancel,
+        const i32 n = vkx_timed(v, &d, i == 0 ? gpu_warmup_seconds(p) : 0.0, seconds, 0.0, "Pointer chase", "ns", 1.0, live, cancel,
                                 (f32)i / count, (f32)(i + 1) / count, s_ms, MAX_TIMES);
         if (n < 0) { gpu_ok = false; break; }
         f64 total = 0.0;

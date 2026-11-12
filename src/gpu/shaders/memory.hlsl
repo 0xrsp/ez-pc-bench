@@ -4,18 +4,20 @@
 ByteAddressBuffer src : register(t0);
 RWByteAddressBuffer dst : register(u0);
 
-// One thread follows the chain; every element holds the byte offset of the next one.
-// pc.u.x = steps (multiple of 4), pc.u.y = start offset.
+// One thread follows the chain; every element holds the byte offset of the next one. Each dispatch continues
+// where the previous one stopped (position kept in dst[0], masked into the current working set), so the walk
+// covers the whole set instead of re-reading the first steps * stride bytes.
+// pc.u.x = steps (multiple of 4), pc.u.z = (working set - 1) & ~(stride - 1).
 [numthreads(1, 1, 1)]
 void cs_chase(uint tid : SV_DispatchThreadID) {
-    uint p = pc.u.y;
+    uint p = dst.Load(0) & pc.u.z;
     for (uint i = 0; i < pc.u.x; i += 4) {
         p = src.Load(p);
         p = src.Load(p);
         p = src.Load(p);
         p = src.Load(p);
     }
-    if (p == 0xFFFFFFFFu) dst.Store(0, p);
+    dst.Store(0, p);
 }
 
 // Builds the chain from the compact successor list in t0: element i (at i * stride) = next[i] * stride.

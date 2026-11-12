@@ -1,7 +1,7 @@
 // D3D12 pipeline creation (gpu_ext.h): compute and graphics PSOs per second, cold vs cached.
 // Cold: every PSO gets shaders the driver has never seen. D3D12 has no specialization constants, so each
-// pipeline uses a copy of the DXIL container whose shader-hash part ("HASH", the identity drivers and tools
-// key on) carries a new seed; the container checksum the runtime verifies is then recomputed.
+// pipeline uses a copy of the DXIL container with a new SEED literal in the bitcode (see "unique shaders");
+// the container checksum the runtime verifies is then recomputed.
 // Cached: the same PSOs loaded from an ID3D12PipelineLibrary that the cold pass stored them in, serialized and
 // reopened like on the next game start.
 #include "gpu/gpu_d3d12_ext.h"
@@ -81,25 +81,66 @@ static bool container_ok(const u8* c, u32 size) {
     return memcmp(digest, c + 4, 16) == 0;
 }
 
-// Copies the container, puts `seed` into its HASH part's digest and recomputes the container checksum.
-static bool make_unique(const u8* src, u32 size, u8* dst, u64 seed) {
+// ---- unique shaders ------------------------------------------------------------------------------------
+// pso.hlsl uses SEED = PSO_SEED only as an xor operand, so the DXIL bitcode holds it as one integer constant
+// record: LLVM writes it sign-rotated (v << 1) as VBR8 (7 data bits + continue bit per 8-bit field, fields LSB
+// first). Any replacement in [2^30, 2^31) has the same 5-field length, so the bitstream stays valid. Changing the
+// HASH part (shader identity) and the container digest alone was not enough: NVIDIA's driver still served those
+// PSOs from its cache (~1 ms instead of ~35 ms).
+
+constexpr u32 PSO_SEED = 0x5EED1234u;
+constexpr u32 VBR8_BITS = 40;
+
+static void vbr8_bits(u32 v, u8 bits[VBR8_BITS]) {
+    u64 x = (u64)v << 1;
+    for (u32 f = 0; f < 5; ++f, x >>= 7) {
+        const u32 field = (u32)(x & 0x7F) | (f < 4 ? 0x80u : 0u);
+        for (u32 b = 0; b < 8; ++b) bits[f * 8 + b] = (field >> b) & 1;
+    }
+}
+
+static bool bit_get(const u8* d, u64 i) { return (d[i >> 3] >> (i & 7)) & 1; }
+static void bit_put(u8* d, u64 i, bool v) { d[i >> 3] = (u8)((d[i >> 3] & ~(1u << (i & 7))) | ((u32)v << (i & 7))); }
+
+// Bit offset (from the container start) of the SEED literal in the DXIL part, or 0 when not found exactly once.
+static u64 find_seed(const u8* c, u32 size) {
+    u32 parts;
+    memcpy(&parts, c + 28, 4);
+    u8 pat[VBR8_BITS];
+    vbr8_bits(PSO_SEED, pat);
+    u64 found = 0;
+    u32 hits = 0;
+    for (u32 i = 0; i < parts && 32 + i * 4 + 4 <= size; ++i) {
+        u32 off, len;
+        memcpy(&off, c + 32 + i * 4, 4);
+        if (off + 8 > size || memcmp(c + off, "DXIL", 4)) continue;
+        memcpy(&len, c + off + 4, 4);
+        const u64 begin = (u64)(off + 8) * 8, end = (u64)(off + 8 + (len < size - off - 8 ? len : size - off - 8)) * 8;
+        for (u64 s = begin; s + VBR8_BITS <= end; ++s) {
+            u32 k = 0;
+            while (k < VBR8_BITS && bit_get(c, s + k) == pat[k]) ++k;
+            if (k == VBR8_BITS) { found = s; ++hits; }
+        }
+    }
+    return hits == 1 ? found : 0;
+}
+
+// Copies the container with a new SEED literal (from `seed`), marks its HASH part and recomputes the checksum.
+static void make_unique(const u8* src, u32 size, u64 seed_bit, u8* dst, u64 seed) {
     memcpy(dst, src, size);
+    u8 bits[VBR8_BITS];
+    vbr8_bits(0x40000000u | (u32)(seed & 0x3FFFFFFFu), bits);
+    for (u32 k = 0; k < VBR8_BITS; ++k) bit_put(dst, seed_bit + k, bits[k]);
     u32 parts;
     memcpy(&parts, dst + 28, 4);
-    bool patched = false;
     for (u32 i = 0; i < parts && 32 + i * 4 + 4 <= size; ++i) {
         u32 off;
         memcpy(&off, dst + 32 + i * 4, 4);
-        if (off + 8 + 20 <= size && !memcmp(dst + off, "HASH", 4)) {
-            memcpy(dst + off + 8 + 4, &seed, 8);       // after the flags word
-            patched = true;
-        }
+        if (off + 8 + 20 <= size && !memcmp(dst + off, "HASH", 4)) memcpy(dst + off + 8 + 4, &seed, 8);    // after the flags
     }
-    if (!patched) return false;
     u32 digest[4];
     container_digest(dst + 20, size - 20, digest);
     memcpy(dst + 4, digest, 16);
-    return true;
 }
 
 // ---- test ------------------------------------------------------------------------------------------------
@@ -196,8 +237,10 @@ static PassResult run_pass(D3d* d, PsoCtx* c, bool graphics, ID3D12PipelineLibra
 }
 
 void d3x_pso_test(D3d* d, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {
-    if (!container_ok(g_cs_pso_dxil, sizeof(g_cs_pso_dxil))) {
-        res_fail(out, "DXIL container checksum mismatch (can't make unique shaders)");
+    const u64 seed_bit[3] = { find_seed(g_cs_pso_dxil, sizeof(g_cs_pso_dxil)), find_seed(g_vs_pso_dxil, sizeof(g_vs_pso_dxil)),
+                              find_seed(g_ps_pso_dxil, sizeof(g_ps_pso_dxil)) };
+    if (!container_ok(g_cs_pso_dxil, sizeof(g_cs_pso_dxil)) || !seed_bit[0] || !seed_bit[1] || !seed_bit[2]) {
+        res_fail(out, "unexpected DXIL layout (checksum or SEED literal), can't make unique shaders");
         return;
     }
     ID3D12Device1* dev1 = nullptr;
@@ -220,11 +263,11 @@ void d3x_pso_test(D3d* d, const BenchParams* p, BenchLive* live, BenchResult* ou
     PassResult res[2][2] = {};     // [compute, graphics][cold, cached]
     bool no_library = false;
     for (u32 g = 0; g < 2 && ok && !no_library && !cancel->load(std::memory_order_relaxed); ++g) {
-        for (u32 i = 0; i < GE_PSO_MAX && ok; ++i) {
+        for (u32 i = 0; i < GE_PSO_MAX; ++i) {
             const u64 seed = gpu_ext_pso_seed();
-            ok = make_unique(g_cs_pso_dxil, sizeof(g_cs_pso_dxil), (u8*)blob(c, i, 0), seed) &&
-                 make_unique(g_vs_pso_dxil, sizeof(g_vs_pso_dxil), (u8*)blob(c, i, 1), seed) &&
-                 make_unique(g_ps_pso_dxil, sizeof(g_ps_pso_dxil), (u8*)blob(c, i, 2), seed);
+            make_unique(g_cs_pso_dxil, sizeof(g_cs_pso_dxil), seed_bit[0], (u8*)blob(c, i, 0), seed);
+            make_unique(g_vs_pso_dxil, sizeof(g_vs_pso_dxil), seed_bit[1], (u8*)blob(c, i, 1), seed);
+            make_unique(g_ps_pso_dxil, sizeof(g_ps_pso_dxil), seed_bit[2], (u8*)blob(c, i, 2), seed);
         }
         ID3D12PipelineLibrary* lib = nullptr;
         if (!ok) break;

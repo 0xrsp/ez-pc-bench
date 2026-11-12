@@ -70,13 +70,14 @@ static void latency_test(D3d* d, const BenchParams* p, BenchLive* live, BenchRes
     bool gpu_ok = true;
     for (u32 i = 0; i < count && !cancel->load(std::memory_order_relaxed); ++i) {
         const u32 lines = (u32)(sizes[i] / GE_CHASE_STRIDE);
+        const u32 mask = (u32)(sizes[i] - 1) & ~(GE_CHASE_STRIDE - 1);    // keeps the carried position in range
         gpu_ext_make_chain(next, lines);
         memcpy(mapped, next, (u64)lines * 4);
         const D3xDispatch init = { r.root, r.pso[1], init_set, { { lines, GE_CHASE_STRIDE, 0, 0 }, {} }, (lines + 255) / 256, 1 };
         d3x_once(d, &init);
         // Walk part of the chain once (fills caches / TLBs), then probe the latency with 4096 steps.
         const u32 warm_steps = (lines < (1u << 18) ? lines : (1u << 18)) / 4 * 4 + 4;
-        D3xDispatch dp = { r.root, r.pso[0], chase_set, { { warm_steps, 0, 0, 0 }, {} }, 1, 1 };
+        D3xDispatch dp = { r.root, r.pso[0], chase_set, { { warm_steps, 0, mask, 0 }, {} }, 1, 1 };
         d3x_once(d, &dp);
         dp.pc.u[0] = 4096;
         if (d3x_timed(d, &dp, 0.0, 1e-9, 0.0, "Pointer chase", "ns", 1.0, live, cancel, 0, 0, s_ms, 1) != 1) {
@@ -87,7 +88,7 @@ static void latency_test(D3d* d, const BenchParams* p, BenchLive* live, BenchRes
         f64 steps = GE_CHASE_TARGET_MS * 1e6 / (probe_ns > 1.0 ? probe_ns : 1.0);
         steps = steps < 1024 ? 1024 : steps > (1 << 22) ? (1 << 22) : steps;
         dp.pc.u[0] = (u32)steps / 4 * 4;
-        const i32 n = d3x_timed(d, &dp, 0.0, seconds, 0.0, "Pointer chase", "ns", 1.0, live, cancel, (f32)i / count,
+        const i32 n = d3x_timed(d, &dp, i == 0 ? gpu_warmup_seconds(p) : 0.0, seconds, 0.0, "Pointer chase", "ns", 1.0, live, cancel, (f32)i / count,
                                 (f32)(i + 1) / count, s_ms, MAX_TIMES);
         if (n < 0) { gpu_ok = false; break; }
         f64 total = 0.0;

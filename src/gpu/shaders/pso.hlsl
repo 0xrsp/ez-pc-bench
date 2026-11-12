@@ -1,12 +1,13 @@
 // Pipeline-creation test: game-like vertex / pixel shaders and a compute shader of typical size. The test only
 // creates pipelines from them (never draws). Every pipeline must be new to the driver's caches: Vulkan varies
-// the SEED specialization constant, D3D12 varies the shader hash in a copy of the DXIL container (gpu_ext.h).
+// the SEED specialization constant, D3D12 replaces the SEED literal in the DXIL bitcode (gpu_d3d12_pso.cpp).
+// SEED is only used as an xor operand so it stays a single 32-bit literal.
 #include "common.hlsli"
 
 #ifdef __spirv__
-[[vk::constant_id(0)]] const uint SEED = 0;
+[[vk::constant_id(0)]] const uint SEED = 0x5EED1234u;
 #else
-static const uint SEED = 0;
+static const uint SEED = 0x5EED1234u;     // replaced in the bitcode per pipeline (gpu_d3d12_pso.cpp)
 #endif
 
 Texture2D<float4> t_albedo : register(t0);
@@ -61,7 +62,7 @@ VsOut vs_pso(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     o.normal = n;
     const float3 t = normalize(cross(n, float3(0.0f, 1.0f, 0.001f)));
     o.tangent = float4(t, (iid & 1) ? 1.0f : -1.0f);
-    o.uv = float2(phi / (2.0f * PI), theta / PI) * (1.0f + (float)(SEED & 0xFFFFu) * 1e-7f);
+    o.uv = float2(phi / (2.0f * PI), theta / PI) * (1.0f + (float)(hash_u32(iid ^ SEED) & 0xFFu) * 1e-7f);
     o.pos = mul(perspective(1.0f, pc.f.y, 0.1f, 200.0f), float4(o.wpos, 1.0f));
     o.shadow_pos = float4(o.wpos.xy * 0.02f + 0.5f, o.wpos.z * 0.01f, 1.0f);
     return o;
@@ -106,7 +107,7 @@ float4 ps_pso(VsOut i) : SV_Target {
     float3 color = 0.0f;
     [loop] for (uint l = 0; l < LIGHTS; ++l) {
         const float3 lp = float3(sin(l * 1.7f + pc.f.x) * 20.0f, cos(l * 2.3f) * 10.0f, 25.0f + l * 3.0f);
-        const float3 lc = float3(hash01(l * 3u + SEED), hash01(l * 3u + 1u), hash01(l * 3u + 2u)) * 40.0f;
+        const float3 lc = float3(hash01((l * 3u) ^ SEED), hash01(l * 3u + 1u), hash01(l * 3u + 2u)) * 40.0f;
         const float3 d = lp - i.wpos;
         const float dist2 = dot(d, d);
         const float3 ld = d * rsqrt(dist2);
