@@ -22,7 +22,8 @@ static void print_usage() {
         "  --compare <file>       Show the change against a saved results file\n"
         "  --duration <ms>        Measured duration per phase (default 3000)\n"
         "  --threads <n>          Thread count for MT tests (default: all logical)\n"
-        "  --gpu <index>          GPU adapter index (default 0 = most powerful)\n"
+        "  --gpu <index>          GPU adapter index (default 0 = most powerful); a list (0,1) runs the GPU\n"
+        "                         suites on each adapter, metrics prefixed with the adapter's short name\n"
         "  --disk-drives <list>   Disk test target drive(s), e.g. C or C,D (default C)\n"
         "  --disk-size <MiB>      Disk test file size (default 1024)\n"
         "  --passes <n>           Disk passes (default 3)\n"
@@ -218,7 +219,21 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--threads") && has_val) { params.thread_count = (u32)atoi(val); ++i; }
-        else if (!wcscmp(a, L"--gpu") && has_val) { params.gpu_adapter = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--gpu") && has_val) {     // "1" or "0,1"
+            u32 mask = 0;
+            for (const char* c = val; *c;) {
+                if (*c < '0' || *c > '9') { ++c; continue; }
+                char* end;
+                const u32 idx = (u32)strtoul(c, &end, 10);
+                if (idx < 32) mask |= 1u << idx;
+                c = end;
+            }
+            if (mask) {
+                params.gpu_adapter = (u32)__builtin_ctz(mask);
+                params.gpu_adapters = (mask & (mask - 1)) ? mask : 0;
+            }
+            ++i;
+        }
         else if (!wcscmp(a, L"--disk-drives") && has_val) {
             params.disk_drives = 0;
             for (const char* d = val; *d; ++d)

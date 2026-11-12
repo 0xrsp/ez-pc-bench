@@ -84,6 +84,21 @@ void settings_load(BenchParams* p, bool* selected) {
             for (u32 i = 0; i < g_sys.gpu_count; ++i)
                 if (!strcmp(g_sys.gpus[i].name, name)) p->gpu_adapter = i;
         }
+        if (read_str(L"gpus", w, ARRAY_COUNT(w))) {    // several adapters: names separated by ';'
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
+            u32 mask = 0;
+            for (char* tok = name; tok && *tok;) {
+                char* sep = strchr(tok, ';');
+                if (sep) *sep = 0;
+                for (u32 i = 0; i < g_sys.gpu_count && i < 32; ++i)
+                    if (!strcmp(g_sys.gpus[i].name, tok)) mask |= 1u << i;
+                tok = sep ? sep + 1 : nullptr;
+            }
+            if (mask & (mask - 1)) {
+                p->gpu_adapters = mask;
+                p->gpu_adapter = (u32)__builtin_ctz(mask);
+            }
+        }
         p->gpu_width = read_u32(L"gpu_width", p->gpu_width, 64, 16384);
         p->gpu_height = read_u32(L"gpu_height", p->gpu_height, 64, 16384);
         p->gpu_fullscreen = read_u32(L"gpu_fullscreen", p->gpu_fullscreen, 0, 1) != 0;
@@ -126,7 +141,7 @@ static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
 static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
     return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
-           x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
+           x->gpu_adapter == y->gpu_adapter && x->gpu_adapters == y->gpu_adapters && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
            x->disk_write_through == y->disk_write_through && x->repeat == y->repeat && !memcmp(a->selected, b->selected, g_bench_count);
@@ -162,6 +177,16 @@ static void write_all(const Snapshot* cur) {
         wchar_t gpu[256];
         MultiByteToWideChar(CP_UTF8, 0, g_sys.gpus[p->gpu_adapter].name, -1, gpu, ARRAY_COUNT(gpu));
         sec_add(&s, L"gpu=%s", gpu);
+    }
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {
+        wchar_t gpus[512] = {};
+        for (u32 i = 0, n = 0; i < g_sys.gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                if (n++) wcscat_s(gpus, L";");
+                const size_t len = wcslen(gpus);
+                MultiByteToWideChar(CP_UTF8, 0, g_sys.gpus[i].name, -1, gpus + len, (int)(ARRAY_COUNT(gpus) - len));
+            }
+        sec_add(&s, L"gpus=%s", gpus);
     }
     sec_add(&s, L"gpu_width=%u", p->gpu_width);
     sec_add(&s, L"gpu_height=%u", p->gpu_height);

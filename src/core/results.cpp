@@ -226,6 +226,15 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "duration_ms", p->duration_ms);
     toon_num(f, 1, "thread_count", p->thread_count);
     toon_str(f, 1, "gpu", p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "");
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {     // GPU suites ran on several adapters ("A + B")
+        char gpus[512] = "";
+        for (u32 i = 0; i < g_sys.gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                const size_t len = strlen(gpus);
+                snprintf(gpus + len, sizeof(gpus) - len, "%s%s", len ? " + " : "", g_sys.gpus[i].name);
+            }
+        toon_str(f, 1, "gpus", gpus);
+    }
     toon_num(f, 1, "gpu_width", p->gpu_width);
     toon_num(f, 1, "gpu_height", p->gpu_height);
     u32 drives = 0;

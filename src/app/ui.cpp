@@ -255,9 +255,16 @@ static void default_run_name(char* out, u32 size) {
     struct tm t;
     localtime_s(&t, &now);
     const BenchParams* p = &g_run.params;
-    char cpu[48], gpu[48];
+    char cpu[48], gpu[100] = "";
     cpu_short_name(g_sys.cpu.brand, cpu, sizeof(cpu));
-    gpu_short_name(p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "", gpu, sizeof(gpu));
+    const u32 gpus = p->gpu_adapters ? p->gpu_adapters : 1u << p->gpu_adapter;    // several: "a+b"
+    for (u32 i = 0; i < g_sys.gpu_count; ++i)
+        if ((gpus >> i) & 1) {
+            char s[48];
+            gpu_short_name(g_sys.gpus[i].name, s, sizeof(s));
+            const size_t len = strlen(gpu);
+            snprintf(gpu + len, sizeof(gpu) - len, "%s%s", len ? "+" : "", s);
+        }
     snprintf(out, size, "ezbench_%04d%02d%02d_%02d%02d%02d_%s_%s", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
              t.tm_min, t.tm_sec, cpu, gpu);
 }
@@ -356,16 +363,35 @@ static void draw_targets() {
     ImGui::TextDisabled("GPU");
     ImGui::SameLine();
     if (g_sys.gpu_count > 0) {
+        // Multi-select: the GPU suites run on every ticked adapter (BenchParams::gpu_adapters); at least one stays.
         if (p->gpu_adapter >= g_sys.gpu_count) p->gpu_adapter = 0;
-        ImGui::SetNextItemWidth(ImGui::CalcTextSize(g_sys.gpus[p->gpu_adapter].name).x + ImGui::GetFrameHeight() * 2.0f);
-        if (ImGui::BeginCombo("##gpu", g_sys.gpus[p->gpu_adapter].name)) {
+        const u32 valid = g_sys.gpu_count >= 32 ? ~0u : (1u << g_sys.gpu_count) - 1;
+        u32 mask = (p->gpu_adapters & valid) ? (p->gpu_adapters & valid) : 1u << p->gpu_adapter;
+        char preview[256];
+        if (mask & (mask - 1)) {
+            preview[0] = 0;
+            for (u32 i = 0; i < g_sys.gpu_count; ++i)
+                if ((mask >> i) & 1) {
+                    const size_t len = strlen(preview);
+                    snprintf(preview + len, sizeof(preview) - len, "%s%s", len ? " + " : "", g_sys.gpus[i].name);
+                }
+        } else {
+            snprintf(preview, sizeof(preview), "%s", g_sys.gpus[p->gpu_adapter].name);
+        }
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview).x + ImGui::GetFrameHeight() * 2.0f);
+        if (ImGui::BeginCombo("##gpu", preview)) {
             for (u32 i = 0; i < g_sys.gpu_count; ++i) {
                 char label[192];
                 snprintf(label, sizeof(label), "%s  (%llu MiB)", g_sys.gpus[i].name, g_sys.gpus[i].dedicated_vram / MiB);
-                if (ImGui::Selectable(label, i == p->gpu_adapter)) p->gpu_adapter = i;
+                bool on = (mask >> i) & 1;
+                if (ImGui::Checkbox(label, &on) && (mask ^ (1u << i))) mask ^= 1u << i;
             }
             ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("GPU suites run on every ticked adapter; with several, each result is prefixed with the adapter.");
+        p->gpu_adapter = (u32)__builtin_ctz(mask);
+        p->gpu_adapters = (mask & (mask - 1)) ? mask : 0;
     } else {
         ImGui::TextDisabled("none found");
     }
@@ -787,10 +813,24 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
+// One plot per run of consecutive points with the same metric name (several curves, e.g. one per GPU adapter).
+static void draw_series_curve(const BenchResult* r, const Metric* m, u32 n);
+
 static void draw_series(const BenchResult* r) {
-    static f32 ys[1024];
     const Metric* m = res_metrics(r);
-    const u32 n = r->count < 1024 ? r->count : 1024;
+    for (u32 k = 0; k < r->count;) {
+        u32 n = 1;
+        while (k + n < r->count && !strcmp(m[k + n].name, m[k].name)) ++n;
+        ImGui::PushID((int)k);
+        draw_series_curve(r, m + k, n);
+        ImGui::PopID();
+        k += n;
+    }
+}
+
+static void draw_series_curve(const BenchResult* r, const Metric* m, u32 n) {
+    static f32 ys[1024];
+    n = n < 1024 ? n : 1024;
     f32 hi = 0.0f;
     for (u32 k = 0; k < n; ++k) {
         ys[k] = (f32)m[k].value;
@@ -799,7 +839,7 @@ static void draw_series(const BenchResult* r) {
     char first[32], last[32];
     format_x(first, sizeof(first), m[0].x, r->x_unit);
     format_x(last, sizeof(last), m[n - 1].x, r->x_unit);
-    char overlay[96];
+    char overlay[160];
     snprintf(overlay, sizeof(overlay), "%s [%s] vs %s (%s .. %s)", m[0].name, m[0].unit, r->x_name ? r->x_name : "x",
              first, last);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
