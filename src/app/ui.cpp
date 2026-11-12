@@ -271,12 +271,16 @@ static const char* update_label() {
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
 static bool system_header_row() {
     const f32 h = ImGui::GetFrameHeight(), gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
-    const f32 lead = ImGui::GetFontSize() * 2.0f;           // space between the header and the first button
+    // Space before the first button: a framed CollapsingHeader reaches WindowPadding.x / 2 past its column, so the
+    // visible gap to the header is ItemSpacing.x.
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const f32 lead = (f32)(i32)(st.WindowPadding.x * 0.5f) + st.ItemSpacing.x;
     const char* update = update_label();
     f32 buttons_w = lead;
     for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i)
         buttons_w += theme_icon_button_width(s_tool_buttons[i].label, h) + (i ? gap : 0.0f);
     if (update) buttons_w += gap + theme_icon_button_width(update, h);
+    buttons_w += 2.0f;      // the column clips at its edge: room for the last button's 1 px outline
     bool open = false;
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
     if (ImGui::BeginTable("##system_row", 2)) {
