@@ -3,7 +3,7 @@
 // "About the score" page (formula, weights, version), usable from any window.
 #include "core/score.h"
 
-void score_ui_draw();               // "Score" tab: the current run's score, components and profiles
+void score_ui_draw();               // "Score" tab: the current run's score and components
 void ranking_ui_draw();             // "Ranking" tab: this run against the built-in library, per score or test
 // Call every frame in a window that offers the About page; opens it when *request is set (then clears it).
 void score_ui_about(bool* request);

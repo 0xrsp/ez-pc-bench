@@ -94,11 +94,9 @@ bool report_write_html(const wchar_t* path) {
                    "machine (%s) = 1000 per component. Partial runs get component scores only.</p>\n",
                 g_score.version, g_score.status, g_score.reference_desc);
         table_head(f, "<th>Score</th>");
-        for (u32 p = 0; p < SP_COUNT; ++p) {
-            fprintf(f, "<tr><td>%s%s%s</td>", p == SP_OVERALL ? "<b>" : "", g_score_profile_names[p], p == SP_OVERALL ? "</b>" : "");
-            for (u32 r = 0; r < runs; ++r) score_cell(f, c->runs[r].score.profile[p], false);
-            fputs("</tr>\n", f);
-        }
+        fputs("<tr><td><b>Overall</b></td>", f);
+        for (u32 r = 0; r < runs; ++r) score_cell(f, c->runs[r].score.overall, false);
+        fputs("</tr>\n", f);
         for (u32 k = 0; k < SC_COUNT; ++k) {
             fprintf(f, "<tr><td>%s</td>", g_score_comp_names[k]);
             for (u32 r = 0; r < runs; ++r) score_cell(f, c->runs[r].score.comp[k], false);

@@ -17,7 +17,6 @@
 #include "core/sysinfo.h"
 #include "core/sysinfo_spd.h"
 #include "core/timer.h"
-#include "frames/frame_capture.h"
 #include "core/score.h"
 #include "core/sysinfo.h"
 #include "core/toon.h"
@@ -61,7 +60,6 @@ static void print_usage() {
         "                         (any name); alone for --seconds, with --run / --preset during the run\n"
         "  --interval <ms>        Sensor log interval (default 1000, minimum 100)\n"
         "  --seconds <n>          Length of a sensor log without a run (default 60; Ctrl+C stops early)\n"
-        "                         or of a frame capture (default 20)\n"
         "  --sensors <patterns>   Channels to log, e.g. cpu.*,gpu0.*,bat.* (default: all but per-core;\n"
         "                         'all' = everything)\n"
         "  --list-sensors         List the sensor channel ids with their current values\n"
@@ -77,10 +75,7 @@ static void print_usage() {
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
         "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
-        "  --capture <exe|pid|*>  Frame capture of another application (ETW present events; needs admin):\n"
-        "                         fps, frame times, 1%% / 0.1%% lows. * = the busiest presenting process\n"
-        "  --capture-etl <file>   Analyze present events from a recorded .etl trace instead (--capture = pid)\n"
-        "  --capture-selftest     Check the event decoding and frame analysis on synthetic events\n"
+
         "  --pause                Wait for Enter before exiting\n"
         "  --stress <tests> ...   Stability tester mode (options below)\n\n");
     stability_cli_usage();
@@ -121,10 +116,6 @@ static std::atomic<bool> s_ctrl_c;
 static BOOL WINAPI on_ctrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) {
         s_ctrl_c.store(true);
-        if (g_capture.state.load() == CAP_RUNNING) {
-            capture_stop();
-            return TRUE;
-        }
         if (runner_is_running()) {
             runner_cancel();
             return TRUE;
@@ -380,48 +371,6 @@ static int log_sensors_only(const wchar_t* path, u32 interval_ms, u32 seconds, c
     return finish_sensor_log();
 }
 
-// --capture: record (or read from an .etl) present events of another process, print and save the result.
-static int run_capture(const char* target, f64 seconds, const wchar_t* etl, const wchar_t* out_path) {
-    char err[320];
-    if (etl) {
-        if (!capture_load_etl(etl, target, err, sizeof(err))) { fprintf(stderr, "Capture failed: %s\n", err); return 1; }
-    } else {
-        if (!capture_allowed())
-            printf("Note: not elevated and not in Performance Log Users; the ETW session will most likely be refused.\n");
-        if (!capture_start(target, seconds, err, sizeof(err))) { fprintf(stderr, "Capture failed: %s\n", err); return 1; }
-        SetConsoleCtrlHandler(on_ctrl, TRUE);
-        u32 last = 0;
-        f64 last_t = timer_now();
-        while (g_capture.state.load() == CAP_RUNNING) {
-            Sleep(250);
-            const f64 now = timer_now();
-            const u32 p = g_capture.presents.load();
-            printf("\rCapturing %s: %4.1f / %.0f s, %u presents (%.0f /s)   ", target, now - g_capture.start, seconds, p,
-                   (p - last) / (now - last_t));
-            fflush(stdout);
-            last = p;
-            last_t = now;
-        }
-        capture_wait();
-        printf("\n");
-        if (g_capture.state.load() != CAP_DONE) { fprintf(stderr, "Capture failed: %s\n", g_capture.error); return 1; }
-    }
-    const FrameCapture* c = capture_result();
-    printf("Process  %s (pid %u), %s%s, %.1f s, %u frames\n", c->process, c->pid, c->api,
-           c->tearing < 0 ? "" : c->tearing ? ", tearing" : ", no tearing", c->seconds, c->frames);
-    printf("FPS      avg %.1f, 1%% low %.1f, 0.1%% low %.1f (from p99 / p99.9 frame time), 1%% low average %.1f\n",
-           c->avg_fps, 1000.0 / c->p99_ms, 1000.0 / c->p999_ms, c->low1_avg_fps);
-    printf("Frame ms avg %.3f, median %.3f, p95 %.3f, p99 %.3f, p99.9 %.3f, max %.3f\n", c->avg_ms, c->p50_ms, c->p95_ms,
-           c->p99_ms, c->p999_ms, c->max_ms);
-    if (c->present_call_ms == c->present_call_ms) printf("Present() avg %.3f ms, sync interval %d\n", c->present_call_ms, c->sync_interval);
-    if (c->dropped) printf("WARNING: %u events lost\n", c->dropped);
-    if (out_path) {
-        if (!capture_write_toon(out_path, c)) { fwprintf(stderr, L"Failed to write %s\n", out_path); return 1; }
-        wprintf(L"Wrote %s\n", out_path);
-    }
-    return 0;
-}
-
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     sysinfo_init();
@@ -438,10 +387,6 @@ int wmain(int argc, wchar_t** argv) {
     char sensor_patterns[512] = {};
     u32 log_interval = 1000, log_seconds = 60;
     bool list_channels = false;
-    const wchar_t* capture_etl = nullptr;
-    char capture_target[256] = {};
-    f64 capture_seconds = 20.0;
-    bool capture = false, capture_check = false;
     const wchar_t* html_path = nullptr;
     const wchar_t* score_files[64];
     u32 score_file_count = 0;
@@ -464,14 +409,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--no-adv-sensors")) adv_set_enabled(false);
         else if (!wcscmp(a, L"--sysinfo")) return print_report(has_val && argv[i + 1][0] != L'-' ? argv[i + 1] : nullptr);
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
-        else if (!wcscmp(a, L"--capture") && has_val) { capture = true; strncpy_s(capture_target, val, _TRUNCATE); ++i; }
-        else if (!wcscmp(a, L"--seconds") && has_val) {     // length of a sensor log or a frame capture
-            capture_seconds = atof(val);
-            log_seconds = (u32)atoi(val);
-            ++i;
-        }
-        else if (!wcscmp(a, L"--capture-etl") && has_val) { capture = true; capture_etl = argv[++i]; }
-        else if (!wcscmp(a, L"--capture-selftest")) capture_check = true;
+        else if (!wcscmp(a, L"--seconds") && has_val) { log_seconds = (u32)atoi(val); ++i; }     // length of a sensor log
         else if (!wcscmp(a, L"--score")) {
             score = true;
             while (i + 1 < argc && wcsncmp(argv[i + 1], L"--", 2) != 0 && score_file_count < ARRAY_COUNT(score_files))
@@ -555,18 +493,6 @@ int wmain(int argc, wchar_t** argv) {
     if (health) return print_health(hide_serial);
     if (list_channels) return list_sensors();
     if (sensor_log && !any_run) return log_sensors_only(sensor_log, log_interval, log_seconds, sensor_patterns);
-    if (capture_check) {     // --out also writes the synthetic capture (a test file for the compare window)
-        char report[1024];
-        const bool pass = capture_selftest(report, sizeof(report));
-        printf("%s\n", report);
-        if (out_path && !capture_write_toon(out_path, capture_result())) return 1;
-        return pass ? 0 : 1;
-    }
-    if (capture) {
-        if (!capture_etl && !capture_target[0]) { fprintf(stderr, "--capture needs a process name, pid or *\n"); return 3; }
-        if (capture_seconds < 1.0) capture_seconds = 1.0;
-        return run_capture(capture_target, capture_seconds, capture_etl, out_path);
-    }
     if (score_file_count) {     // score of saved files: no run
         int rc = 0;
         for (u32 f = 0; f < score_file_count; ++f) {

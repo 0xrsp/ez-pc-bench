@@ -83,11 +83,8 @@ void score_ui_tooltip(const ScoreResult* s, const char* title) {
     ImGui::Text("%s  \xC2\xB7  score v%u (%s)", title, g_score.version, g_score.status);
     ImGui::PopFont();
     char t[32];
-    for (u32 p = 0; p < SP_COUNT; ++p) {
-        score_text(t, sizeof(t), s->profile[p]);
-        if (p) ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.2f);
-        ImGui::Text("%s %s", g_score_profile_names[p], t);
-    }
+    score_text(t, sizeof(t), s->overall);
+    ImGui::Text("%-18s %6s", "Overall", t);
     for (u32 c = 0; c < SC_COUNT; ++c) {
         u32 present, total;
         score_inputs_of((ScoreComp)c, &present, &total, s);
@@ -134,8 +131,8 @@ void score_ui_about(bool* request) {
                       "is better (latency, frame time). > 1 means faster.");
     ImGui::BulletText("Component = 1000 x weighted geometric mean of its input ratios. The reference machine scores "
                       "exactly 1000; 2000 = twice as fast on that mix.");
-    ImGui::BulletText("Overall and the profiles = 1000 x weighted geometric mean of the component ratios, only when every "
-                      "input is present (otherwise: component scores only, computed from the inputs that ran).");
+    ImGui::BulletText("Overall = 1000 x weighted geometric mean of the component ratios, only when every input is "
+                      "present (otherwise: component scores only, computed from the inputs that ran).");
     ImGui::BulletText("GPU inputs take the better of Vulkan and D3D12, so the API choice doesn't matter. Storage uses C: "
                       "when it was tested, else the first tested drive.");
     ImGui::Spacing();
@@ -151,23 +148,15 @@ void score_ui_about(bool* request) {
     ImGui::Spacing();
 
     ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("Profiles (component weights, %)");
+    ImGui::TextUnformatted("Overall (component weights, %)");
     ImGui::PopFont();
-    if (ImGui::BeginTable("##profiles", 2 + SC_COUNT, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH)) {
-        ImGui::TableSetupColumn("Profile");
+    if (ImGui::BeginTable("##weights", SC_COUNT, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH)) {
         for (u32 c = 0; c < SC_COUNT; ++c) ImGui::TableSetupColumn(g_score_comp_names[c]);
-        ImGui::TableSetupColumn("Meaning");
         ImGui::TableHeadersRow();
-        for (u32 p = 0; p < SP_COUNT; ++p) {
-            ImGui::TableNextRow();
+        ImGui::TableNextRow();
+        for (u32 c = 0; c < SC_COUNT; ++c) {
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(g_score_profile_names[p]);
-            for (u32 c = 0; c < SC_COUNT; ++c) {
-                ImGui::TableNextColumn();
-                ImGui::Text("%.0f", g_score.profile_weights[p][c]);
-            }
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", g_score_profile_desc[p]);
+            ImGui::Text("%.0f", g_score.overall_weights[c]);
         }
         ImGui::EndTable();
     }
@@ -230,7 +219,7 @@ struct ScoreUi {
     bool lib_loaded;
     u32 lib_count;
     ScoreResult* lib;       // per library run (VirtualAlloc'd once)
-    i32 rank_metric;        // < SP_COUNT + SC_COUNT: score; else index into metric list + that
+    i32 rank_metric;        // < SCORE_ITEM_COUNT: score item (score_item); else index into metric list + that
     u32 metric_count;
     struct Key { char test[48]; char name[64]; char unit[16]; f64 x; } metrics[1024];
     f64 lib_value[256];     // the selected metric per library run (NaN = not in that run)
@@ -288,7 +277,7 @@ void score_ui_draw() {
 
     // Headline: overall score (or "partial"), version, reference.
     char t[32];
-    score_text(t, sizeof(t), s->profile[SP_OVERALL]);
+    score_text(t, sizeof(t), s->overall);
     const f32 y0 = ImGui::GetCursorPosY();
     ImGui::PushFont(g_fonts.medium, theme_font_size(2.6f));
     ImGui::TextColored(s->complete ? g_pal.primary : g_pal.on_surface_variant, "%s", s->complete ? t : "Partial");
@@ -315,26 +304,6 @@ void score_ui_draw() {
             ImGui::BeginTooltip();
             for (u32 i = 0; i < SF_COUNT; ++i)
                 if ((s->flags & (1u << i)) && i) ImGui::BulletText("%s", g_score_flag_desc[i]);
-            ImGui::EndTooltip();
-        }
-    }
-
-    // Profiles (only for complete runs: partial runs have component scores only)
-    ImGui::Spacing();
-    for (u32 p = 0; p < SP_COUNT && s->complete; ++p) {
-        if (p) ImGui::SameLine(0.0f, fs * 1.6f);
-        score_text(t, sizeof(t), s->profile[p]);
-        ImGui::BeginGroup();
-        ImGui::TextDisabled("%s", g_score_profile_names[p]);
-        ImGui::PushFont(g_fonts.medium, theme_font_size(1.35f));
-        ImGui::TextUnformatted(t);
-        ImGui::PopFont();
-        ImGui::EndGroup();
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted(g_score_profile_desc[p]);
-            for (u32 c = 0; c < SC_COUNT; ++c)
-                ImGui::TextDisabled("%s %.0f %%", g_score_comp_names[c], g_score.profile_weights[p][c]);
             ImGui::EndTooltip();
         }
     }
@@ -408,9 +377,9 @@ void score_ui_draw() {
     load_library_scores();
     u32 better = 0, ranked = 0;
     for (u32 i = 0; i < s_su.lib_count && s->complete; ++i) {
-        if (!isfinite(s_su.lib[i].profile[SP_OVERALL])) continue;
+        if (!isfinite(s_su.lib[i].overall)) continue;
         ++ranked;
-        better += s_su.lib[i].profile[SP_OVERALL] > s->profile[SP_OVERALL];
+        better += s_su.lib[i].overall > s->overall;
     }
     if (ranked) ImGui::TextDisabled("Overall: #%u of %u among this run and the %u built-in library run%s. The Ranking tab "
                                     "has every score and test.", better + 1, ranked + 1, ranked, ranked == 1 ? "" : "s");
@@ -452,7 +421,7 @@ static f64 metric_value(const RunFile* rf, const ScoreUi::Key* k) {
 }
 
 static void load_metric_values() {
-    const i32 sel = s_su.rank_metric - (i32)(SP_COUNT + SC_COUNT);
+    const i32 sel = s_su.rank_metric - (i32)SCORE_ITEM_COUNT;
     if (s_su.lib_value_for == s_su.rank_metric || sel < 0 || sel >= (i32)s_su.metric_count) return;
     s_su.lib_value_for = s_su.rank_metric;
     const ScoreUi::Key* k = &s_su.metrics[sel];
@@ -470,14 +439,13 @@ static void load_metric_values() {
 }
 
 static f64 score_pick(const ScoreResult* s, i32 sel) {
-    return sel < (i32)SP_COUNT ? s->profile[sel] : s->comp[sel - SP_COUNT];
+    return score_item(s, (u32)sel);
 }
 
 static void rank_label(i32 sel, char* buf, u32 size) {
-    if (sel < (i32)SP_COUNT) snprintf(buf, size, "Score: %s", g_score_profile_names[sel]);
-    else if (sel < (i32)(SP_COUNT + SC_COUNT)) snprintf(buf, size, "Score: %s", g_score_comp_names[sel - SP_COUNT]);
+    if (sel < (i32)SCORE_ITEM_COUNT) snprintf(buf, size, "Score: %s", score_item_name((u32)sel));
     else {
-        const ScoreUi::Key* k = &s_su.metrics[sel - SP_COUNT - SC_COUNT];
+        const ScoreUi::Key* k = &s_su.metrics[sel - SCORE_ITEM_COUNT];
         snprintf(buf, size, "%s  \xC2\xB7  %s (%s)", k->test, k->name, k->unit);
     }
 }
@@ -507,12 +475,12 @@ void ranking_ui_draw() {
         if (any) build_metric_list(rf);
         s_su.lib_value_for = -1;
     }
-    if (s_su.rank_metric >= (i32)(SP_COUNT + SC_COUNT + s_su.metric_count)) s_su.rank_metric = 0;
+    if (s_su.rank_metric >= (i32)(SCORE_ITEM_COUNT + s_su.metric_count)) s_su.rank_metric = 0;
     static f64 defaulted_for = -1.0;     // once per run: don't fight the user's choice
-    if (cur && cur->any && !cur->complete && s_su.rank_metric < (i32)SP_COUNT && defaulted_for != g_run.end_time) {
+    if (cur && cur->any && !cur->complete && s_su.rank_metric == 0 && defaulted_for != g_run.end_time) {
         defaulted_for = g_run.end_time;
         for (u32 c = 0; c < SC_COUNT; ++c)
-            if (isfinite(cur->comp[c])) { s_su.rank_metric = (i32)(SP_COUNT + c); break; }
+            if (isfinite(cur->comp[c])) { s_su.rank_metric = (i32)(1 + c); break; }
     }
 
     const f32 fs = ImGui::GetFontSize();
@@ -528,11 +496,11 @@ void ranking_ui_draw() {
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::InputTextWithHint("##rank_filter", "Search tests / metrics", filter.InputBuf, IM_ARRAYSIZE(filter.InputBuf)))
             filter.Build();
-        const i32 n = (i32)(SP_COUNT + SC_COUNT + s_su.metric_count);
+        const i32 n = (i32)(SCORE_ITEM_COUNT + s_su.metric_count);
         for (i32 i = 0; i < n; ++i) {
             rank_label(i, label, sizeof(label));
             if (!filter.PassFilter(label)) continue;
-            if (i == (i32)(SP_COUNT + SC_COUNT)) ImGui::Separator();
+            if (i == (i32)SCORE_ITEM_COUNT) ImGui::Separator();
             if (ImGui::Selectable(label, i == s_su.rank_metric)) s_su.rank_metric = i;
         }
         ImGui::EndCombo();
@@ -545,12 +513,12 @@ void ranking_ui_draw() {
     static char cur_sub[160];
     u32 n = 0;
     const i32 sel = s_su.rank_metric;
-    const bool is_score = sel < (i32)(SP_COUNT + SC_COUNT);
+    const bool is_score = sel < (i32)SCORE_ITEM_COUNT;
     bool lower_better = false;
     const char* unit = "";
     if (!is_score) {
         load_metric_values();
-        const ScoreUi::Key* k = &s_su.metrics[sel - SP_COUNT - SC_COUNT];
+        const ScoreUi::Key* k = &s_su.metrics[sel - SCORE_ITEM_COUNT];
         lower_better = unit_lower_is_better(k->unit);
         unit = k->unit;
     }

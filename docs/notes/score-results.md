@@ -10,15 +10,15 @@ open. Everything here is built on `dev` as of 2026-11-11; the lead moves the dec
 ```
 ratio_i     = value_i / ref_i                 (ref_i / value_i when lower is better: latency, frame time)
 component_c = 1000 * exp( Σ w_i ln ratio_i / Σ w_i )          over the inputs of c present in the run
-profile_p   = 1000 * exp( Σ W_pc ln(component_c / 1000) / Σ W_pc )   only when every input is present
+overall     = 1000 * exp( Σ W_c ln(component_c / 1000) / Σ W_c )     only when every input is present
 ```
 
-- The reference run scores exactly 1000 in every component and profile (verified: `--score` on the library file).
+- The reference run scores exactly 1000 in every component and Overall (verified: `--score` on the library file).
 - 2000 = twice as fast on that component's mix; geometric means, so one huge ratio can't dominate.
 - **GPU inputs take the better of Vulkan and D3D12** (test id pattern `gpu_*.…`): the API choice never penalizes.
 - **Storage uses C:** when it was tested, else the first tested drive (`SI_DRIVE` inputs drop the `C: ` prefix).
 - Missing inputs: the component is computed from the inputs that ran (coverage shown as "4 of 6 inputs"); Overall
-  and the profiles need every input (`complete`). Partial runs therefore get component scores only.
+  needs every input (`complete`). Partial runs therefore get component scores only.
 - The reference values are **frozen in the table** (not read from the library at run time), so adding library runs
   never changes scores. A new version = a new table; scores of different versions are never compared (the
   version is stored with every score).
@@ -70,14 +70,16 @@ clears), PCIe transfer, LDS, core-to-core matrix, thread scaling (its efficiency
 `SCORE_V1_TESTS` (score.h) lists the 28 tests the table reads; the new **Score preset** (presets.cpp) runs exactly
 those at default settings (3 s phases, best of 3 disk passes on 1 GiB, both GPU APIs), about 5 minutes.
 
-### Profiles (component weights in %)
+### Overall (component weights in %)
 
-| Profile | CPU ST | CPU MT | Memory | GPU | Storage | Meaning |
+| | CPU ST | CPU MT | Memory | GPU | Storage | Meaning |
 |---|---|---|---|---|---|---|
 | Overall | 30 | 20 | 15 | 20 | 15 | balanced (FUTURE §10's initial guess) |
-| Gaming | 25 | 10 | 15 | 45 | 5 | GPU, then ST CPU and memory latency |
-| Creator | 10 | 40 | 20 | 20 | 10 | MT CPU, memory bandwidth, GPU compute |
-| Everyday | 40 | 10 | 15 | 5 | 30 | ST CPU and storage latency |
+
+**Removed 2026-11-11 (trim)**: the Gaming (25/10/15/45/5), Creator (10/40/20/20/10) and Everyday (40/10/15/5/30) profiles. Overall and the
+components are unchanged, so score v1 stays v1. `ScoreVersion::overall_weights[SC_COUNT]` replaces `profile_weights`,
+`ScoreResult::overall` replaces `profile[]`; `score_item()` / `score_item_name()` / `SCORE_ITEM_COUNT` (0 = Overall,
+1 + c = component) serve the pickers and table rows.
 
 ### Validity rules (flags, never hidden)
 
@@ -106,12 +108,12 @@ Not calibrated: the score is labelled **preliminary** everywhere (UI, CLI, TOON 
    built-in game benchmarks (e.g. Shadow of the Tomb Raider / Cyberpunk 2077 at 1080p medium, avg + 1 % low),
    a Chromium or LLVM compile time, 7-Zip compress / decompress, Lightroom / darktable export of a fixed photo
    set, app cold-start time (VS Code, Office) after a reboot, and a large-folder copy.
-2. Per profile, define its "truth" as a weighted mix of those timings (Gaming = game fps; Creator = compile +
-   export + compress; Everyday = app start + copy + browser speedometer).
-3. Fit the profile weights (and, if the data allows, input weights) by maximizing Spearman rank correlation
+2. Define the "truth" as a weighted mix of those timings (game fps, compile + export + compress, app start + copy +
+   browser speedometer). (The per-profile truths went with the profiles, removed 2026-11-11 (trim).)
+3. Fit the Overall weights (and, if the data allows, input weights) by maximizing Spearman rank correlation
    between the score and the truth, with weights constrained to the published set of components; leave-one-out
    to check it isn't overfitting 10 machines.
-4. Publish the fit (data, method, correlation per profile) in PLAN.md and in the About page ("Correlation with
+4. Publish the fit (data, method, correlation) in PLAN.md and in the About page ("Correlation with
    real-task timings: ρ = …"), bump the version (v2), drop "preliminary" once ρ ≥ 0.9 on the held-out machines.
 Published review numbers can seed step 1 (they must be cited per machine); I did not use any for v1.
 
@@ -136,35 +138,39 @@ Published review numbers can seed step 1 (they must be cited per machine); I did
     status: preliminary
     reference: 2026-11-11_r7-250_rtx5060-laptop
     overall: 1000                       (null when incomplete)
-    profiles[4]{id,value}: overall / gaming / creator / everyday
+    (profiles[4]{id,value}: removed 2026-11-11 (trim); readers ignore it in older files)
     components[5]{id,value,inputs,of}: cpu_st / cpu_mt / memory / gpu / storage, inputs present of total
     flags: incomplete|settings|...      ("" when none)
   ```
   `ez-pc-bench-cli --score <files> --score-write` adds / replaces it in older files (done for the library file,
-  raw data untouched, so the website can show its score).
+  raw data untouched, so the website can show its score; rewritten again 2026-11-11 to drop `profiles[]`).
 - `integrity:` block, last (FUTURE §11 P3): `exe` (file name), `exe_sha256` (SHA-256 of the exe that wrote it),
   `sha256` over every line except the top-level `score` and `integrity` blocks (indentation + text + "\n", so
   CRLF conversion and score rewrites don't break it). Readers report intact / edited / no hash (CLI `--score`,
   compare header tooltip, HTML report). Weak by design: anyone can recompute it.
 - Run history: every finished run (GUI and CLI, CLI `--no-history` to skip) is saved to
   `<exe dir>\results\history\<yyyymmdd_hhmmss>_<cpu>_<gpu>.toon.txt`. The History window skips files whose
-  top-level `kind` is set and isn't `benchmark` (stability / frame-capture files from the parallel streams).
-- Exports go to `<exe dir>\results\`: `ezbench_<date>_<time>_compare.png` / `_score.png` (window back buffer via
-  WIC), `ezbench_<date>_<time>_report.html` (self-contained: inline CSS, ~1 KB of JS for the filter, light / dark).
+  top-level `kind` is set and isn't `benchmark` (stability reports; frame-capture files are gone, removed 2026-11-11 (trim)).
+- Exports go to `<exe dir>\results\`: `ezbench_<date>_<time>_score.png` (window back buffer via WIC),
+  `ezbench_<date>_<time>_report.html` (self-contained: inline CSS, ~1 KB of JS for the filter, light / dark).
+  The compare window's `_compare.png` file export is **Removed 2026-11-11 (trim)**: **Copy PNG** puts the same back-buffer image on the
+  clipboard instead (CF_DIB, from which Windows synthesizes CF_DIBV5 / CF_BITMAP, plus the registered "PNG" format),
+  status "Copied a W x H PNG of this window to the clipboard". `snapshot_request(window, nullptr)` = clipboard; the
+  Score tab's Save PNG still writes a file.
 
 ## 3. UI
 
 - Main window output panel tabs: Results | Charts | **Score** | **Ranking** (`--tab score|ranking` dev flag).
   - Score: big Overall (or "Partial"), version + "preliminary", flags in the warning color (hover: one line each),
-    the four profiles (hover: weights), component bars 0–2x with a marker at the reference (1000), "n/m inputs";
+    component bars 0–2x with a marker at the reference (1000), "n/m inputs";
     hover a component for its inputs (value, reference, change, weight, test that won), click to expand them inline.
     Buttons: About the score, Save PNG, Select the Score preset.
-  - Ranking (FUTURE §11 P1): rank by any score profile / component or any plain metric of this run (search box);
+  - Ranking (FUTURE §11 P1): rank by Overall, any score component or any plain metric of this run (search box);
     bars of this run vs every library run, best first, lower-is-better metrics inverted; hover for the machine.
 - About the score (modal, from the Score tab, the compare window and History): formula, reference, calibration
-  state, profile weights, every input with weight / reference / direction, all validity flags.
-- Compare window: **Score** group (toggle "Score") with Overall, profiles and components per run (flagged runs in
-  the warning color, hover = breakdown), integrity in the run header tooltip, Save PNG, Save HTML, About the score.
+  state, Overall's component weights, every input with weight / reference / direction, all validity flags.
+- Compare window: **Score** group (toggle "Score") with Overall and the components per run (flagged runs in
+  the warning color, hover = breakdown), integrity in the run header tooltip, Copy PNG, Save HTML, About the score.
 - History tool window (button on the System row, `--tool history`): trend chart of the score or any metric across
   the saved runs (points of flagged runs in the warning color, hover = run, value, flags), runs list newest first
   with Overall, the selected value and flags; tick runs → "Compare n" adds them to the compare window.
@@ -188,16 +194,16 @@ Published review numbers can seed step 1 (they must be cited per machine); I did
 |---|---|
 | §10 P1 normalization, frozen reference per version | done |
 | §10 P1 components, weighted geomeans | done (v1 inputs = metrics on `dev`) |
-| §10 P1 overall + profiles | done (weights = initial guess) |
+| §10 P1 overall + profiles | overall done (weights = initial guess); profiles removed 2026-11-11 (trim) |
 | §10 P1 how indicative / calibration | method + plumbing done (preliminary label, About page with correlation slot); calibration itself needs other machines |
 | §10 P1 validity rules | done (11 flags) |
-| §10 P1 UI (bars, inputs on hover/expand, vs reference, vs library, profiles, TOON) | done |
+| §10 P1 UI (bars, inputs on hover/expand, vs reference, vs library, TOON) | done (profiles removed 2026-11-11 (trim)) |
 | §10 P2 CLI `--score`, compare score row | done |
 | §10 P2 §14 workloads in a new version | later (v2 list above) |
 | §11 P1 ranking view | done (score and per metric; the library has one run so far) |
 | §11 P1 Score preset | done |
 | §11 P2 automatic history + trend chart | done |
-| §11 P2 PNG + HTML | done (PNG = window screenshot; HTML from the compare set, also CLI `--html`) |
+| §11 P2 PNG + HTML | done (PNG = window screenshot: compare window to the clipboard, Score tab to a file; HTML from the compare set, also CLI `--html`) |
 | §11 P2 community results | done (issue form + static results page); review of submissions is manual |
 | §11 P3 integrity hash | done |
 
@@ -222,7 +228,7 @@ The website's meta description / hero still say "Raw numbers, no scores"; reword
 ## 7. Verification (2026-11-11)
 
 - `ez-pc-bench-cli --score library/2026-11-11_r7-250_rtx5060-laptop.toon.txt`: every input +0.0 %, all
-  components and profiles 1000; flag `no-conditions` (pre-M7 file). Integrity: "no hash (older file)".
+  components and Overall 1000 (profiles too, before they were removed); flag `no-conditions` (pre-M7 file). Integrity: "no hash (older file)".
 - M7-era quick run (`--preset quick`, 1 s phases, not elevated, ~11 agents building in parallel): CPU ST 832
   (6 of 9 inputs), CPU MT 905, Memory 954, GPU 756 (5 of 7; p99 frame time −65 % under load), Storage 885
   (4 of 6); no Overall (incomplete); flags settings, background (mem.lat.chase at 29 % CPU), not-admin.
@@ -233,6 +239,11 @@ The website's meta description / hero still say "Raw numbers, no scores"; reword
   that exists when no run has an Overall.
 - Website: results page with the library run (score 1000 from its score block), search + sort, no horizontal
   page overflow at 375 px (the table scrolls inside its card).
+- Trim (2026-11-11): `--score` on the old library file (still with `profiles[]`) reads it fine (Overall 1000);
+  `--score-write` only dropped the five `profiles[]` lines; a new run's `score:` block has no `profiles[]`; the HTML
+  report, compare window (old + new file side by side), Score tab, Ranking ("Score: Overall") and History show Overall
+  + components only; `tools/site_library.py` output has no `profiles` key. Copy PNG: the clipboard held "PNG" and
+  CF_DIB (+ synthesized formats), both decoding to the 1682 x 871 compare window, upright.
 
 ## 8. Merge notes
 
@@ -241,7 +252,7 @@ The website's meta description / hero still say "Raw numbers, no scores"; reword
 - New app files (GUI target): `score_ui.cpp`, `history_ui.cpp`, `snapshot.cpp`; GUI links `windowscodecs` (PNG).
 - Shared-file edits (all small, additive): `results.cpp` (score + integrity blocks at the end of the file),
   `compare.h/.cpp` (`CmpRun::score`, `CmpRun::integrity`, filled on add / peek / current), `compare_ui.cpp` (score
-  group, Save PNG / HTML, About), `presets.cpp/.h` (Score preset), `ui.cpp/.h` (Score / Ranking tabs, history
+  group, Save PNG (now Copy PNG) / HTML, About), `presets.cpp/.h` (Score preset), `ui.cpp/.h` (Score / Ranking tabs, history
   autosave, History tool button, `ui_selection`, `ui_set_tab`), `main_gui.cpp` (History tool window row,
   `snapshot_capture` after rendering each window, `--tab`), `tool_windows.h` (`TOOL_HISTORY`), `theme.cpp/.h`
   (`ICON_HISTORY`), `main_cli.cpp` (`--score`, `--score-write`, `--html`, `--no-history`, preset help).
@@ -250,6 +261,6 @@ The website's meta description / hero still say "Raw numbers, no scores"; reword
 - `library/2026-11-11_…toon.txt` gained a `score:` block (raw data unchanged); keep it when adding runs, or run
   `--score-write` on new ones (the app writes it automatically for new runs).
 - New result files carry `score:` and `integrity:` blocks; readers that don't know them skip them (compare.cpp
-  already does). Stability / frame-capture files: no score inputs → no score (score `any` false), and History
+  already does). Stability files: no score inputs → no score (score `any` false), and History
   ignores files with another `kind`.
 - `score_current` / `rf_scratch` use one ~400 KB static scratch: UI thread / CLI main thread only.

@@ -1,7 +1,6 @@
 // Compare window: toolbar, filters and one wide table. Columns: metric, unit, then one per run; each run
 // cell shows the raw value and its change vs the reference run (green = better, red = worse, > 1%).
 #include "app/compare_ui.h"
-#include "app/frames_graph.h"
 #include "app/library.h"
 #include "app/score_ui.h"
 #include "app/snapshot.h"
@@ -371,7 +370,7 @@ static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
     }
 }
 
-// Score rows (score.h): profiles and components per run, flags on hover. Computed from each run's raw results.
+// Score rows (score.h): Overall and the components per run, flags on hover. Computed from each run's raw results.
 static void draw_score(u32 runs) {
     bool any = false;
     for (u32 c = 0; c < runs; ++c) any |= g_cmp.runs[c].score.any;
@@ -384,17 +383,15 @@ static void draw_score(u32 runs) {
                           "Hover a value for its breakdown; \"About the score\" has the formula and weights.");
     if (!open) return;
     char t[32];
-    for (u32 k = 0; k < SP_COUNT + SC_COUNT; ++k) {
-        const bool profile = k < SP_COUNT;
-        summary_label(profile ? g_score_profile_names[k] : g_score_comp_names[k - SP_COUNT],
-                      profile ? g_score_profile_desc[k] : nullptr, k == SP_OVERALL);
+    for (u32 k = 0; k < SCORE_ITEM_COUNT; ++k) {
+        summary_label(score_item_name(k), k == 0 ? "How fast the PC is overall: a weighted mix of the five components." : nullptr, k == 0);
         for (u32 c = 0; c < runs; ++c) {
             const ScoreResult* s = &g_cmp.runs[c].score;
             ImGui::TableSetColumnIndex((int)(2 + c));
-            const f64 v = profile ? s->profile[k] : s->comp[k - SP_COUNT];
+            const f64 v = score_item(s, k);
             if (!isfinite(v)) { dash_cell(); continue; }
             snprintf(t, sizeof(t), "%.0f", v);
-            if (k == SP_OVERALL) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
+            if (k == 0) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
             else theme_push_numbers();
             const bool flagged = (s->flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
             ImGui::TextColored(flagged ? g_pal.warn : g_pal.on_surface, "%s", t);
@@ -404,11 +401,7 @@ static void draw_score(u32 runs) {
     }
 }
 
-static void export_png() {
-    wchar_t path[MAX_PATH];
-    snapshot_export_path("compare", L"png", path);
-    snapshot_request(TOOL_COMPARE, path);
-}
+static void copy_png() { snapshot_request(TOOL_COMPARE, nullptr); }
 
 static void export_html() {
     wchar_t path[MAX_PATH];
@@ -616,35 +609,6 @@ static void draw_library() {
     ImGui::EndPopup();
 }
 
-// ---- frame captures -----------------------------------------------------------------------------
-
-// Frame captures in the set (frames/frame_capture.h): their frame-time graphs overlaid above the table.
-static void draw_frame_graph() {
-    FrameSeries s[CMP_MAX_RUNS];
-    u32 n = 0;
-    f32 y_max = 0.0f;
-    for (u32 c = 0; c < g_cmp.run_count; ++c) {
-        const CmpRun* r = &g_cmp.runs[c];
-        if (!r->frame_count) continue;
-        s[n++] = { r->label, r->frame_ms, r->frame_count };
-        if (r->frame_p999 * 1.25f > y_max) y_max = r->frame_p999 * 1.25f;
-    }
-    if (!n) return;
-    ImGui::Spacing();
-    if (!ImGui::CollapsingHeader("Frame times", ImGuiTreeNodeFlags_DefaultOpen)) return;
-    const f32 fs = ImGui::GetFontSize();
-    for (u32 k = 0; k < n; ++k) {
-        if (k) ImGui::SameLine(0.0f, fs * 1.5f);
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + fs * 0.3f), ImVec2(p.x + fs * 0.7f, p.y + fs), frame_graph_color(k), fs * 0.15f);
-        ImGui::Dummy(ImVec2(fs * 0.9f, fs));
-        ImGui::SameLine(0.0f, 0.0f);
-        ImGui::TextUnformatted(s[k].label);
-    }
-    frame_graph("##cmp_frames", s, n, y_max, fs * 10.0f);
-    ImGui::TextDisabled("Slowest frame per pixel column; scale up to 1.25 x the highest p99.9 frame time. Hover for values.");
-}
-
 // ---- frame --------------------------------------------------------------------------------------
 
 void compare_ui_draw() {
@@ -666,8 +630,9 @@ void compare_ui_draw() {
     ImGui::SameLine();
     if (theme_button("Clear")) { compare_clear(); s_cu.status[0] = 0; }
     ImGui::SameLine();
-    if (theme_button("Save PNG")) export_png();
-    theme_help("Screenshot of this window as a PNG in the results folder (for sharing, like a CrystalDiskMark screenshot).");
+    if (theme_button("Copy PNG")) copy_png();
+    theme_help("Copies a screenshot of this window to the clipboard as a PNG, ready to paste into a chat, forum post or "
+               "document (for sharing, like a CrystalDiskMark screenshot).");
     ImGui::SameLine();
     if (theme_button("Save HTML")) export_html();
     theme_help("Self-contained HTML report of these runs (score, system, every raw value) in the results folder.");
@@ -718,7 +683,6 @@ void compare_ui_draw() {
     ImGui::SameLine(0.0f, 4.0f);
     if (theme_tab("Collapse all", false)) s_cu.set_open = 0;
 
-    draw_frame_graph();
     ImGui::Spacing();
     theme_begin_panel("cmp_panel", ImVec2(0, 0), false);
     draw_table();

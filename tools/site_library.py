@@ -139,7 +139,6 @@ def run_entry(path):
             "status": values.get("score.status", ""),
             "overall": num(values.get("score.overall")),
             "flags": values.get("score.flags", ""),
-            "profiles": {p["id"]: num(p.get("value")) for p in tables.get("score.profiles", [])},
             "components": {c["id"]: num(c.get("value")) for c in tables.get("score.components", [])},
         }
     scene = best(tables, ["gpu_vk.3d.scene", "gpu_d3d12.3d.scene"], "Avg frame time", lower=True)

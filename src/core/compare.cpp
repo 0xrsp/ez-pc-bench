@@ -23,7 +23,6 @@ static void copy_str(char* dst, u32 size, const char* src) {
 }
 
 void compare_clear() {
-    for (u32 c = 0; c < g_cmp.run_count; ++c) free(g_cmp.runs[c].frame_ms);
     memset(&g_cmp, 0, sizeof(g_cmp));
 }
 
@@ -111,7 +110,6 @@ static void compact() {
 
 void compare_remove(u32 run) {
     if (run >= g_cmp.run_count) return;
-    free(g_cmp.runs[run].frame_ms);
     const u32 last = g_cmp.run_count - 1;
     for (u32 c = run; c < last; ++c) g_cmp.runs[c] = g_cmp.runs[c + 1];
     for (u32 i = 0; i < g_cmp.row_count; ++i) {
@@ -274,34 +272,6 @@ static bool read_table(ToonReader* r, const ToonLine* l, const char* path, u32 r
     return true;
 }
 
-static int cmp_f32(const void* a, const void* b) {
-    const f32 x = *(const f32*)a, y = *(const f32*)b;
-    return x < y ? -1 : x > y;
-}
-
-// Frame capture files: frames[N]{t,ms}, one row per frame. Keeps the frame times for the graph.
-static bool read_frames(ToonReader* r, const ToonLine* l, u32 run, char* err, u32 err_size) {
-    static char cells[TOON_MAX_FIELDS][TOON_CELL];
-    const i32 ms = field(l, "ms");
-    CmpRun* c = &g_cmp.runs[run];
-    free(c->frame_ms);
-    c->frame_ms = l->count && ms >= 0 ? (f32*)malloc(l->count * sizeof(f32)) : nullptr;
-    c->frame_count = 0;
-    const char *s, *e;
-    u32 indent;
-    for (u32 row = 0; row < l->count; ++row) {
-        if (!toon_next_line(r, &s, &e, &indent)) { snprintf(err, err_size, "frames table ends early"); return false; }
-        if (c->frame_ms && (i32)toon_split(s, e, cells, TOON_MAX_FIELDS) > ms) c->frame_ms[c->frame_count++] = (f32)atof(cells[ms]);
-    }
-    if (f32* sorted = c->frame_count ? (f32*)malloc(c->frame_count * sizeof(f32)) : nullptr) {
-        memcpy(sorted, c->frame_ms, c->frame_count * sizeof(f32));
-        qsort(sorted, c->frame_count, sizeof(f32), cmp_f32);
-        c->frame_p999 = sorted[(u32)(0.999 * (c->frame_count - 1) + 0.5)];
-        free(sorted);
-    }
-    return true;
-}
-
 static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
     char keys[8][64] = {};      // key path by depth
     const char *s, *e;
@@ -318,17 +288,15 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
         }
         char v[TOON_CELL];
         toon_decode(l.value, l.value_end, v, sizeof(v));
-        if (l.array && l.field_count && run != UINT32_MAX && !strcmp(path, "frames")) {
-            if (!read_frames(r, &l, run, err, err_size)) return false;
-        } else if (l.array && l.field_count) {
+        if (l.array && l.field_count) {
             if (!read_table(r, &l, path, run, err, err_size)) return false;
         } else if (!strcmp(path, "params.disk_drives")) {
             for (const char* p = v; *p; ++p)
                 if (*p >= 'A' && *p <= 'Z') s_file.disk_mask |= 1u << (*p - 'A');
         }
         else if (!strcmp(path, "app")) s_file.have_app = !strcmp(v, "ez-pc-bench");
-        // Benchmark results and frame captures compare; anything else (e.g. a stability report) doesn't.
-        else if (!strcmp(path, "kind") && strcmp(v, "benchmark") != 0 && strcmp(v, "frames") != 0) {
+        // Only benchmark results compare; anything else (e.g. a stability report) doesn't.
+        else if (!strcmp(path, "kind") && strcmp(v, "benchmark") != 0) {
             snprintf(err, err_size, "a %s report, not benchmark results", v);
             return false;
         }

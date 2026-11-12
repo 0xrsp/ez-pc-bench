@@ -17,10 +17,6 @@ struct CmpRun {
     char label[96];             // file name without ".toon.txt", or "Current run"
     char info[CI_COUNT][128];
     u32 metrics;                // rows this run has a value for
-    // Frame captures (frames/frame_capture.h, `frames[N]{t,ms}`): every frame time, else null. Owned (malloc).
-    f32* frame_ms;
-    u32 frame_count;
-    f32 frame_p999;             // p99.9 frame time, scales the graph
     ScoreResult score;          // computed from the run's raw results (score.h)
     i8 integrity;               // IntegrityState of the file (integrity.h); -1 for the current run
 };

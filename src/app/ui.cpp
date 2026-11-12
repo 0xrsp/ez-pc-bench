@@ -243,8 +243,6 @@ static const ToolButton s_tool_buttons[] = {
                                           "save the full report." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
-    { TOOL_FRAMES, ICON_FRAMES, "Frames", "Frame capture of any running game or app (like PresentMon / CapFrameX): fps, "
-                                          "frame times, 1% / 0.1% lows and a frame-time graph. Needs administrator rights." },
     { TOOL_HISTORY, ICON_HISTORY, "History", "Every finished run is saved to results\\history. Trend of the score or any "
                                              "metric across runs (driver / BIOS / Windows update regressions)." },
     { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "

@@ -35,7 +35,7 @@ struct HistRun {
     char name[96];          // file name without .toon.txt
     char stamp[24];         // "2026-11-11 15:07"
     char cpu[48], gpu[48];  // short names
-    f64 profile[SP_COUNT], comp[SC_COUNT];
+    f64 overall, comp[SC_COUNT];
     u32 flags;
     u32 first, count;       // slice of HistData::values
     bool picked;
@@ -56,13 +56,13 @@ struct HistData {
 struct HistoryUi {
     HistData* d;            // VirtualAlloc'd while the window is open
     u32 run_count, key_count, value_count, skipped;
-    i32 sel;                // < SP_COUNT + SC_COUNT: score item, else key index + that
+    i32 sel;                // < SCORE_ITEMS: score item (score_item), else key index + that
     char status[300];
     bool about;
 };
 static HistoryUi s_hu;
 
-constexpr i32 SCORE_ITEMS = SP_COUNT + SC_COUNT;
+constexpr i32 SCORE_ITEMS = SCORE_ITEM_COUNT;
 
 static u32 key_hash(const char* test, const char* name, f64 x) {
     u32 h = 2166136261u;
@@ -127,7 +127,7 @@ static void load() {
         if (!buf) { s_hu.skipped++; continue; }
         const bool ok = rf_parse(r.p, (u32)(r.end - r.p), rf, err, sizeof(err));
         toon_free_file(buf);
-        // Only benchmark runs: other kinds (stability, frame captures) have their own tools.
+        // Only benchmark runs: other kinds (stability reports) have their own tools.
         if (!ok || (rf->kind[0] && strcmp(rf->kind, "benchmark") != 0) || !rf->metric_count) { s_hu.skipped++; continue; }
         WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, h->name, sizeof(h->name), nullptr, nullptr);
         if (char* ext = strstr(h->name, ".toon.txt")) *ext = 0;
@@ -137,7 +137,7 @@ static void load() {
         gpu_short_name(rf->gpu, h->gpu, sizeof(h->gpu));
         ScoreResult sr;
         score_compute(rf, &sr);
-        memcpy(h->profile, sr.profile, sizeof(h->profile));
+        h->overall = sr.overall;
         memcpy(h->comp, sr.comp, sizeof(h->comp));
         h->flags = sr.any ? sr.flags : 0;
         h->first = s_hu.value_count;
@@ -174,8 +174,8 @@ void history_ui_on_close() {
 
 // Value of the selected item in run r (NaN if missing).
 static f64 run_value(const HistRun* r, i32 sel) {
-    if (sel < (i32)SP_COUNT) return r->profile[sel];
-    if (sel < SCORE_ITEMS) return r->comp[sel - SP_COUNT];
+    if (sel == 0) return r->overall;
+    if (sel < SCORE_ITEMS) return r->comp[sel - 1];
     const u32 key = (u32)(sel - SCORE_ITEMS);
     for (u32 i = 0; i < r->count; ++i)
         if (s_hu.d->values[r->first + i].key == key) return s_hu.d->values[r->first + i].value;
@@ -183,8 +183,7 @@ static f64 run_value(const HistRun* r, i32 sel) {
 }
 
 static void item_label(i32 sel, char* buf, u32 size) {
-    if (sel < (i32)SP_COUNT) { snprintf(buf, size, "Score: %s", g_score_profile_names[sel]); return; }
-    if (sel < SCORE_ITEMS) { snprintf(buf, size, "Score: %s", g_score_comp_names[sel - SP_COUNT]); return; }
+    if (sel < SCORE_ITEMS) { snprintf(buf, size, "Score: %s", score_item_name((u32)sel)); return; }
     const HistKey* k = &s_hu.d->keys[sel - SCORE_ITEMS];
     if (k->x != 0.0) snprintf(buf, size, "%s  \xC2\xB7  %s @ %g (%s)", k->test, k->name, k->x, k->unit);
     else snprintf(buf, size, "%s  \xC2\xB7  %s (%s)", k->test, k->name, k->unit);
@@ -387,7 +386,7 @@ void history_ui_draw() {
             ImGui::TableNextColumn();
             ImGui::Text("%s, %s", r->cpu, r->gpu);
             ImGui::TableNextColumn();
-            format_item(t, sizeof(t), 0, r->profile[SP_OVERALL]);
+            format_item(t, sizeof(t), 0, r->overall);
             theme_push_numbers();
             ImGui::TextUnformatted(t);
             ImGui::PopFont();
