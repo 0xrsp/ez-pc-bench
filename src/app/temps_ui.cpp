@@ -681,6 +681,7 @@ static bool mem_match() {
 }
 
 static void draw_memory(bool full) {
+    if (!s_mem_count) return;
     const f32 fs = ImGui::GetFontSize();
     char total[24], v[64], title[96];
     const f32 total_mib = (f32)(s_mem.ullTotalPhys / MiB), used = s_mem_hist[s_mem_count - 1];
@@ -752,7 +753,8 @@ static ImU32 temp_col(const SensorReading* s) {
 static void draw_temp_tiles(SensorGroup g, u32 n, f32 height) {
     u32 count = 0;
     for (u32 i = 0; i < n; ++i) count += s_read[i].group == g && reading_hit(&s_read[i]);
-    if (!count || !grid_begin("##temps", grid_cols(15.0f, count < 4 ? count : 4))) return;
+    if (!count || !grid_begin(g == SG_DISK ? "##disk_temps" : "##zone_temps", grid_cols(15.0f, count < 4 ? count : 4)))
+        return;
     char right[48], tip[400];
     for (u32 i = 0; i < n; ++i) {
         const SensorReading* s = &s_read[i];
