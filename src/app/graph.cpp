@@ -174,15 +174,15 @@ static void draw_box(ImDrawList* dl, ImVec2 a, ImVec2 b, bool grid, const f32* v
     dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_Border));     // the frames' border (outline_variant .. outline)
 }
 
-// Translucent area between the polyline and `base`, fading towards the base.
-static void fill_under(ImDrawList* dl, const ImVec2* pts, u32 n, f32 base, ImU32 top, ImU32 bottom) {
+// Flat translucent area between the polyline and `base`.
+static void fill_under(ImDrawList* dl, const ImVec2* pts, u32 n, f32 base, ImU32 fill) {
     if (n < 2) return;
     const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
     dl->PrimReserve((int)((n - 1) * 6), (int)(n * 2));
     const u32 v0 = dl->_VtxCurrentIdx;
     for (u32 i = 0; i < n; ++i) {
-        dl->PrimWriteVtx(pts[i], uv, top);
-        dl->PrimWriteVtx(ImVec2(pts[i].x, base), uv, bottom);
+        dl->PrimWriteVtx(pts[i], uv, fill);
+        dl->PrimWriteVtx(ImVec2(pts[i].x, base), uv, fill);
     }
     for (u32 i = 0; i + 1 < n; ++i) {
         const ImDrawIdx a = (ImDrawIdx)(v0 + i * 2);
@@ -193,8 +193,7 @@ static void fill_under(ImDrawList* dl, const ImVec2* pts, u32 n, f32 base, ImU32
 
 // Line plus fill for points already in screen space; NaN y (gap) splits the line into runs.
 static void draw_runs(ImDrawList* dl, const ImVec2* pts, u32 n, f32 base, GraphKind k, bool fill) {
-    const bool dark = theme_is_dark();
-    const ImU32 col = graph_color(k), top = graph_color(k, dark ? 0.30f : 0.24f), bot = graph_color(k, 0.04f);
+    const ImU32 col = graph_color(k), area = graph_color(k, theme_is_dark() ? 0.20f : 0.16f);
     const f32 th = line_thickness();
     for (u32 i = 0; i < n;) {
         while (i < n && isnan(pts[i].y)) ++i;
@@ -202,7 +201,7 @@ static void draw_runs(ImDrawList* dl, const ImVec2* pts, u32 n, f32 base, GraphK
         while (j < n && !isnan(pts[j].y)) ++j;
         if (j - i == 1) dl->AddCircleFilled(pts[i], th * 1.2f, col);
         else if (j > i) {
-            if (fill) fill_under(dl, pts + i, j - i, base, top, bot);
+            if (fill) fill_under(dl, pts + i, j - i, base, area);
             dl->AddPolyline(pts + i, (int)(j - i), col, th);
         }
         i = j;

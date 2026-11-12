@@ -5,10 +5,10 @@ Stream notes for merging into PLAN.md. Built 2026-11-12 on a worktree branch fro
 ## Look
 
 Windows Task Manager's Performance page: each graph is a box with a neutral 1 px border and a faint 10 x 5 grid
-(theme colors, see Colors), the line in the series color over a translucent fill (fading towards the bottom), a
+(theme colors, see Colors), the line in the series color over a flat translucent fill, a
 small caption above (title left, range max or current value right). Time series scroll right to left, newest
 sample at the right edge (a fresh graph fills in from the right). Big numbers with small labels (`graph_stat`)
-sit under the large graphs. No new dependency: everything is ImDrawList (`fill_under` writes the gradient
+sit under the large graphs. No new dependency: everything is ImDrawList (`fill_under` writes the fill
 strip with `PrimReserve`, so adjacent segments have no anti-aliasing seams).
 
 ![Sensors, CPU, dark](img/graphs-sensors-cpu-dark.png)
