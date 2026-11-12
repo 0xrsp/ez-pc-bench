@@ -8,8 +8,16 @@ struct CpuInfo {
     u32 family, model, stepping;
     u32 cores, threads;
     u32 l1d_kib, l2_kib, l3_kib;    // per core (L1/L2), total (L3)
-    bool sse42, avx, avx2, fma, avx512f, avx512vl, avx512bw, avx512dq, avx512vnni, sha, aes, vaes;
+    bool sse42, popcnt, avx, avx2, fma, avx512f, avx512vl, avx512bw, avx512dq, avx512vnni, avx512bf16, sha, aes, vaes;
 };
+
+// The exes are built for x86-64-v2 (CMakeLists.txt). Checked first thing in main, before anything uses it.
+bool cpu_baseline_ok();
+// Dev (--cpu-baseline): after sysinfo_init, pretend the CPU has nothing beyond x86-64-v2 (no AVX / FMA / AVX-512)
+// to try the gated tests and SSE fallbacks on a modern PC.
+void sysinfo_cap_to_baseline();
+#define CPU_BASELINE_MSG \
+    "This program needs a CPU with SSE4.2 and POPCNT (Intel Nehalem / AMD Bulldozer, 2008-2011, or newer)."
 
 struct RamModule {
     char type[16];          // "DDR5"

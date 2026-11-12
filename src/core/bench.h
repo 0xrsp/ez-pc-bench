@@ -98,6 +98,10 @@ enum BenchFlags : u32 {
                                     // presets never select it
 };
 
+// CPU extensions a test's kernels need beyond the build baseline (SSE4.2 + POPCNT, CMakeLists.txt). On a CPU
+// without them the GUI won't select the test and the runner skips it.
+enum BenchIsa : u8 { ISA_BASE, ISA_FMA, ISA_AVX2, ISA_AVX512, ISA_AVX512_BF16, ISA_SHA, ISA_AES };
+
 struct BenchDesc {
     SuiteId suite;
     const char* group;      // UI group name, e.g. "Compute"
@@ -105,9 +109,13 @@ struct BenchDesc {
     const char* cli_id;     // full id, e.g. "cpu.fma.avx2"
     BenchFn fn;
     u32 flags;
+    BenchIsa isa;           // ISA_BASE when omitted
 };
 
 extern const SuiteDesc g_suites[SUITE_COUNT];
 extern const BenchDesc g_benches[];
 extern const u32 g_bench_count;
 constexpr u32 MAX_BENCHES = 256;
+
+// Null if this CPU can run the test, else why not (static string). Needs sysinfo_init().
+const char* bench_unsupported(u32 id);

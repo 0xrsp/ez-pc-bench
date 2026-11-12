@@ -4,6 +4,7 @@
 #include "cpu/cpu_internal.h"
 #include "core/mem_util.h"
 #include "core/results.h"
+#include "core/sysinfo.h"
 #include "core/threads.h"
 #include "core/throughput.h"
 #include "core/timer.h"
@@ -98,7 +99,7 @@ static u8* lz_put_len(u8* op, u64 len) {
 }
 
 // Compresses n bytes; dst needs n + n / 255 + 16 bytes. `table` holds 1 << LZ_HASH_BITS u32.
-u64 lz77_compress(const u8* src, u64 n, u8* dst, u32* table) {
+FORCE_INLINE static u64 lz77_compress_body(const u8* src, u64 n, u8* dst, u32* table) {
     memset(table, 0, sizeof(u32) << LZ_HASH_BITS);
     const u8* ip = src;
     const u8* anchor = src;
@@ -144,7 +145,7 @@ u64 lz77_compress(const u8* src, u64 n, u8* dst, u32* table) {
 }
 
 // Decompresses into dst (needs 32 bytes of slack past the output). Returns the output size, 0 on bad input.
-u64 lz77_decompress(const u8* src, u64 n, u8* dst, u64 cap) {
+FORCE_INLINE static u64 lz77_decompress_body(const u8* src, u64 n, u8* dst, u64 cap) {
     const u8* ip = src;
     const u8* const iend = src + n;
     u8* op = dst;
@@ -174,6 +175,18 @@ u64 lz77_decompress(const u8* src, u64 n, u8* dst, u64 cap) {
         }
         op += ml;
     }
+}
+
+// AVX2 + baseline copies (single thread -15 % compress, -11 % decompress without the AVX2 one).
+TARGET_AVX2 static u64 lz77_compress_avx2(const u8* src, u64 n, u8* dst, u32* table) { return lz77_compress_body(src, n, dst, table); }
+static u64 lz77_compress_base(const u8* src, u64 n, u8* dst, u32* table) { return lz77_compress_body(src, n, dst, table); }
+u64 lz77_compress(const u8* src, u64 n, u8* dst, u32* table) {
+    return g_sys.cpu.avx2 ? lz77_compress_avx2(src, n, dst, table) : lz77_compress_base(src, n, dst, table);
+}
+TARGET_AVX2 static u64 lz77_decompress_avx2(const u8* src, u64 n, u8* dst, u64 cap) { return lz77_decompress_body(src, n, dst, cap); }
+static u64 lz77_decompress_base(const u8* src, u64 n, u8* dst, u64 cap) { return lz77_decompress_body(src, n, dst, cap); }
+u64 lz77_decompress(const u8* src, u64 n, u8* dst, u64 cap) {
+    return g_sys.cpu.avx2 ? lz77_decompress_avx2(src, n, dst, cap) : lz77_decompress_base(src, n, dst, cap);
 }
 
 // ---- shared test driver ------------------------------------------------------------------------------

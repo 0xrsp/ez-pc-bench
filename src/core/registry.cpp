@@ -1,6 +1,7 @@
 // The whole benchmark registry: one table of suites, one table of tests.
 // Order here is run order within a suite.
 #include "core/bench.h"
+#include "core/sysinfo.h"
 #include "gpu/gpu_common.h"
 
 #define BENCH_FN(name) void name(void*, const BenchParams*, BenchLive*, BenchResult*, const std::atomic<bool>*)
@@ -122,16 +123,16 @@ const BenchDesc g_benches[] = {
 
     { SUITE_CPU, "Integer",        "ALU add/xor",               "cpu.int.alu",       cpu_int_alu,        0 },
     { SUITE_CPU, "Integer",        "Multiply (imul)",           "cpu.int.mul",       cpu_int_mul,        0 },
-    { SUITE_CPU, "Floating point", "FP32 FMA scalar",           "cpu.fp.scalar",     cpu_fma_scalar,     0 },
-    { SUITE_CPU, "Floating point", "FP32 FMA AVX2",             "cpu.fp.avx2_f32",   cpu_fma_avx2_f32,   0 },
-    { SUITE_CPU, "Floating point", "FP64 FMA AVX2",             "cpu.fp.avx2_f64",   cpu_fma_avx2_f64,   0 },
-    { SUITE_CPU, "Floating point", "FP32 FMA AVX-512",          "cpu.fp.avx512_f32", cpu_fma_avx512_f32, 0 },
-    { SUITE_CPU, "Floating point", "FP64 FMA AVX-512",          "cpu.fp.avx512_f64", cpu_fma_avx512_f64, 0 },
-    { SUITE_CPU, "Floating point", "SGEMM 1920x1920 (AVX2)",    "cpu.fp.sgemm",      cpu_sgemm,          0 },
-    { SUITE_CPU, "Crypto",         "SHA-256 (SHA-NI)",          "cpu.crypto.sha256", cpu_sha256,         0 },
-    { SUITE_CPU, "Crypto",         "AES-128-CTR",               "cpu.crypto.aes",    cpu_aes,            0 },
+    { SUITE_CPU, "Floating point", "FP32 FMA scalar",           "cpu.fp.scalar",     cpu_fma_scalar,     0, ISA_FMA },
+    { SUITE_CPU, "Floating point", "FP32 FMA AVX2",             "cpu.fp.avx2_f32",   cpu_fma_avx2_f32,   0, ISA_AVX2 },
+    { SUITE_CPU, "Floating point", "FP64 FMA AVX2",             "cpu.fp.avx2_f64",   cpu_fma_avx2_f64,   0, ISA_AVX2 },
+    { SUITE_CPU, "Floating point", "FP32 FMA AVX-512",          "cpu.fp.avx512_f32", cpu_fma_avx512_f32, 0, ISA_AVX512 },
+    { SUITE_CPU, "Floating point", "FP64 FMA AVX-512",          "cpu.fp.avx512_f64", cpu_fma_avx512_f64, 0, ISA_AVX512 },
+    { SUITE_CPU, "Floating point", "SGEMM 1920x1920 (AVX2)",    "cpu.fp.sgemm",      cpu_sgemm,          0, ISA_AVX2 },
+    { SUITE_CPU, "Crypto",         "SHA-256 (SHA-NI)",          "cpu.crypto.sha256", cpu_sha256,         0, ISA_SHA },
+    { SUITE_CPU, "Crypto",         "AES-128-CTR",               "cpu.crypto.aes",    cpu_aes,            0, ISA_AES },
     { SUITE_CPU, "Crypto",         "AES-128-GCM (Windows CNG)", "cpu.crypto.aes_gcm", cpu_aes_gcm,       0 },
-    { SUITE_CPU, "Crypto",         "ChaCha20 (AVX2)",           "cpu.crypto.chacha20", cpu_chacha20,     0 },
+    { SUITE_CPU, "Crypto",         "ChaCha20 (AVX2)",           "cpu.crypto.chacha20", cpu_chacha20,     0, ISA_AVX2 },
     { SUITE_CPU, "Crypto",         "CRC32C (SSE4.2)",           "cpu.crypto.crc32c", cpu_crc32c,         0 },
     { SUITE_CPU, "Crypto",         "xxHash64",                  "cpu.crypto.xxhash", cpu_xxhash,         0 },
     { SUITE_CPU, "Workloads",      "Sort 16M u32",              "cpu.work.sort",     cpu_sort,           0 },
@@ -148,13 +149,13 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Parsing",        "JSON parse",                "cpu.parse.json",    cpu_parse_json,     0 },
     { SUITE_CPU, "Parsing",        "Tokenize + count words",    "cpu.parse.text",    cpu_parse_text,     0 },
     { SUITE_CPU, "Science",        "FFT 16K complex (FP64)",   "cpu.sci.fft",       cpu_fft,            0 },
-    { SUITE_CPU, "Science",        "N-body 2048 (FP32)",        "cpu.sci.nbody",     cpu_nbody,          0 },
+    { SUITE_CPU, "Science",        "N-body 2048 (FP32)",        "cpu.sci.nbody",     cpu_nbody,          0, ISA_AVX2 },
     { SUITE_CPU, "Science",        "Ray-box intersection",      "cpu.sci.raybox",    cpu_raybox,         0 },
     { SUITE_CPU, "Science",        "Ray-triangle intersection", "cpu.sci.raytri",    cpu_raytri,         0 },
-    { SUITE_CPU, "AI inference",   "INT8 matrix multiply",      "cpu.ai.int8",       cpu_ai_int8,        0 },
-    { SUITE_CPU, "AI inference",   "BF16 matrix multiply",      "cpu.ai.bf16",       cpu_ai_bf16,        0 },
+    { SUITE_CPU, "AI inference",   "INT8 matrix multiply",      "cpu.ai.int8",       cpu_ai_int8,        0, ISA_AVX2 },
+    { SUITE_CPU, "AI inference",   "BF16 matrix multiply",      "cpu.ai.bf16",       cpu_ai_bf16,        0, ISA_AVX512_BF16 },
     { SUITE_CPU, "Topology",       "Core-to-core latency",      "cpu.topo.c2c",      cpu_c2c,            0 },
-    { SUITE_CPU, "Topology",       "Thread scaling (AVX2 FMA)", "cpu.topo.scaling",  cpu_scaling,        0 },
+    { SUITE_CPU, "Topology",       "Thread scaling (AVX2 FMA)", "cpu.topo.scaling",  cpu_scaling,        0, ISA_AVX2 },
     { SUITE_CPU, "Topology",       "Per-core single thread",    "cpu.topo.percore",  cpu_percore,        0 },
     { SUITE_CPU, "Topology",       "P-cores vs E-cores (hybrid)", "cpu.topo.hybrid", cpu_hybrid,         0 },
     { SUITE_CPU, "Microarchitecture", "Instruction latency / throughput", "cpu.micro.instr", cpu_instr_table, BENCH_DEFAULT_OFF },
@@ -211,3 +212,17 @@ const BenchDesc g_benches[] = {
 
 const u32 g_bench_count = ARRAY_COUNT(g_benches);
 static_assert(ARRAY_COUNT(g_benches) <= MAX_BENCHES, "raise MAX_BENCHES");
+
+const char* bench_unsupported(u32 id) {
+    const CpuInfo* c = &g_sys.cpu;
+    switch (g_benches[id].isa) {
+        case ISA_FMA: return c->fma ? nullptr : "Needs FMA3 (Intel Haswell / AMD Piledriver or newer); this CPU doesn't have it.";
+        case ISA_AVX2:
+            return c->avx2 && c->fma ? nullptr : "Needs AVX2 + FMA (Intel Haswell / AMD Ryzen or newer); this CPU doesn't have them.";
+        case ISA_AVX512: return c->avx512f ? nullptr : "Needs AVX-512; this CPU doesn't have it.";
+        case ISA_AVX512_BF16: return c->avx512bf16 ? nullptr : "Needs AVX-512 BF16; this CPU doesn't have it.";
+        case ISA_SHA: return c->sha ? nullptr : "Needs the SHA extensions (SHA-NI); this CPU doesn't have them.";
+        case ISA_AES: return c->aes ? nullptr : "Needs AES-NI; this CPU doesn't have it.";
+        default: return nullptr;
+    }
+}

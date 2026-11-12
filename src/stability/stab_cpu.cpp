@@ -44,7 +44,7 @@ static void k_sse(const f32* d, f32* out) {
     for (u32 k = 0; k < 8; ++k) _mm_storeu_ps(out + 4 * k, acc[k]);
 }
 
-static void k_avx2(const f32* d, f32* out) {
+TARGET_AVX2 static void k_avx2(const f32* d, f32* out) {
     __m256 acc[8];
     for (u32 k = 0; k < 8; ++k) acc[k] = _mm256_setzero_ps();
     for (u32 r = 0; r < ROUNDS; ++r) {
@@ -82,7 +82,7 @@ static void k_int(const u64* d, u64* out) {
 }
 
 // Large data: one slice streamed from RAM, 8 AVX2 accumulators against constant multipliers.
-static void k_large(const f32* s, f32* out) {
+TARGET_AVX2 static void k_large(const f32* s, f32* out) {
     __m256 acc[8];
     __m256 c[8];
     for (u32 k = 0; k < 8; ++k) { acc[k] = _mm256_setzero_ps(); c[k] = _mm256_set1_ps(0.75f + k * 0.03125f); }
@@ -93,7 +93,8 @@ static void k_large(const f32* s, f32* out) {
 
 // ---- references (scalar, not vectorized, computed once) ----------------------------------------------------
 
-__attribute__((noinline)) static void ref_float(const f32* d, u32 step, bool fused, f32* out) {
+// Two copies: the fused one is compiled for FMA (VEX encoding throughout), so it only runs on CPUs with AVX2.
+__attribute__((noinline)) static void ref_float(const f32* d, u32 step, f32* out) {
     for (u32 j = 0; j < step; ++j) out[j] = 0.0f;
     for (u32 r = 0; r < ROUNDS; ++r) {
         const f32* b = d + round_offset(r, SMALL_F);
@@ -101,7 +102,20 @@ __attribute__((noinline)) static void ref_float(const f32* d, u32 step, bool fus
 #pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
             for (u32 j = 0; j < step; ++j) {
                 const __m128 a = _mm_set_ss(d[i + j]), m = _mm_set_ss(b[i + j]), c = _mm_set_ss(out[j]);
-                out[j] = _mm_cvtss_f32(fused ? _mm_fmadd_ss(a, m, c) : _mm_add_ss(c, _mm_mul_ss(a, m)));
+                out[j] = _mm_cvtss_f32(_mm_add_ss(c, _mm_mul_ss(a, m)));
+            }
+    }
+}
+
+TARGET_FMA __attribute__((noinline)) static void ref_float_fma(const f32* d, u32 step, f32* out) {
+    for (u32 j = 0; j < step; ++j) out[j] = 0.0f;
+    for (u32 r = 0; r < ROUNDS; ++r) {
+        const f32* b = d + round_offset(r, SMALL_F);
+        for (u32 i = 0; i < SMALL_F; i += step)
+#pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
+            for (u32 j = 0; j < step; ++j) {
+                const __m128 a = _mm_set_ss(d[i + j]), m = _mm_set_ss(b[i + j]), c = _mm_set_ss(out[j]);
+                out[j] = _mm_cvtss_f32(_mm_fmadd_ss(a, m, c));
             }
     }
 }
@@ -117,7 +131,7 @@ __attribute__((noinline)) static void ref_int(const u64* d, u64* out) {
     for (u32 k = 0; k < 8; ++k) out[k] = acc[k];
 }
 
-__attribute__((noinline)) static void ref_large(const f32* s, f32* out) {
+TARGET_FMA __attribute__((noinline)) static void ref_large(const f32* s, f32* out) {
     for (u32 j = 0; j < 64; ++j) out[j] = 0.0f;
     for (u32 i = 0; i < SLICE_F; i += 64)
 #pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
@@ -141,6 +155,7 @@ struct CpuShared {
     f64 deadline, start;
     const u32* lps;
     CpuKernel kernel;
+    bool avx2;                  // AVX2 + FMA: the AVX2 and large-data kernels
     bool avx512;
     f32* large;                 // shared streaming buffer (CK_LARGE / mixed), null if unavailable
     u32 slices;
@@ -163,9 +178,11 @@ static const char* const KERNEL_PHASE[CK_COUNT] = { "Mixed", "Integer", "SSE mul
 static void init_thread_data(ThreadData* t, u64 seed) {
     for (u32 i = 0; i < SMALL_F; ++i) t->f[i] = t->f[i + SMALL_F] = rand_float(seed * 0x10000 + i);
     for (u32 i = 0; i < SMALL_I; ++i) t->q[i] = t->q[i + SMALL_I] = stab_mix(seed * 0x20000 + i);
-    ref_float(t->f, 32, false, t->ref_sse);
-    ref_float(t->f, 64, true, t->ref_avx2);
-    ref_float(t->f, 128, true, t->ref_avx512);
+    ref_float(t->f, 32, t->ref_sse);
+    if (g_sys.cpu.fma) {
+        ref_float_fma(t->f, 64, t->ref_avx2);
+        ref_float_fma(t->f, 128, t->ref_avx512);
+    }
     ref_int(t->q, t->ref_q);
 }
 
@@ -176,7 +193,7 @@ static CpuKernel pick_kernel(const CpuShared* s) {
     u32 n = 0;
     list[n++] = CK_INT;
     list[n++] = CK_SSE;
-    list[n++] = CK_AVX2;
+    if (s->avx2) list[n++] = CK_AVX2;
     if (s->avx512) list[n++] = CK_AVX512;
     if (s->large) list[n++] = CK_LARGE;
     return list[(u32)((timer_now() - s->start) / MIX_SECONDS) % n];
@@ -266,6 +283,7 @@ static bool cpu_setup(CpuShared* s, StabTest test, f64 deadline, const u32* lps)
     s->start = timer_now();
     s->lps = lps;
     s->kernel = g_stab.cfg.cpu_kernel;
+    s->avx2 = g_sys.cpu.avx2 && g_sys.cpu.fma;
     s->avx512 = g_sys.cpu.avx512f;
     s->large = nullptr;
     s->injected.store(false);
@@ -273,7 +291,11 @@ static bool cpu_setup(CpuShared* s, StabTest test, f64 deadline, const u32* lps)
         stab_fail_setup(test, "this CPU has no AVX-512");
         return false;
     }
-    if (s->kernel == CK_MIXED || s->kernel == CK_LARGE) {
+    if ((s->kernel == CK_AVX2 || s->kernel == CK_LARGE) && !s->avx2) {
+        stab_fail_setup(test, "this CPU has no AVX2 / FMA");
+        return false;
+    }
+    if ((s->kernel == CK_MIXED && s->avx2) || s->kernel == CK_LARGE) {
         MEMORYSTATUSEX ms = { sizeof(ms) };
         GlobalMemoryStatusEx(&ms);
         u64 bytes = LARGE_MAX;

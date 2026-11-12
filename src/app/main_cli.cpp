@@ -33,6 +33,7 @@ static void print_usage() {
     printf(
         "Usage: ez-pc-bench-cli [options]\n"
         "  --list                 List all test ids\n"
+        "  --cpu-baseline         Dev: act as if the CPU had no AVX / FMA / AVX-512 (those tests skip)\n"
         "  --run <patterns>       Comma-separated test ids or patterns (cpu, mem.*, *.latency). Default: all\n"
         "  --out <file.toon.txt>  Write the results file (TOON text format)\n"
         "  --compare <file>       Show the change against a saved results file\n"
@@ -386,7 +387,13 @@ static int log_sensors_only(const wchar_t* path, u32 interval_ms, u32 seconds, c
 
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
+    if (!cpu_baseline_ok()) {
+        fprintf(stderr, "%s\n", CPU_BASELINE_MSG);
+        return 1;
+    }
     sysinfo_init();
+    for (int i = 1; i < argc; ++i)      // dev: act like a pre-AVX CPU (gated tests skip, SSE memory kernels)
+        if (!wcscmp(argv[i], L"--cpu-baseline")) sysinfo_cap_to_baseline();
     for (int i = 1; i < argc; ++i)      // stability tester: its own mode and options
         if (!wcscmp(argv[i], L"--stress") || !wcscmp(argv[i], L"--whea-history")) return stability_cli(argc, argv);
     runner_init();
@@ -417,6 +424,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--hide-serial")) hide_serial = true;
         else if (!wcscmp(a, L"--list")) list = true;
         else if (!wcscmp(a, L"--pause")) pause = true;
+        else if (!wcscmp(a, L"--cpu-baseline")) {}      // applied right after sysinfo_init
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--adv-report")) adv_report = true;
         else if (!wcscmp(a, L"--no-adv-sensors")) adv_set_enabled(false);
@@ -499,8 +507,8 @@ int wmain(int argc, wchar_t** argv) {
 
     if (list) {
         for (u32 i = 0; i < g_bench_count; ++i)
-            printf("%-28s %s / %s / %s\n", g_benches[i].cli_id, g_suites[g_benches[i].suite].name, g_benches[i].group,
-                   g_benches[i].name);
+            printf("%-28s %s / %s / %s%s\n", g_benches[i].cli_id, g_suites[g_benches[i].suite].name, g_benches[i].group,
+                   g_benches[i].name, bench_unsupported(i) ? "  (not supported by this CPU)" : "");
         return 0;
     }
 

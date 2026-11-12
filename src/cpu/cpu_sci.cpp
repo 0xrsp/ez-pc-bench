@@ -4,6 +4,7 @@
 #include "cpu/cpu_internal.h"
 #include "core/mem_util.h"
 #include "core/results.h"
+#include "core/sysinfo.h"
 #include "core/threads.h"
 #include "core/throughput.h"
 #include "core/timer.h"
@@ -29,7 +30,7 @@ static constexpr u32 FFT_N = 1u << FFT_LOG2;      // 16384 points = 256 KiB per 
 
 // Forward transform of x (n points, natural order in and out) using y as scratch. w[k] = exp(-2 pi i k / n).
 // Returns the buffer that holds the result (x or y).
-Cpx* fft_stockham(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) {
+FORCE_INLINE static Cpx* fft_body(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) {
     u32 m = n, s = 1;
     while (m >= 4) {
         const u32 q4 = m / 4, wstep = n / m * wstride;
@@ -59,6 +60,12 @@ Cpx* fft_stockham(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) {
         Cpx* t = x; x = y; y = t;
     }
     return x;
+}
+
+TARGET_AVX2 static Cpx* fft_avx2(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) { return fft_body(x, y, w, n, wstride); }
+static Cpx* fft_base(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) { return fft_body(x, y, w, n, wstride); }
+Cpx* fft_stockham(Cpx* x, Cpx* y, const Cpx* w, u32 n, u32 wstride) {
+    return g_sys.cpu.avx2 && g_sys.cpu.fma ? fft_avx2(x, y, w, n, wstride) : fft_base(x, y, w, n, wstride);
 }
 
 // Inverse via conjugation: ifft(x) = conj(fft(conj(x))) / n.
@@ -157,7 +164,7 @@ static void nbody_init(NBody* b, u64 seed) {
     }
 }
 
-static inline f32 hsum8(__m256 v) {
+TARGET_AVX2 static inline f32 hsum8(__m256 v) {
     __m128 s = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
     s = _mm_add_ps(s, _mm_movehl_ps(s, s));
     s = _mm_add_ss(s, _mm_movehdup_ps(s));
@@ -166,7 +173,7 @@ static inline f32 hsum8(__m256 v) {
 
 // AVX2, 8 bodies j at a time (precise FP keeps the compiler from vectorizing the sums itself). Exact
 // sqrt + divide, not the rsqrt approximation.
-static void nbody_accel(NBody* b) {
+TARGET_AVX2 static void nbody_accel(NBody* b) {
     const __m256 soft = _mm256_set1_ps(NB_SOFT2), one = _mm256_set1_ps(1.0f);
     for (u32 i = 0; i < NB; ++i) {
         const __m256 xi = _mm256_set1_ps(b->x[i]), yi = _mm256_set1_ps(b->y[i]), zi = _mm256_set1_ps(b->z[i]);
@@ -188,7 +195,7 @@ static void nbody_accel(NBody* b) {
     }
 }
 
-static void nbody_step(NBody* b) {
+TARGET_AVX2 static void nbody_step(NBody* b) {
     nbody_accel(b);
     for (u32 i = 0; i < NB; ++i) {
         b->vx[i] += b->ax[i] * NB_DT; b->vy[i] += b->ay[i] * NB_DT; b->vz[i] += b->az[i] * NB_DT;
@@ -307,7 +314,7 @@ static void ray_scene_init(RayScene* s) {
 }
 
 // Slab test of rays [r0, r1) against every box; returns the hit count.
-static u64 ray_box(const RayScene* s, u32 r0, u32 r1) {
+FORCE_INLINE static u64 ray_box_body(const RayScene* s, u32 r0, u32 r1) {
     u64 hits = 0;
     for (u32 i = r0; i < r1; ++i) {
         const f32 ox = s->ox[i], oy = s->oy[i], oz = s->oz[i];
@@ -327,7 +334,7 @@ static u64 ray_box(const RayScene* s, u32 r0, u32 r1) {
 }
 
 // Moller-Trumbore of rays [r0, r1) against every triangle (hits in front of the origin).
-static u64 ray_tri(const RayScene* s, u32 r0, u32 r1) {
+FORCE_INLINE static u64 ray_tri_body(const RayScene* s, u32 r0, u32 r1) {
     u64 hits = 0;
     for (u32 i = r0; i < r1; ++i) {
         const f32 o[3] = { s->ox[i], s->oy[i], s->oz[i] }, d[3] = { s->dx[i], s->dy[i], s->dz[i] };
@@ -348,6 +355,17 @@ static u64 ray_tri(const RayScene* s, u32 r0, u32 r1) {
         hits += h;
     }
     return hits;
+}
+
+TARGET_AVX2 static u64 ray_box_avx2(const RayScene* s, u32 r0, u32 r1) { return ray_box_body(s, r0, r1); }
+static u64 ray_box_base(const RayScene* s, u32 r0, u32 r1) { return ray_box_body(s, r0, r1); }
+static u64 ray_box(const RayScene* s, u32 r0, u32 r1) {
+    return g_sys.cpu.avx2 && g_sys.cpu.fma ? ray_box_avx2(s, r0, r1) : ray_box_base(s, r0, r1);
+}
+TARGET_AVX2 static u64 ray_tri_avx2(const RayScene* s, u32 r0, u32 r1) { return ray_tri_body(s, r0, r1); }
+static u64 ray_tri_base(const RayScene* s, u32 r0, u32 r1) { return ray_tri_body(s, r0, r1); }
+static u64 ray_tri(const RayScene* s, u32 r0, u32 r1) {
+    return g_sys.cpu.avx2 && g_sys.cpu.fma ? ray_tri_avx2(s, r0, r1) : ray_tri_base(s, r0, r1);
 }
 
 static RayScene* s_rays;

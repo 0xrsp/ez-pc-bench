@@ -397,6 +397,10 @@ static void tool_frame(u32 id, bool vsync) {
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
+    if (!cpu_baseline_ok()) {
+        MessageBoxA(nullptr, CPU_BASELINE_MSG, "ez-pc-bench", MB_OK | MB_ICONERROR);
+        return 1;
+    }
     ImGui_ImplWin32_EnableDpiAwareness();
 
     // Always ask for admin first; continue with warnings if the user declines.
@@ -411,6 +415,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     theme_take_change();
 
     sysinfo_init();
+    if (cmdline && wcsstr(cmdline, L"--cpu-baseline")) sysinfo_cap_to_baseline();   // dev: act like a pre-AVX CPU
     runner_init();
     ui_init();
     adv_init();     // PawnIO advanced sensors, after the settings (their on / off switch) are loaded

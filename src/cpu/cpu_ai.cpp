@@ -76,7 +76,7 @@ __attribute__((target("avxvnni"))) static void gemm_i8_avxvnni(const u8* a, cons
 }
 
 // AVX2: vpmaddubsw (u8 x i8 pairs -> s16, saturating; our values never saturate) + vpmaddwd by 1.
-static void gemm_i8_avx2(const u8* a, const u8* b, i32* c) {
+TARGET_AVX2 static void gemm_i8_avx2(const u8* a, const u8* b, i32* c) {
     const __m256i ones = _mm256_set1_epi16(1);
     for (u32 i0 = 0; i0 < AM; i0 += 6) {
         for (u32 n0 = 0; n0 < AN; n0 += 16) {
