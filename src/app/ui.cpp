@@ -456,6 +456,8 @@ static void draw_targets() {
     }
     // CrystalDiskMark profile: shows the profile the disk test selection matches, "Custom" otherwise.
     ImGui::SameLine(0.0f, ImGui::GetFontSize());
+    ImGui::TextDisabled("Disk profile");
+    ImGui::SameLine();
     const DiskProfile* dp = disk_profile_match(s_ui.selected);
     ImGui::SetNextItemWidth(ImGui::CalcTextSize("Real World").x + ImGui::GetFrameHeight() * 2.0f);
     if (ImGui::BeginCombo("##dprofile", dp ? dp->name : "Custom")) {
