@@ -12,6 +12,7 @@ struct CpuTopology {
     u8  number[MAX_LP];     // per LP: number within group
     u16 core[MAX_LP];       // per LP: physical core id (0..core_count-1)
     u8  sched_class[MAX_LP];// per LP: Windows scheduling class (higher = preferred core)
+    u8  eff_class[MAX_LP];  // per LP: CPU-set EfficiencyClass (hybrid CPUs: higher = performance core; else all 0)
     u32 order[MAX_LP];      // LPs in placement order: best physical core first, one LP per core, then SMT siblings
     u32 best_lp;            // = order[0]
 };

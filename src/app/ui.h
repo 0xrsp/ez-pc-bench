@@ -6,6 +6,8 @@ void ui_init();                         // also loads the saved settings
 void ui_shutdown();                     // saves pending settings changes
 void ui_start_run();                    // start a run with the current selection/settings
 void ui_set_duration(u32 ms);
+void ui_set_sustain(u32 seconds);       // dev: sustained mode for this session (--sustain <minutes>)
+void ui_show_charts();                  // dev: open the Charts tab (--charts)
 void ui_select_only(const char* ids);   // dev: comma-separated test ids / prefixes ("smoke.preview,cpu.int")
 void ui_set_dev(bool dev);              // dev: show the smoke-test suite
 void ui_set_tab(const char* name);      // dev: results / charts / score / ranking

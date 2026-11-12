@@ -31,6 +31,34 @@ BENCH_FN(cpu_sort);
 BENCH_FN(cpu_sieve);
 BENCH_FN(cpu_c2c);
 BENCH_FN(cpu_scaling);
+// cpu/cpu_topo.cpp, cpu_compress.cpp, cpu_image.cpp, cpu_parse.cpp, cpu_sci.cpp, cpu_hash.cpp, cpu_ai.cpp,
+// cpu_pi.cpp, cpu_micro.cpp
+BENCH_FN(cpu_percore);
+BENCH_FN(cpu_hybrid);
+BENCH_FN(cpu_comp_xpress);
+BENCH_FN(cpu_comp_xpress_huff);
+BENCH_FN(cpu_comp_mszip);
+BENCH_FN(cpu_comp_lzms);
+BENCH_FN(cpu_comp_lz77);
+BENCH_FN(cpu_img_jpeg);
+BENCH_FN(cpu_img_png);
+BENCH_FN(cpu_img_resize);
+BENCH_FN(cpu_parse_json);
+BENCH_FN(cpu_parse_text);
+BENCH_FN(cpu_fft);
+BENCH_FN(cpu_nbody);
+BENCH_FN(cpu_raybox);
+BENCH_FN(cpu_raytri);
+BENCH_FN(cpu_crc32c);
+BENCH_FN(cpu_xxhash);
+BENCH_FN(cpu_aes_gcm);
+BENCH_FN(cpu_chacha20);
+BENCH_FN(cpu_ai_int8);
+BENCH_FN(cpu_ai_bf16);
+BENCH_FN(cpu_pi);
+BENCH_FN(cpu_instr_table);
+BENCH_FN(cpu_branch);
+BENCH_FN(cpu_code_footprint);
 
 // mem/mem_bench.cpp
 SUITE_FNS(mem);
@@ -81,10 +109,36 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Floating point", "SGEMM 1920x1920 (AVX2)",    "cpu.fp.sgemm",      cpu_sgemm,          0 },
     { SUITE_CPU, "Crypto",         "SHA-256 (SHA-NI)",          "cpu.crypto.sha256", cpu_sha256,         0 },
     { SUITE_CPU, "Crypto",         "AES-128-CTR",               "cpu.crypto.aes",    cpu_aes,            0 },
+    { SUITE_CPU, "Crypto",         "AES-128-GCM (Windows CNG)", "cpu.crypto.aes_gcm", cpu_aes_gcm,       0 },
+    { SUITE_CPU, "Crypto",         "ChaCha20 (AVX2)",           "cpu.crypto.chacha20", cpu_chacha20,     0 },
+    { SUITE_CPU, "Crypto",         "CRC32C (SSE4.2)",           "cpu.crypto.crc32c", cpu_crc32c,         0 },
+    { SUITE_CPU, "Crypto",         "xxHash64",                  "cpu.crypto.xxhash", cpu_xxhash,         0 },
     { SUITE_CPU, "Workloads",      "Sort 16M u32",              "cpu.work.sort",     cpu_sort,           0 },
     { SUITE_CPU, "Workloads",      "Prime sieve to 1e9",        "cpu.work.sieve",    cpu_sieve,          0 },
+    { SUITE_CPU, "Workloads",      "Pi, 1M digits (Chudnovsky, FFT)", "cpu.work.pi", cpu_pi,             BENCH_DEFAULT_OFF },
+    { SUITE_CPU, "Compression",    "XPRESS (Windows)",          "cpu.comp.xpress",   cpu_comp_xpress,    0 },
+    { SUITE_CPU, "Compression",    "XPRESS Huffman (Windows)",  "cpu.comp.xpress_huff", cpu_comp_xpress_huff, 0 },
+    { SUITE_CPU, "Compression",    "MSZIP / Deflate (Windows)", "cpu.comp.mszip",    cpu_comp_mszip,     0 },
+    { SUITE_CPU, "Compression",    "LZMS (Windows)",            "cpu.comp.lzms",     cpu_comp_lzms,      0 },
+    { SUITE_CPU, "Compression",    "LZ77 (own, LZ4-style)",     "cpu.comp.lz77",     cpu_comp_lz77,      0 },
+    { SUITE_CPU, "Image",          "JPEG decode (WIC)",         "cpu.img.jpeg",      cpu_img_jpeg,       0 },
+    { SUITE_CPU, "Image",          "PNG decode (WIC)",          "cpu.img.png",       cpu_img_png,        0 },
+    { SUITE_CPU, "Image",          "Resize 1080p to 720p, cubic (WIC)", "cpu.img.resize", cpu_img_resize, 0 },
+    { SUITE_CPU, "Parsing",        "JSON parse",                "cpu.parse.json",    cpu_parse_json,     0 },
+    { SUITE_CPU, "Parsing",        "Tokenize + count words",    "cpu.parse.text",    cpu_parse_text,     0 },
+    { SUITE_CPU, "Science",        "FFT 16K complex (FP64)",   "cpu.sci.fft",       cpu_fft,            0 },
+    { SUITE_CPU, "Science",        "N-body 2048 (FP32)",        "cpu.sci.nbody",     cpu_nbody,          0 },
+    { SUITE_CPU, "Science",        "Ray-box intersection",      "cpu.sci.raybox",    cpu_raybox,         0 },
+    { SUITE_CPU, "Science",        "Ray-triangle intersection", "cpu.sci.raytri",    cpu_raytri,         0 },
+    { SUITE_CPU, "AI inference",   "INT8 matrix multiply",      "cpu.ai.int8",       cpu_ai_int8,        0 },
+    { SUITE_CPU, "AI inference",   "BF16 matrix multiply",      "cpu.ai.bf16",       cpu_ai_bf16,        0 },
     { SUITE_CPU, "Topology",       "Core-to-core latency",      "cpu.topo.c2c",      cpu_c2c,            0 },
     { SUITE_CPU, "Topology",       "Thread scaling (AVX2 FMA)", "cpu.topo.scaling",  cpu_scaling,        0 },
+    { SUITE_CPU, "Topology",       "Per-core single thread",    "cpu.topo.percore",  cpu_percore,        0 },
+    { SUITE_CPU, "Topology",       "P-cores vs E-cores (hybrid)", "cpu.topo.hybrid", cpu_hybrid,         0 },
+    { SUITE_CPU, "Microarchitecture", "Instruction latency / throughput", "cpu.micro.instr", cpu_instr_table, BENCH_DEFAULT_OFF },
+    { SUITE_CPU, "Microarchitecture", "Branch predictor",       "cpu.micro.branch",  cpu_branch,         BENCH_DEFAULT_OFF },
+    { SUITE_CPU, "Microarchitecture", "Code footprint (op cache, L1i)", "cpu.micro.code", cpu_code_footprint, BENCH_DEFAULT_OFF },
 
     { SUITE_MEM, "DRAM bandwidth", "Read",                     "mem.bw.read",       mem_read,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Write",                     "mem.bw.write",      mem_write,          0 },

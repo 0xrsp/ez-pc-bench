@@ -445,6 +445,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     s_main_io = &io;
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (const wchar_t* s = wcsstr(cmdline, L"--sustain ")) ui_set_sustain((u32)(_wtof(s + 10) * 60.0 + 0.5));
+        if (wcsstr(cmdline, L"--charts")) ui_show_charts();
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
         if (const wchar_t* t = wcsstr(cmdline, L"--tab ")) {       // dev: open the output panel on this tab
             char name[16] = {};

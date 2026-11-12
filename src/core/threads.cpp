@@ -30,6 +30,7 @@ void topo_init() {
         t->group[lp] = e->CpuSet.Group;
         t->number[lp] = e->CpuSet.LogicalProcessorIndex;
         t->sched_class[lp] = e->CpuSet.SchedulingClass;
+        t->eff_class[lp] = e->CpuSet.EfficiencyClass;
         u32 c = 0;
         while (c < t->core_count && !(core_key[c] == e->CpuSet.CoreIndex)) ++c;
         if (c == t->core_count) {

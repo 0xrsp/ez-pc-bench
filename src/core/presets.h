@@ -1,6 +1,6 @@
 #pragma once
 // One-click run presets (FUTURE.md section 11): a test selection plus the run settings that go with it.
-// Sustained / thermal comes with the sustained mode (section 3). Score runs exactly the score inputs (score.h).
+// Sustained loops each test for minutes (runner.h); Score runs exactly the score inputs (score.h).
 #include "core/bench.h"
 
 enum PresetSelect : u8 {
@@ -16,6 +16,7 @@ struct RunPreset {
     PresetSelect select;
     const char* ids;        // PRESET_SEL_LIST: comma-separated test ids
     u32 duration_ms, repeat, disk_passes, disk_file_mib;
+    u32 sustain_s;          // sustained mode seconds per test, 0 = off
 };
 
 extern const RunPreset g_presets[];

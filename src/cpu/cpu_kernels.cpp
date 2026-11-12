@@ -18,6 +18,25 @@ u64 k_int_alu(u64 iters) {
     return iters * 12;
 }
 
+// One dependent chain of 16 single-cycle adds per iteration (the loop counter runs alongside): returns
+// the chain length, i.e. core clock cycles. Only meaningful with the SMT sibling idle.
+u64 k_add_chain(u64 iters) {
+    u64 n = iters;
+    __asm__ volatile(
+        "xor %%eax, %%eax\n\t"
+        "1:\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "dec %0\n\t"
+        "jnz 1b\n\t"
+        : "+r"(n)
+        :
+        : "rax", "cc");
+    return iters * 16;
+}
+
 u64 k_int_mul(u64 iters) {
     u64 n = iters;
     __asm__ volatile(

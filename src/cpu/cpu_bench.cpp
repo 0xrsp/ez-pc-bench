@@ -14,7 +14,27 @@
 
 // ---- suite ------------------------------------------------------------------------------
 
+CpuExt g_cpu_ext;
+
+static void cpu_ext_init() {
+    int r[4];
+    __cpuid(r, 0);
+    const int max_leaf = r[0];
+    __cpuid(r, 1);
+    g_cpu_ext.pclmul = (r[2] >> 1) & 1;
+    if (max_leaf < 7) return;
+    __cpuidex(r, 7, 0);
+    const u32 sub_leaves = (u32)r[0];
+    g_cpu_ext.vpclmulqdq = g_sys.cpu.avx2 && ((r[2] >> 10) & 1);
+    g_cpu_ext.gfni = (r[2] >> 8) & 1;
+    if (sub_leaves < 1) return;
+    __cpuidex(r, 7, 1);
+    g_cpu_ext.avx_vnni = g_sys.cpu.avx2 && ((r[0] >> 4) & 1);
+    g_cpu_ext.avx512_bf16 = g_sys.cpu.avx512f && ((r[0] >> 5) & 1);
+}
+
 bool cpu_init(const BenchParams*, void** state, char*, u32) {
+    cpu_ext_init();
     topo_init();
     pool_init();
     *state = nullptr;

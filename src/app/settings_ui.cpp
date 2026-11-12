@@ -123,6 +123,16 @@ void settings_ui_draw() {
         int repeat = (int)p->repeat;
         if (ImGui::SliderInt("##repeat", &repeat, 1, (int)MAX_REPEAT, repeat > 1 ? "%dx (median)" : "once"))
             p->repeat = (u32)repeat;
+
+        const char* sustain_help = "Sustained (thermal) mode, like Cinebench's minimum test duration: every selected test "
+                                   "loops for this many minutes (at least two passes) and reports the median, plus the "
+                                   "first and last pass, min, max and the drop from the first to the last pass. The Charts "
+                                   "tab plots every pass, which shows boost decay, power limits and thermal throttling. "
+                                   "Overrides \"Repeat each test\". Off by default.";
+        row("Sustained mode", sustain_help);
+        int sustain_min = (int)((p->sustain_s + 59) / 60);
+        if (ImGui::SliderInt("##sustain", &sustain_min, 0, 60, sustain_min ? "%d min per test" : "off"))
+            p->sustain_s = (u32)sustain_min * 60;
         end_group();
     }
 
@@ -205,6 +215,7 @@ void settings_ui_draw() {
         p->disk_passes = d.disk_passes;
         p->disk_write_through = d.disk_write_through;
         p->repeat = d.repeat;
+        p->sustain_s = d.sustain_s;
     }
     theme_help("Restores the benchmark, GPU and disk settings above to their defaults. The theme and the GPU / disks "
                "picked in the main window stay as they are.");
