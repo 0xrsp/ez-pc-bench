@@ -644,6 +644,13 @@ Waiting on the user (2026-11-11):
 
 ## 12. Decision log
 
+- 2026-11-12 (themes; details in [notes/themes.md](notes/themes.md)): the graphite / cyan / orchid palette below is
+  replaced by plain Light / Dark (neutral grays, one blue accent) plus ten named schemes (Solarized Dark / Light,
+  Monokai, Dracula, Nord, Gruvbox Dark, One Dark, Catppuccin Mocha / Latte, GitHub Light) in one static table in
+  `theme.cpp` (13 colors + 9 graph hues each). ini `theme=` takes ids (`system`, `light`, `dark`, `solarized-dark`,
+  ...); GUI `--theme <id>` is session only. Graph frames and grid lines use the theme's neutral colors; only the data
+  line and its fill use the unit hue, taken from the current theme (`g_pal.series`).
+
 - 2026-11-12 (look and graphs; details in [notes/theme-refresh.md](notes/theme-refresh.md),
   [notes/graphs.md](notes/graphs.md), [notes/pawnio.md](notes/pawnio.md) §10):
   - Theme replaces the Material 3 trial below: blue-black surfaces (dark page #0B0E14), cyan primary for actions and

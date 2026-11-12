@@ -71,7 +71,7 @@ keep it updated (decision log, open questions, measured facts).
   `--score [files...]` (`--score-write`), `--html <file>`, `--adv-report` (PawnIO sensors), `--pawnio-modules` (download them); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
   `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests). `-h` prints the full usage.
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
-  suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark`, `--compare [files...]` (opens the compare
+  suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark` / `--theme <id>` (e.g. `solarized-dark`, `monokai`; ids in theme.cpp), `--compare [files...]` (opens the compare
   window with those results), `--tool compare|settings|bench|sensors|health|system|stability|history` (`temps` =
   `sensors`; `bench` = Benchmark settings) (opens that tool window), `--tab results|charts|score|ranking`, `--charts`
   (= `--tab charts`), `--sustain <minutes>`, `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor

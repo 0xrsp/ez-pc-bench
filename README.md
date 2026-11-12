@@ -40,9 +40,10 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   with the results, with warnings for clock drops, battery and heat.
 
 **Tools**
-- [x] **Sensors:** per-core clock and load, CPU package and per-core power, GPU clocks / load / VRAM /
-  power / PCIe link, battery charge and discharge rate, temperatures; search box, sensor log (CSV) and an
-  on-screen overlay.
+- [x] **Sensors:** a Task Manager-style overview (device list with mini graphs; CPU, GPU, memory, drive,
+  power and temperature graphs): per-core clock and load, CPU package and per-core power, GPU clocks / load /
+  VRAM / power / PCIe link, memory in use, battery charge and discharge rate, temperatures; search box, sensor
+  log (CSV) and an on-screen overlay.
 - [x] **Disk health (CrystalDiskInfo-style):** SMART table with vendor names, Good / Caution / Bad,
   drive info, NVMe details, self-tests, USB enclosures, text report (`--health`).
 - [x] **Stability tester:** self-checking CPU, cache and per-core load, memory error test, VRAM test, GPU
@@ -52,8 +53,8 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   tree with link speeds, USB, network and audio devices, Windows settings that skew results (VBS, memory
   integrity, Game Mode, HAGS); exportable report (`--sysinfo`).
 - [x] **Advanced sensors (opt-in PawnIO driver):** per-core CPU temperatures, power and clocks, RAM
-  temperatures, SPD and memory timings. Settings has a Download & install button for the official
-  installer. Untested so far: PawnIO isn't installed on the development PC yet.
+  temperatures, SPD and memory timings. Settings has a Download & install button that fetches the official
+  installer and the PawnIO modules (checked against a pinned hash). Not yet tested with the driver loaded.
 
 **Results**
 - [x] TOON text files; a compare window for up to 16 runs (summary, per-suite tabs, change vs a reference,
@@ -61,7 +62,11 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   trend charts; ranking against the library.
 - [x] An overall score (preliminary) derived from the raw results by a published, versioned formula, with
   CPU single-thread, CPU multi-thread, memory, GPU and storage components. Raw numbers stay primary.
-- [x] GUI and CLI with the same tests; light / dark theme; settings saved automatically.
+- [x] Graphs in one Task Manager-like style everywhere (live panel, charts, history, sensors, stability),
+  colored by what they measure: load, clock, power, temperature, memory, latency, disk.
+- [x] Color themes: plain Light and Dark (or follow Windows) plus Solarized Dark / Light, Monokai, Dracula,
+  Nord, Gruvbox Dark, One Dark, Catppuccin Mocha / Latte and GitHub Light.
+- [x] GUI and CLI with the same tests; settings saved automatically.
 
 ### To do
 
@@ -153,18 +158,9 @@ so you can add them from **Library...** in the compare window. The main referenc
 RTX 5060 Laptop / Samsung NVMe laptop on AC, Best performance, as admin:
 [library/2026-11-11_r7-250_rtx5060-laptop.toon.txt](library/2026-11-11_r7-250_rtx5060-laptop.toon.txt).
 
-## Website
-
-The site at <https://0xrsp.github.io/ez-pc-bench/> is plain HTML in [site/](site/), deployed by GitHub Actions
-on every push to `main` that touches it. To preview it locally (needs Python 3):
-
-```
-powershell -ExecutionPolicy Bypass -File tools\serve_site.ps1
-```
-
-then open <http://localhost:8765>. The script copies the Inter fonts into `site/fonts/` (git-ignored) and
-runs Python's built-in web server; stop it with Ctrl+C.
+## License
 
 Design notes and measurements: [docs/PLAN.md](docs/PLAN.md).
 
-MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1).
+MIT licensed, see [LICENSE](LICENSE). Third-party: Dear ImGui (MIT), Inter font (SIL OFL 1.1). PawnIO
+(driver GPL-2.0, modules LGPL-2.1) isn't bundled: it's downloaded only when you click Download & install.
