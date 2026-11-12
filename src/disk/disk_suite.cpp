@@ -165,7 +165,10 @@ static bool try_create(DiskTarget* t, const wchar_t* dir, const wchar_t* path, c
     }
     const DWORD flags = FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_FLAG_DELETE_ON_CLOSE |
                         (g_disk.buffered ? 0 : FILE_FLAG_NO_BUFFERING);
-    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE | DELETE, SHARE_ALL, nullptr, CREATE_ALWAYS, flags, nullptr);
+    // No FILE_SHARE_DELETE: another instance's stale-file cleanup (DeleteFileW, which unlinks open files right away
+    // with POSIX delete semantics) then fails instead of pulling the file and its folder out from under this run.
+    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           CREATE_ALWAYS, flags, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         snprintf(error, error_size, "cannot create test file (error %lu)", GetLastError());
         return false;

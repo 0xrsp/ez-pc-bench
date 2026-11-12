@@ -314,7 +314,7 @@ void disk_sustained_write(void*, const BenchParams* p, BenchLive* live, BenchRes
         if (windows) {
             f64 in_cache = 0.0;
             const i32 cache_end = find_cache_end(&in_cache);
-            const f64 total_gb = s_run.n * (f64)SUS_BLOCK / 1e9;
+            const f64 total_gb = floor(s_run.n * (f64)SUS_BLOCK / 1e9 * 1000.0 + 0.5) / 1000.0;
             add_series(out, t->label);
             // Summary lines, one point each at the total written. "Cache drop at" is 0 when the speed never fell
             // below 60 % of the in-cache speed (cache larger than what was written, or no SLC cache).

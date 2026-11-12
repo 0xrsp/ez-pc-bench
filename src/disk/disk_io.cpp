@@ -153,6 +153,8 @@ static DWORD WINAPI io_thread(void* arg) {
     u64 live_ios = 0, live_lat = 0;
     bool stopping = w->error != 0;
     bool cancelled_io = false;
+    u64 stop_tick = 0;
+    const u64 grace_ticks = (u64)(1.0 / timer_tick_seconds());
     while (outstanding) {
         ULONG n = 0;
         if (!GetQueuedCompletionStatusEx(w->iocp, entries, ARRAY_COUNT(entries), &n, 50, FALSE)) {
@@ -161,6 +163,7 @@ static DWORD WINAPI io_thread(void* arg) {
         }
         u64 now = timer_ticks();
         stopping = stopping || w->error || pass->stop.load(std::memory_order_relaxed);
+        if (stopping && !stop_tick) stop_tick = now;
         for (ULONG i = 0; i < n; ++i) {
             const u32 slot = (u32)(entries[i].lpOverlapped - w->ov);
             const bool write = w->slot_write[slot];
@@ -175,7 +178,12 @@ static DWORD WINAPI io_thread(void* arg) {
                 stopping = true;
                 continue;
             }
-            if (stopping) continue;
+            if (stopping) {
+                // Drained after the stop: not counted for throughput (the pass is over), but its latency is real,
+                // so a request that stalled across the end of the pass still shows up in the tail.
+                hist_add(&w->hist[write], now - w->issue_tick[slot]);
+                continue;
+            }
             if (write && s->flush) {
                 if (!FlushFileBuffers(w->file)) {
                     w->error = GetLastError();
@@ -194,8 +202,8 @@ static DWORD WINAPI io_thread(void* arg) {
         }
         w->live_ios.store(live_ios, std::memory_order_relaxed);
         w->live_lat.store(live_lat, std::memory_order_relaxed);
-        if (stopping && outstanding && !cancelled_io) {
-            // Requests in flight finish in microseconds; cancel anyway so a stuck device can't hang us.
+        if (stopping && outstanding && !cancelled_io && (w->error || now - stop_tick > grace_ticks)) {
+            // Requests in flight normally finish within milliseconds; cancel after 1 s so a stuck device can't hang us.
             CancelIoEx(w->file, nullptr);
             cancelled_io = true;
         }
