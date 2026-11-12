@@ -15,3 +15,5 @@ IntegrityState integrity_check(const char* data, u32 size);
 const char* integrity_name(IntegrityState s);   // "not signed", "edited", "intact"
 // SHA-256 of the running exe as 64 hex digits (computed once).
 const char* integrity_exe_sha256();
+// SHA-256 of a buffer as 64 lowercase hex digits; "" on failure.
+void sha256_hex(const void* data, u32 size, char hex[65]);

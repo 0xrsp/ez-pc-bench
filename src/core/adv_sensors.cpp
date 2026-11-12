@@ -2,6 +2,7 @@
 // one sampling thread and the snapshots consumers copy. The per-area readers are adv_cpu.cpp, adv_smbus.cpp
 // and adv_umc.cpp. UNTESTED against the real driver (PawnIO wasn't installed on the development machine).
 #include "core/adv_internal.h"
+#include "core/pawnio_modules.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
@@ -30,7 +31,7 @@ const char* adv_status_text(AdvStatus st) {
         case ADV_NOT_RUNNING: return "installed, driver not running";
         case ADV_OFF: return "off";
         case ADV_NEEDS_ADMIN: return "needs administrator rights";
-        case ADV_NO_MODULES: return "module files missing";
+        case ADV_NO_MODULES: return "modules not downloaded";
         case ADV_UNSUPPORTED: return "not supported on this PC";
         case ADV_ACTIVE: return "on";
     }
@@ -71,25 +72,34 @@ static void open_modules() {
         snprintf(s_info.detail, sizeof(s_info.detail), "No decoder for this CPU (%s, family 0x%X).", c->vendor, c->family);
         return;
     }
-    const u32 cpu_err = open_module(&g_adv.cpu, g_adv.amd ? PM_AMD17 : PM_INTEL_MSR);
-    const u32 smu_err = g_adv.amd ? open_module(&g_adv.smu, PM_RYZEN_SMU) : 0;
+    const PawnModuleId cpu_mod = g_adv.amd ? PM_AMD17 : PM_INTEL_MSR;
     const PawnModuleId bus = g_adv.amd ? PM_SMBUS_PIIX4 : PM_SMBUS_I801;
+    // Every module this CPU uses must be there; otherwise the GUI offers its "Download modules" button.
+    const PawnModuleId need[] = { cpu_mod, bus, PM_RYZEN_SMU };
+    char missing[64] = "";
+    for (u32 i = 0; i < (g_adv.amd ? 3u : 2u); ++i)
+        if (!pawnio_module_available(need[i])) {
+            const size_t len = strlen(missing);
+            snprintf(missing + len, sizeof(missing) - len, "%s%s", len ? ", " : "", pawnio_module_name(need[i]));
+        }
+    if (missing[0]) {
+        s_info.status = ADV_NO_MODULES;
+        snprintf(s_info.detail, sizeof(s_info.detail), "PawnIO is installed; its signed modules (%s) aren't downloaded "
+                 "yet: Settings > Download modules, or the CLI's --pawnio-modules.", missing);
+        return;
+    }
+    const u32 cpu_err = open_module(&g_adv.cpu, cpu_mod);
+    const u32 smu_err = g_adv.amd ? open_module(&g_adv.smu, PM_RYZEN_SMU) : 0;
     const u32 bus_err = open_module(&g_adv.smbus, bus);
     if (!g_adv.cpu.h && !g_adv.smu.h && !g_adv.smbus.h) {
-        const bool missing = cpu_err == ERROR_FILE_NOT_FOUND && bus_err == ERROR_FILE_NOT_FOUND;
-        s_info.status = missing ? ADV_NO_MODULES : ADV_UNSUPPORTED;
-        if (missing)
-            snprintf(s_info.detail, sizeof(s_info.detail), "PawnIO is installed, but this build carries no signed PawnIO "
-                     "modules: put %s.bin and %s.bin into a \"pawnio\" folder next to the exe.",
-                     pawnio_module_name(g_adv.amd ? PM_AMD17 : PM_INTEL_MSR), pawnio_module_name(bus));
-        else
-            snprintf(s_info.detail, sizeof(s_info.detail), "The PawnIO modules refused this PC (errors %u / %u).", cpu_err, bus_err);
+        s_info.status = ADV_UNSUPPORTED;
+        snprintf(s_info.detail, sizeof(s_info.detail), "The PawnIO modules refused this PC (errors %u / %u).", cpu_err, bus_err);
         return;
     }
     s_info.status = ADV_ACTIVE;
     if (cpu_err)
-        snprintf(s_info.detail, sizeof(s_info.detail), "CPU module %s not loaded (error %u).",
-                 pawnio_module_name(g_adv.amd ? PM_AMD17 : PM_INTEL_MSR), cpu_err);
+        snprintf(s_info.detail, sizeof(s_info.detail), "CPU module %s not loaded (error %u).", pawnio_module_name(cpu_mod),
+                 cpu_err);
     else if (smu_err)
         snprintf(s_info.detail, sizeof(s_info.detail), "RyzenSMU not loaded (error %u): no PM table values.", smu_err);
     if (bus_err)
@@ -265,6 +275,26 @@ f32 adv_cpu_temp(f32 max_age_s) {
 
 // ---- CLI report ------------------------------------------------------------------------------------------
 
+// Where each module file was found, or that it's missing and where to get it.
+static void print_module_files() {
+    printf("  module files (PawnIO.Modules %s)\n", PAWNIO_MODULES_VERSION);
+    bool missing = false;
+    for (u32 i = 0; i < PM_COUNT; ++i) {
+        const char* name = pawnio_module_name((PawnModuleId)i);
+        wchar_t path[MAX_PATH];
+        char p8[MAX_PATH * 3] = "missing";
+        if (pawnio_module_path(name, path, MAX_PATH)) WideCharToMultiByte(CP_UTF8, 0, path, -1, p8, sizeof(p8), nullptr, nullptr);
+        else missing = true;
+        printf("    %-20s %s\n", name, p8);
+    }
+    if (!missing) return;
+    char url[192], d8[MAX_PATH * 3] = "?";
+    wchar_t dir[MAX_PATH];
+    pawnio_modules_url(url, sizeof(url));
+    if (pawnio_modules_dir(dir, MAX_PATH)) WideCharToMultiByte(CP_UTF8, 0, dir, -1, d8, sizeof(d8), nullptr, nullptr);
+    printf("  --pawnio-modules downloads them: %s\n  into %s\n", url, d8);
+}
+
 static void print_val(const char* label, f32 v, const char* unit, const char* fmt = "%.1f") {
     if (isnan(v)) return;
     printf("  %-22s ", label);
@@ -281,6 +311,7 @@ void adv_print_report() {
     if (s_info.detail[0]) printf("  %s\n", s_info.detail);
     if (s_info.smbus_note[0]) printf("  SMBus: %s\n", s_info.smbus_note);
     if (s_info.status == ADV_NOT_INSTALLED) printf("  installer: %ls\n", ADV_PAWNIO_SETUP_URL);
+    print_module_files();
     if (s_info.status != ADV_ACTIVE || s_thread) {
         ReleaseSRWLockExclusive(&s_ctl);
         return;

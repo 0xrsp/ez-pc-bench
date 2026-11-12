@@ -52,6 +52,12 @@ const char* integrity_exe_sha256() {
     return hex;
 }
 
+void sha256_hex(const void* data, u32 size, char hex[65]) {
+    Sha256 s;
+    if (sha_begin(&s)) sha_add(&s, data, size);
+    sha_end(&s, hex);
+}
+
 static bool excluded_block(const char* s, const char* e) {
     static const char* const keys[] = { "score:", "integrity:" };
     for (u32 i = 0; i < ARRAY_COUNT(keys); ++i) {

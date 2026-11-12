@@ -12,8 +12,8 @@
 // closed (no device / no module -> "not available") and only reads; see docs/notes/pawnio.md.
 #include "core/types.h"
 
-// The signed modules we use. Blobs come from the exe's RCDATA resources "PAWNIO_<NAME>" (CMake embeds
-// third_party/pawnio/*.bin when present) or from "<exe folder>\pawnio\<Name>.bin".
+// The signed modules we use. Blobs are "<Name>.bin" files found by core/pawnio_modules.h (the per-user download
+// folder, then "<exe folder>\pawnio\").
 enum PawnModuleId : u8 { PM_AMD17, PM_RYZEN_SMU, PM_INTEL_MSR, PM_SMBUS_PIIX4, PM_SMBUS_I801, PM_COUNT };
 
 struct Pawn {
@@ -31,7 +31,7 @@ enum PawnDetect : u8 {
 // Uninstall-entry version ("2.2.0", "" if unknown) and a probe open of the device.
 PawnDetect pawnio_detect(char* version, u32 size);
 const char* pawnio_module_name(PawnModuleId id);
-bool pawnio_module_available(PawnModuleId id);      // blob found (resource or file)
+bool pawnio_module_available(PawnModuleId id);      // blob file found
 // Opens the device and loads the module. 0 on success, else a Win32 error (ERROR_FILE_NOT_FOUND = blob missing,
 // ERROR_NOT_SUPPORTED = the module rejected this CPU / chipset, ...).
 u32 pawnio_open(Pawn* p, PawnModuleId id);
