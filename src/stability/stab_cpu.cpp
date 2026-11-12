@@ -3,9 +3,10 @@
 //
 // Known answers: each thread owns a small block of random data (in L1 with its mirror copy) and runs a kernel
 // over it many times; every run's result is compared with a reference computed once at the start by a
-// different instruction path (scalar, unoptimized code: `optnone`). FMA and multiply / add are correctly rounded
+// different instruction path (one scalar `_ss` operation at a time, auto-vectorization off). FMA and multiply / add
+// are correctly rounded
 // in every encoding, so the scalar reference must match the SIMD result bit for bit. The integer kernel's
-// reference is the same arithmetic in unoptimized scalar code. The large-data kernel streams a shared buffer
+// reference is the same arithmetic in a separate, non-inlined function. The large-data kernel streams a shared buffer
 // from RAM with per-slice references.
 #include "stability/stab_internal.h"
 #include "core/sysinfo.h"
@@ -90,13 +91,14 @@ static void k_large(const f32* s, f32* out) {
     for (u32 k = 0; k < 8; ++k) _mm256_storeu_ps(out + 8 * k, acc[k]);
 }
 
-// ---- references (scalar, unoptimized, computed once) ----------------------------------------------------
+// ---- references (scalar, not vectorized, computed once) ----------------------------------------------------
 
-__attribute__((noinline, optnone)) static void ref_float(const f32* d, u32 step, bool fused, f32* out) {
+__attribute__((noinline)) static void ref_float(const f32* d, u32 step, bool fused, f32* out) {
     for (u32 j = 0; j < step; ++j) out[j] = 0.0f;
     for (u32 r = 0; r < ROUNDS; ++r) {
         const f32* b = d + round_offset(r, SMALL_F);
         for (u32 i = 0; i < SMALL_F; i += step)
+#pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
             for (u32 j = 0; j < step; ++j) {
                 const __m128 a = _mm_set_ss(d[i + j]), m = _mm_set_ss(b[i + j]), c = _mm_set_ss(out[j]);
                 out[j] = _mm_cvtss_f32(fused ? _mm_fmadd_ss(a, m, c) : _mm_add_ss(c, _mm_mul_ss(a, m)));
@@ -104,19 +106,21 @@ __attribute__((noinline, optnone)) static void ref_float(const f32* d, u32 step,
     }
 }
 
-__attribute__((noinline, optnone)) static void ref_int(const u64* d, u64* out) {
+__attribute__((noinline)) static void ref_int(const u64* d, u64* out) {
     u64 acc[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     for (u32 r = 0; r < ROUNDS; ++r) {
         const u64* b = d + round_offset(r, SMALL_I);
         for (u32 i = 0; i < SMALL_I; i += 8)
+#pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
             for (u32 k = 0; k < 8; ++k) acc[k] = rotl(acc[k] ^ d[i + k], 23) * 0x9E3779B97F4A7C15ull + b[i + k];
     }
     for (u32 k = 0; k < 8; ++k) out[k] = acc[k];
 }
 
-__attribute__((noinline, optnone)) static void ref_large(const f32* s, f32* out) {
+__attribute__((noinline)) static void ref_large(const f32* s, f32* out) {
     for (u32 j = 0; j < 64; ++j) out[j] = 0.0f;
     for (u32 i = 0; i < SLICE_F; i += 64)
+#pragma clang loop vectorize(disable) interleave(disable) unroll(disable)
         for (u32 j = 0; j < 64; ++j) {
             const __m128 c = _mm_set_ss(0.75f + (j / 8) * 0.03125f);
             out[j] = _mm_cvtss_f32(_mm_fmadd_ss(_mm_set_ss(s[i + j]), c, _mm_set_ss(out[j])));
@@ -248,7 +252,7 @@ static f64 cpu_work(CpuShared* s, ThreadData* t, u32 index, f64 until) {
 static void large_ref_worker(u32 index, void* user) {
     CpuShared* s = (CpuShared*)user;
     const u32 n = g_topo.lp_count;
-    for (u32 slice = index; slice < s->slices; slice += n) {
+    for (u32 slice = index; slice < s->slices && !stab_done(s->deadline); slice += n) {
         f32* p = s->large + (u64)slice * SLICE_F;
         for (u32 i = 0; i < SLICE_F; ++i) p[i] = rand_float(0xABCD0000000ull + (u64)slice * SLICE_F + i);
         ref_large(p, s->large_ref + slice * 64);
@@ -394,7 +398,7 @@ static void cache_worker(u32 index, void* user) {
         const u32 level = (u32)((timer_now() - s->start) / MIX_SECONDS) % 3;
         if (index == 0) stab_phase(STAB_CACHE, CACHE_PHASE[level]);
         const u64 n = s->level_bytes[level] / 8;
-        for (u32 rep = 0; rep < 8; ++rep) {
+        for (u32 rep = 0; rep < 8 && !stab_done(s->deadline); ++rep) {
             seed = stab_mix(seed);
             u64 x = seed;
             for (u64 i = 0; i < n; ++i) { buf[i] = x; x = x * 6364136223846793005ull + 1442695040888963407ull; }

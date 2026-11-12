@@ -18,8 +18,8 @@ inline void stab_work(StabTest t, f64 add) {
 // Atomic add for work counters written by several threads.
 void stab_work_mt(StabTest t, f64 add);
 
-// Runs fn(index, user) on `count` new threads pinned to lps[index] (below-normal priority, so the desktop stays
-// usable), and waits for all of them.
+// Runs fn(index, user) on `count` new threads pinned to lps[index] (normal priority, power throttling off) and
+// waits for all of them.
 typedef void (*StabThreadFn)(u32 index, void* user);
 void stab_run_threads(u32 count, const u32* lps, StabThreadFn fn, void* user);
 

@@ -39,6 +39,32 @@ void stability_ui_on_open() {
     s_ui.cfg.run[STAB_CPU] = s_ui.cfg.run[STAB_MEM] = true;
     s_ui.duration_idx = 3;      // 10 minutes
     s_ui.dev = wcsstr(GetCommandLineW(), L"--dev") != nullptr;
+    // Dev / screenshots: --stability-run <ids> [seconds] starts a run right away (default 20 s; 1 GiB memory /
+    // VRAM, 64 MiB disk file, 2 s per core: the verification limits). With --dev, --inject runs the self-test.
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i + 1 < argc; ++i) {
+        if (wcscmp(argv[i], L"--stability-run") != 0) continue;
+        char ids[128];
+        WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1, ids, sizeof(ids), nullptr, nullptr);
+        StabConfig c = s_ui.cfg;
+        c.seconds = i + 2 < argc && argv[i + 2][0] != L'-' ? (u32)_wtoi(argv[i + 2]) : 20;
+        c.gpu_adapter = ui_params()->gpu_adapter;
+        c.mem_bytes = c.vram_bytes = 1 * GiB;
+        c.disk_bytes = 64 * MiB;
+        c.core_seconds = 2;
+        c.inject = s_ui.dev && wcsstr(GetCommandLineW(), L"--inject") != nullptr;
+        s_ui.cfg.inject = c.inject;
+        char err[160];
+        if (!stab_parse_ids(ids, &c, err, sizeof(err)) || !stab_start(&c, err, sizeof(err))) {
+            snprintf(s_ui.message, sizeof(s_ui.message), "%s", err);
+            s_ui.message_bad = true;
+        }
+        s_ui.cfg.run[STAB_CPU] = s_ui.cfg.run[STAB_MEM] = false;
+        for (u32 t = 0; t < STAB_COUNT; ++t) s_ui.cfg.run[t] = c.run[t];
+        s_ui.cfg.together = c.together;
+    }
+    if (argv) LocalFree(argv);
 }
 
 static void save_report() {

@@ -21,14 +21,14 @@
 StabRun g_stab;
 
 const StabTestDesc g_stab_tests[STAB_COUNT] = {
-    { "cpu", "CPU", "GB checked",
+    { "cpu", "CPU", "G ops checked",
       "Self-checking kernels on every logical processor: integer hashing, SSE multiply-add, AVX2 and AVX-512 FMA "
       "on cache-resident data (most heat), and FMA over a large buffer streamed from RAM. Every block's result is "
       "compared with a reference computed by a different instruction path; errors are attributed to the logical "
       "processor that made them." },
     { "cache", "Cache", "GB checked",
       "Writes, reads back and inverts patterns in L1-, L2- and L3-sized buffers on every logical processor." },
-    { "cores", "Per-core cycling", "core switches",
+    { "cores", "Per-core cycling", "G ops checked",
       "One physical core at a time under a heavy single-thread load (the CPU kernels), moving to the next core "
       "after the per-core time, like CoreCycler. Finds cores that fail with Curve Optimizer / undervolt settings "
       "that all-core loads hide (single-core boost runs at higher clocks and lower voltage margins)." },
@@ -146,7 +146,7 @@ struct ThreadStart {
 static DWORD WINAPI stab_thread_main(void* arg) {
     const ThreadStart* t = (const ThreadStart*)arg;
     pin_current_thread(t->lp);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
     THREAD_POWER_THROTTLING_STATE tt = {};      // no EcoQoS: a background window must still get full clocks
     tt.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
     tt.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;

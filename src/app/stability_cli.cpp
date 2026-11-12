@@ -61,7 +61,7 @@ static void print_status() {
         const char* ph = g_stab.tests[cur].phase.load();
         snprintf(what, sizeof(what), "%s%s%s", g_stab_tests[cur].id, ph ? ": " : "", ph ? ph : "");
     } else {
-        snprintf(what, sizeof(what), "together");
+        snprintf(what, sizeof(what), "%s", g_stab.cfg.together ? "together" : "starting");
     }
     char line[256];
     int n = snprintf(line, sizeof(line), "%s %-30.30s err %llu", el, what, stab_total_errors());
