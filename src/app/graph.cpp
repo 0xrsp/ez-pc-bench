@@ -7,26 +7,15 @@
 #include <string.h>
 
 // ---- colors ---------------------------------------------------------------------------------------------
-// One hue per kind of value. Dark variants are the lighter shades (read well on near-black), light variants
-// the deeper ones (enough contrast on white). Kept here, independent of the app palette.
-
-struct KindColor { const char* name; u32 dark, light; };
-static const KindColor KIND_COLORS[GK_COUNT] = {
-    { "Load / utilization",     0x22D3EE, 0x0891B2 },   // cyan (Task Manager's CPU)
-    { "Clock",                  0xA78BFA, 0x7C3AED },   // violet
-    { "Power",                  0xFACC15, 0xCA8A04 },   // amber
-    { "Temperature",            0xFB7185, 0xE11D48 },   // rose
-    { "Memory / bandwidth",     0xE879F9, 0xC026D3 },   // magenta (Task Manager's memory)
-    { "Latency / time",         0x60A5FA, 0x2563EB },   // blue
-    { "Disk / IOPS",            0x4ADE80, 0x16A34A },   // green (Task Manager's disk)
-    { "Compute throughput",     0xFB923C, 0xEA580C },   // orange
-    { "Count / other",          0x94A3B8, 0x64748B },   // slate
-};
+// One hue per kind of value, from the current theme (Palette::series, theme.cpp: e.g. Solarized's cyan / violet
+// / yellow / red / magenta / blue / green / orange). Box, grid and border are neutral theme colors; only the
+// line, its fill and the legend chips carry the kind's hue.
 
 const char* const g_graph_kind_names[GK_COUNT] = {
-    KIND_COLORS[0].name, KIND_COLORS[1].name, KIND_COLORS[2].name, KIND_COLORS[3].name, KIND_COLORS[4].name,
-    KIND_COLORS[5].name, KIND_COLORS[6].name, KIND_COLORS[7].name, KIND_COLORS[8].name,
+    "Load / utilization", "Clock", "Power", "Temperature", "Memory / bandwidth", "Latency / time", "Disk / IOPS",
+    "Compute throughput", "Count / other",
 };
+static_assert(GK_COUNT == THEME_SERIES, "one theme hue per graph kind");
 
 // Extra lines of a multi-line graph take these hues in order, skipping the graph's own kind.
 static const GraphKind COMPANIONS[] = { GK_POWER, GK_LOAD, GK_MEMORY, GK_DISK, GK_TEMP, GK_FREQ, GK_LATENCY, GK_RATE };
@@ -56,17 +45,14 @@ GraphKind graph_kind_for_unit(const char* unit) {
     return GK_OTHER;
 }
 
-u32 graph_rgb(GraphKind k, bool dark) {
-    const KindColor* c = &KIND_COLORS[k < GK_COUNT ? k : GK_OTHER];
-    return dark ? c->dark : c->light;
-}
+u32 graph_rgb(GraphKind k, bool dark) { return theme_series_rgb(dark ? THEME_DARK : THEME_LIGHT, k); }
 
 static ImU32 rgb_u32(u32 rgb, f32 alpha) {
     const u32 a = (u32)(alpha * 255.0f + 0.5f);
     return IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, a > 255 ? 255 : a);
 }
 
-ImU32 graph_color(GraphKind k, f32 alpha) { return rgb_u32(graph_rgb(k, theme_is_dark()), alpha); }
+ImU32 graph_color(GraphKind k, f32 alpha) { return rgb_u32(g_pal.series[k < GK_COUNT ? k : GK_OTHER], alpha); }
 
 static GraphKind line_kind(GraphKind k, u32 i) {
     if (i == 0) return k;
@@ -164,12 +150,12 @@ static f32 line_thickness() {
     return t < 1.0f ? 1.0f : t;
 }
 
-// Background tint, grid and border of the box a..b (pixel aligned).
-static void draw_box(ImDrawList* dl, ImVec2 a, ImVec2 b, GraphKind k, bool grid, const f32* vx, u32 vx_count) {
-    const bool dark = theme_is_dark();
-    dl->AddRectFilled(a, b, graph_color(k, dark ? 0.06f : 0.035f));
+// Background, grid and border of the box a..b (pixel aligned), in neutral theme colors.
+static void draw_box(ImDrawList* dl, ImVec2 a, ImVec2 b, bool grid, const f32* vx, u32 vx_count) {
+    const ImVec4 t = g_pal.on_surface;
+    dl->AddRectFilled(a, b, ImGui::GetColorU32(ImVec4(t.x, t.y, t.z, theme_is_dark() ? 0.025f : 0.02f)));
     if (grid && b.y - a.y >= ImGui::GetFontSize() * 1.8f) {      // no grid in table-row sized graphs
-        const ImU32 gc = graph_color(k, dark ? 0.12f : 0.11f);
+        const ImU32 gc = ImGui::GetColorU32(g_pal.outline_variant);
         const f32 w = b.x - a.x, h = b.y - a.y;
         if (vx) {
             for (u32 i = 0; i < vx_count; ++i) dl->AddLine(ImVec2(vx[i] + 0.5f, a.y), ImVec2(vx[i] + 0.5f, b.y), gc);
@@ -185,7 +171,7 @@ static void draw_box(ImDrawList* dl, ImVec2 a, ImVec2 b, GraphKind k, bool grid,
             dl->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), gc);
         }
     }
-    dl->AddRect(a, b, graph_color(k, dark ? 0.7f : 0.8f));
+    dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_Border));     // the frames' border (outline_variant .. outline)
 }
 
 // Translucent area between the polyline and `base`, fading towards the base.
@@ -319,7 +305,7 @@ GraphHit graph_time(const char* id, const Graph* g, const GraphLine* lines, u32 
     if (g->right) snprintf(right, sizeof(right), "%s", g->right);
     else axis_text(right, sizeof(right), hi, g->unit);
     draw_caption(dl, &f, g, lines, count, right);
-    draw_box(dl, f.a, f.b, g->kind, !f.spark, nullptr, 0);
+    draw_box(dl, f.a, f.b, !f.spark, nullptr, 0);
 
     const f32 inset = 1.0f;
     const f32 left = f.a.x + inset, rx = f.b.x - inset, top = f.a.y + inset, bottom = f.b.y - inset;
@@ -487,7 +473,7 @@ GraphHit graph_xy(const char* id, const Graph* g, const GraphLine* lines, u32 co
         }
     }
     ImGui::PopFont();
-    draw_box(dl, f.a, f.b, g->kind, !spark, ticks ? tick_x : nullptr, ticks);
+    draw_box(dl, f.a, f.b, !spark, ticks ? tick_x : nullptr, ticks);
 
     // Lines (NaN and non-positive x on a log axis = gap) and points.
     dl->PushClipRect(f.a, ImVec2(f.b.x + 1.0f, f.b.y + 1.0f), true);
