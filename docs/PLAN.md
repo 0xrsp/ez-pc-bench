@@ -675,8 +675,8 @@ Waiting on the user (2026-11-11):
     1 px frame, faint 10 x 5 grid, filled line, newest at the right, caption with title and max). Colors come from the
     unit (load cyan, clock violet, power amber, temperature rose, memory magenta, latency blue, disk green, compute
     orange), self-contained in graph.cpp and independent of the theme palette.
-  - Sensors window Overview is Task Manager-like: device list with sparklines (All, CPU, GPU n, Memory, Drives, Power,
-    Temperatures, Advanced) and the selected device's graphs, stats and tile grids (per-LP load, per-core power);
+  - Sensors window Overview is Task Manager-like: device list with sparklines (CPU, GPU n, Memory, Drives, Power,
+    Temperatures, Advanced; the "All" entry was removed 2026-11-12, CPU is the default, a search lists every match) and the selected device's graphs, stats and tile grids (per-LP load, per-core power);
     span 1 / 2 / 5 / 10 min; ini `[sensors] graph_window`, `device`.
   - PawnIO modules: downloaded with the driver (or a "Download modules" button) from the PawnIO.Modules release named by
     `PAWNIO_MODULES_VERSION`, checked against `PAWNIO_MODULES_SHA256` (`core/pawnio_modules.h`), unpacked by our own

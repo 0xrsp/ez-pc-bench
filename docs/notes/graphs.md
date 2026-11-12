@@ -99,8 +99,9 @@ GF_NO_CAPTION; graph_time("##hist", &g, &line, 1, ImVec2(0, line * 2))`.
     thumbnail (CPU load, GPU load, memory in use, hottest drive, battery rate, hottest thermal zone) and a
     one-line summary ("12%  4.63 GHz", "20.8 GiB / 31.3 GiB (66%)", "On AC, 100%", "hottest 42 °C"). The
     selected entry is tinted in its color with an accent bar.
-  - **All** stacks every section; with a search active the right side always shows the matching sections and
-    the list only the devices with a match ("All" highlighted). Picking a device clears the search.
+  - **All** stacked every section (entry removed 2026-11-12; CPU is now the default device). With a search active
+    the right side shows the matching sections and the list only the devices with a match (none highlighted).
+    Picking a device clears the search.
   - CPU: "% Utilization over 60 seconds" (large), stats (Utilization, Speed of busy cores, Fastest core, Highest
     seen, package power, Temperature: a `cpu.temp*` channel if one appears (PawnIO), else the hottest ACPI zone,
     labelled "(ACPI)"; Logical processors), clock graph (busy cores + fastest core, two lines) beside the package
@@ -119,8 +120,8 @@ GF_NO_CAPTION; graph_time("##hist", &g, &line, 1, ImVec2(0, line * 2))`.
 - **Log and overlay** tab: the two parts are `theme_group_begin("Sensor log")` / `("Overlay")` boxes.
 - `adv_ui_draw_sensors()` is the "Advanced" device and the last section of All (shown under a search when the
   search matches its topics, as before).
-- New `[sensors]` ini keys: `graph_window` (0..3) and `device` ("all", "cpu", "gpu0", "memory", "drives",
-  "power", "temps", "adv").
+- New `[sensors]` ini keys: `graph_window` (0..3) and `device` ("cpu" (default), "gpu0", "memory", "drives", "power",
+  "temps", "adv"; the old "all" and unknown keys fall back to "cpu").
 - New GUI dev flag `--sensor-view <overview|sensors|log|device>`: session-only tab or Overview device (a device
   key opens the Overview on it), for screenshots. Parsed in main_gui.cpp next to `--sensor-filter`.
 
