@@ -817,7 +817,7 @@ static void draw_live() {
         g.unit = g_live.unit.load();
         g.kind = chart_kind(b->suite, g.unit);
         g.flags = GF_ZERO;
-        g.window = LIVE_HISTORY;
+        g.window = n < 64 ? 64 : n;     // scrolls in from the right, then spans the whole history
         GraphLine line;
         line.y = hist;
         line.n = n;
