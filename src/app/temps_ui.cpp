@@ -1,8 +1,8 @@
 // Sensors window, three tabs:
-//   Overview          Task Manager style: a device list on the left (CPU, each GPU, memory, drives, power,
-//                     temperatures; each with a sparkline and a one-line summary) and the selected device's
+//   Overview          Task Manager style: a device list on the left (CPU, each GPU, memory, drives, power;
+//                     each with a sparkline and a one-line summary) and the selected device's
 //                     graphs on the right: a large utilization graph, big stat numbers, tiles per logical processor,
-//                     per-core power, GPU clocks / VRAM / power / temperature, battery, thermal zones. Graphs
+//                     per-core power, CPU thermal zones, GPU clocks / VRAM / power / temperature, battery. Graphs
 //                     span 1 to 10 minutes (graph.h draws them).
 //   Sensors           every channel (core/sensors.h) with now / min / max / avg (resettable) and a graph;
 //                     pick channels for the log and the "Picked" view, tick channels for the overlay.
@@ -211,11 +211,11 @@ static void dash() { ImGui::TextColored(g_pal.outline, "\xE2\x80\x94"); }
 
 static const u32 WINDOWS_S[] = { 60, 120, 300, 600 };     // graph time spans (one sample per second)
 static const char* const WINDOW_TABS[] = { "1 min", "2 min", "5 min", "10 min" };
-static const char* const WINDOW_TEXT[] = { "60 seconds", "2 minutes", "5 minutes", "10 minutes" };
 
 static u32 win() { return WINDOWS_S[s_prefs.window]; }
 
 static f32 s_h[2][CH_HISTORY];      // scratch histories (each graph is drawn before the next fill)
+static u32 s_end;                   // samples ever recorded behind the last history() (Graph::end)
 
 static i32 channel_index(const char* id) {
     for (u32 i = 0; i < s_ch_count; ++i)
@@ -237,7 +237,7 @@ static bool id_hit(const char* id) {
 // A channel that has reported something since the window opened (or the last reset).
 static bool has_data(const SensorChannel* c) { return c && (c->valid || c->count > 0); }
 
-static u32 history(i32 ch, f32* out) { return ch >= 0 ? sensors_channel_history((u32)ch, out, win()) : 0; }
+static u32 history(i32 ch, f32* out) { return ch >= 0 ? sensors_channel_history((u32)ch, out, win(), &s_end) : 0; }
 
 // Section header: big title left, `sub` (model name) right-aligned like Task Manager.
 static void section(const char* title, const char* sub) {
@@ -297,6 +297,7 @@ static void channel_graph(i32 ch, const char* title, GraphKind kind, f32 lo, f32
     g.min_span = kind == GK_TEMP ? 10.0f : 0.0f;
     g.decimals = c->decimals > 2 ? 2 : c->decimals;
     g.window = win();
+    g.end = s_end;
     g.step_s = 1.0f;
     GraphLine line;
     line.y = s_h[0];
@@ -346,8 +347,11 @@ static bool lp_hit(u32 i) {
 
 static bool cpu_summary_hit() { return id_hit("cpu.load") || id_hit("cpu.busy_mhz") || id_hit("cpu.max_mhz"); }
 
-static bool cpu_match() {
-    if (cpu_summary_hit()) return true;
+static bool group_match(SensorGroup g, u32 n);
+static void draw_temp_tiles(SensorGroup g, u32 n, f32 height);
+
+static bool cpu_match(u32 n_read) {
+    if (cpu_summary_hit() || group_match(SG_CPU, n_read)) return true;
     for (u32 i = 0; i < s_cpu.lps; ++i)
         if (lp_hit(i)) return true;
     for (u32 i = 0; i < s_power.rail_count; ++i)
@@ -388,7 +392,7 @@ static void draw_cpu(bool full, u32 n_read) {
     const bool pkg_shown = pkg >= 0 && id_hit(s_power.rail_id[pkg]);
     char v[48], title[96];
     if (summary) {
-        snprintf(title, sizeof(title), "%% Utilization over %s", WINDOW_TEXT[s_prefs.window]);
+        snprintf(title, sizeof(title), "%% Utilization");
         const u32 n = history(channel_index("cpu.load"), s_h[0]);
         Graph g;
         g.title = title;
@@ -397,6 +401,7 @@ static void draw_cpu(bool full, u32 n_read) {
         g.lo = 0.0f;
         g.hi = 100.0f;
         g.window = win();
+        g.end = s_end;
         g.step_s = 1.0f;
         GraphLine line;
         line.y = s_h[0];
@@ -440,13 +445,14 @@ static void draw_cpu(bool full, u32 n_read) {
                 ImGui::TableNextColumn();
                 const u32 n0 = history(channel_index("cpu.busy_mhz"), s_h[0]);
                 const u32 n1 = history(channel_index("cpu.max_mhz"), s_h[1]);
-                snprintf(title, sizeof(title), "Clock over %s", WINDOW_TEXT[s_prefs.window]);
+                snprintf(title, sizeof(title), "Clock");
                 Graph g;
                 g.title = title;
                 g.unit = "MHz";
                 g.kind = GK_FREQ;
                 g.flags = GF_ZERO;
                 g.window = win();
+                g.end = s_end;
                 g.step_s = 1.0f;
                 GraphLine lines[2];
                 lines[0].y = s_h[0];
@@ -460,11 +466,19 @@ static void draw_cpu(bool full, u32 n_read) {
             }
             if (pkg_shown) {
                 ImGui::TableNextColumn();
-                snprintf(title, sizeof(title), "%s over %s", s_power.rail_name[pkg], WINDOW_TEXT[s_prefs.window]);
+                snprintf(title, sizeof(title), "%s", s_power.rail_name[pkg]);
                 channel_graph(channel_index(s_power.rail_id[pkg]), title, GK_POWER, NAN, NAN, fs * 6.0f, GF_ZERO);
             }
             grid_end();
         }
+    }
+
+    // ACPI thermal zones (the stat row shows the hottest).
+    if (group_match(SG_CPU, n_read)) {
+        subheading("Temperatures (ACPI)");
+        theme_help("Windows' ACPI thermal zones; on most laptops one of them follows the CPU package. Exact per-core "
+                   "CPU temperatures and RAM temperatures need a kernel driver, which EzPcBench doesn't install.");
+        draw_temp_tiles(SG_CPU, n_read, fs * (full ? 6.0f : 4.6f));
     }
 
     // Logical processors: load per LP, its clock in the caption.
@@ -491,6 +505,7 @@ static void draw_cpu(bool full, u32 n_read) {
                 g.lo = 0.0f;
                 g.hi = 100.0f;
                 g.window = win();
+                g.end = s_end;
                 g.step_s = 1.0f;
                 g.decimals = 0;
                 GraphLine line;
@@ -567,7 +582,7 @@ static void draw_gpu(u32 i, bool full) {
         return ch >= 0 && has_data(&s_ch[ch]) && (!filtering() || channel_hit(&s_ch[ch]));
     };
     if (shown("load") || (!filtering() && gl->hist_count)) {
-        snprintf(title, sizeof(title), "%% Utilization over %s", WINDOW_TEXT[s_prefs.window]);
+        snprintf(title, sizeof(title), "%% Utilization");
         const u32 n = history(gpu_channel(i, "load"), s_h[0]);
         Graph g;
         g.title = title;
@@ -576,6 +591,7 @@ static void draw_gpu(u32 i, bool full) {
         g.lo = 0.0f;
         g.hi = 100.0f;
         g.window = win();
+        g.end = s_end;
         g.step_s = 1.0f;
         GraphLine line;
         line.y = s_h[0];
@@ -657,7 +673,7 @@ static void draw_gpu(u32 i, bool full) {
 // ---- Overview: memory (GlobalMemoryStatusEx, sampled here once a second) ------------------------------------
 
 static f32 s_mem_hist[CH_HISTORY];      // MiB in use, oldest first
-static u32 s_mem_count;
+static u32 s_mem_count, s_mem_total;    // total: samples ever taken (Graph::end)
 static u64 s_mem_last_ms;
 static MEMORYSTATUSEX s_mem;
 
@@ -671,6 +687,7 @@ static void mem_sample() {
     if (s_mem_count == CH_HISTORY) memmove(s_mem_hist, s_mem_hist + 1, (CH_HISTORY - 1) * sizeof(f32));
     else ++s_mem_count;
     s_mem_hist[s_mem_count - 1] = used;
+    ++s_mem_total;
 }
 
 static bool mem_match() {
@@ -685,7 +702,8 @@ static void draw_memory(bool full) {
     const f32 total_mib = (f32)(s_mem.ullTotalPhys / MiB), used = s_mem_hist[s_mem_count - 1];
     graph_format(total, sizeof(total), total_mib, "MiB");
     section("Memory", total);
-    snprintf(title, sizeof(title), "Memory usage over %s", WINDOW_TEXT[s_prefs.window]);
+    snprintf(title, sizeof(title), "Memory usage");
+    s_end = s_mem_total;
     Graph g;
     g.title = title;
     g.right = total;
@@ -694,6 +712,7 @@ static void draw_memory(bool full) {
     g.lo = 0.0f;
     g.hi = total_mib;
     g.window = win();
+    g.end = s_end;
     g.step_s = 1.0f;
     GraphLine line;
     line.y = s_mem_count > win() ? s_mem_hist + s_mem_count - win() : s_mem_hist;
@@ -771,6 +790,7 @@ static void draw_temp_tiles(SensorGroup g, u32 n, f32 height) {
         gr.min_span = 10.0f;
         gr.decimals = 1;
         gr.window = win();
+        gr.end = s_end;
         gr.step_s = 1.0f;
         gr.flags = GF_NO_TOOLTIP;
         GraphLine line;
@@ -779,7 +799,7 @@ static void draw_temp_tiles(SensorGroup g, u32 n, f32 height) {
         const GraphHit hit = graph_time("##t", &gr, &line, 1, ImVec2(0.0f, height));
         if (ImGui::IsItemHovered()) {
             u32 len = 0;
-            if (hit.point >= 0) len += snprintf(tip + len, sizeof(tip) - len, "%.1f \xC2\xB0" "C\n", line.y[hit.point]);
+            if (!isnan(hit.value)) len += snprintf(tip + len, sizeof(tip) - len, "%.1f \xC2\xB0" "C\n", hit.value);
             if (s->detail[0]) len += snprintf(tip + len, sizeof(tip) - len, "%s\n", s->detail);
             if (s->history_count)
                 len += snprintf(tip + len, sizeof(tip) - len, "Min %.1f, max %.1f \xC2\xB0" "C since the window opened\n",
@@ -936,17 +956,16 @@ static void draw_power(bool full) {
 // ---- Overview: device list and sections -------------------------------------------------------------------
 
 // Left-hand list entries (Task Manager style), in display order. The id is saved in settings.ini.
-enum DeviceKind : u8 { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_DRIVES, DEV_POWER, DEV_TEMPS };
-static const char* const DEVICE_KEYS[] = { "cpu", "gpu", "memory", "drives", "power", "temps" };
+enum DeviceKind : u8 { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_DRIVES, DEV_POWER };
+static const char* const DEVICE_KEYS[] = { "cpu", "gpu", "memory", "drives", "power" };   // old "temps": CPU
 
 static bool device_match(DeviceKind k, u32 index, u32 n_read) {
     switch (k) {
-        case DEV_CPU: return cpu_match();
+        case DEV_CPU: return cpu_match(n_read);
         case DEV_GPU: return gpu_match(index);
         case DEV_MEMORY: return mem_match();
         case DEV_DRIVES: return group_match(SG_DISK, n_read);
         case DEV_POWER: return power_match();
-        case DEV_TEMPS: return group_match(SG_CPU, n_read) || (!filtering() && n_read == 0);
     }
     return false;
 }
@@ -956,19 +975,6 @@ static void device_key(DeviceKind k, u32 index, char* out, u32 size) {
     else snprintf(out, size, "%s", DEVICE_KEYS[k]);
 }
 
-static void draw_temps_section(bool full, u32 n_read, f64 age) {
-    section("Temperatures", "CPU and system");
-    if (!n_read) {
-        ImGui::TextDisabled(age < 0.0 ? "Reading sensors\xE2\x80\xA6" : "No temperature sensors found.");
-        return;
-    }
-    if (group_match(SG_CPU, n_read)) draw_temp_tiles(SG_CPU, n_read, ImGui::GetFontSize() * (full ? 6.0f : 4.6f));
-    if (filtering()) return;
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Windows' ACPI thermal zones; on most laptops one of them follows the CPU package. Exact per-core "
-                        "CPU temperatures and RAM temperatures need a kernel driver, which EzPcBench doesn't install.");
-    ImGui::PopTextWrapPos();
-}
 
 static void draw_drives(bool full, u32 n_read) {
     section("Drives", "temperature");
@@ -976,14 +982,13 @@ static void draw_drives(bool full, u32 n_read) {
     if (!filtering()) ImGui::TextDisabled("Drive readings pause while a disk test runs.");
 }
 
-static void draw_device(DeviceKind k, u32 index, bool full, u32 n_read, f64 age) {
+static void draw_device(DeviceKind k, u32 index, bool full, u32 n_read) {
     switch (k) {
         case DEV_CPU: draw_cpu(full, n_read); break;
         case DEV_GPU: draw_gpu(index, full); break;
         case DEV_MEMORY: draw_memory(full); break;
         case DEV_DRIVES: draw_drives(full, n_read); break;
         case DEV_POWER: draw_power(full); break;
-        case DEV_TEMPS: draw_temps_section(full, n_read, age); break;
     }
 }
 
@@ -1011,6 +1016,7 @@ static bool device_entry(const char* key, const char* title, const char* sub, co
         g.lo = lo;
         g.hi = hi;
         g.window = win();
+        g.end = s_end;
         GraphLine line;
         line.y = v;
         line.n = n;
@@ -1081,6 +1087,7 @@ static void draw_device_list(u32 gpus, u32 n_read, DeviceKind* sel, u32* sel_ind
 
     if (s_mem_count) {
         n = s_mem_count < win() ? s_mem_count : win();
+        s_end = s_mem_total;
         memcpy(v, s_mem_hist + s_mem_count - n, n * sizeof(f32));
         graph_format(a, sizeof(a), s_mem_hist[s_mem_count - 1], "MiB");
         graph_format(b, sizeof(b), (f32)(s_mem.ullTotalPhys / MiB), "MiB");
@@ -1108,11 +1115,6 @@ static void draw_device_list(u32 gpus, u32 n_read, DeviceKind* sel, u32* sel_ind
         else snprintf(sub, sizeof(sub), "On battery");
         entry(DEV_POWER, 0, "Power", sub, n, GK_POWER, NAN, NAN, ch >= 0);
     }
-
-    n = history(hottest(SG_CPU, n_read, &t), v);
-    if (isnan(t)) snprintf(sub, sizeof(sub), n_read ? "No reading" : "None found");
-    else snprintf(sub, sizeof(sub), "hottest %.0f \xC2\xB0" "C", t);
-    entry(DEV_TEMPS, 0, "Temperatures", sub, n, GK_TEMP, NAN, NAN, n > 0);
 }
 
 static bool device_from_key(const char* key, u32 gpus, DeviceKind* k, u32* index) {
@@ -1136,7 +1138,7 @@ static void draw_window_tabs() {
     }
 }
 
-static void draw_overview(u32 n_read, f64 age) {
+static void draw_overview(u32 n_read) {
     const u32 gpus = sensors_live(&s_cpu, s_gpus);
     sensors_power(&s_power);
     s_ch_count = sensors_channels(s_ch, CH_MAX);
@@ -1157,13 +1159,13 @@ static void draw_overview(u32 n_read, f64 age) {
     draw_window_tabs();
 
     if (!filter) {
-        draw_device(sel, sel_index, true, n_read, age);
+        draw_device(sel, sel_index, true, n_read);
         ImGui::EndChild();
         return;
     }
     // A search: every section with a match.
     bool any = false;
-    const DeviceKind order[] = { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_POWER, DEV_DRIVES, DEV_TEMPS };
+    const DeviceKind order[] = { DEV_CPU, DEV_GPU, DEV_MEMORY, DEV_POWER, DEV_DRIVES };
     for (u32 o = 0; o < ARRAY_COUNT(order); ++o) {
         const u32 count = order[o] == DEV_GPU ? gpus : 1;
         for (u32 i = 0; i < count; ++i) {
@@ -1173,7 +1175,7 @@ static void draw_overview(u32 n_read, f64 age) {
                 ImGui::Spacing();
                 ImGui::Separator();
             }
-            draw_device(order[o], i, false, n_read, age);
+            draw_device(order[o], i, false, n_read);
             any = true;
         }
     }
@@ -1491,7 +1493,7 @@ void temps_ui_draw() {
     ImGui::TextDisabled("Live readings, updated every second. Min / max / avg since this window opened or the last reset.");
     ImGui::Separator();
     if (s_prefs.tab == 0) {
-        draw_overview(n, age);
+        draw_overview(n);
     } else if (s_prefs.tab == 1) {
         draw_channels();
     } else {

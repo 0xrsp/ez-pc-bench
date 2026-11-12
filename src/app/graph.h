@@ -56,7 +56,7 @@ struct GraphLine {
 };
 
 struct Graph {
-    const char* title = nullptr;    // caption above, left ("% Utilization over 60 seconds")
+    const char* title = nullptr;    // caption above, left ("% Utilization")
     const char* right = nullptr;    // caption above, right; null: time series show the range max ("100%")
     ImU32 right_col = 0;            // color of `right` (0 = dimmed text), e.g. a warning color
     const char* unit = "";          // unit of the values (caption, tooltip, axis labels)
@@ -68,6 +68,8 @@ struct Graph {
     // Time series
     u32 window = 0;                 // samples across the width (0 = the longest line); newest at the right
     f32 step_s = 0.0f;              // seconds per sample, for "12 s ago" in the tooltip (0 = no age)
+    u32 end = 0;                    // samples ever recorded (all lines end at the newest); keeps the averaged
+                                    // buckets of long windows in place as samples arrive (0 = the longest line)
     // x/y
     const char* x_unit = nullptr;   // format_x() unit ("bytes", "threads") for tick labels and the tooltip
     void (*fmt_x)(char* buf, u32 size, f64 x, const void* user) = nullptr;     // custom x text (dates, passes)
@@ -76,7 +78,10 @@ struct Graph {
     ImU32 mark_col = 0;             // color of marked points
 };
 
-struct GraphHit { i32 line = -1, point = -1; };     // hovered point (-1 = none)
+struct GraphHit {       // hovered point (-1 = none)
+    i32 line = -1, point = -1;
+    f32 value = NAN;    // graph_time: the value shown there (an average when samples are bucketed)
+};
 
 // `size` is the whole item including the caption; size.x <= 0 = the available width.
 GraphHit graph_time(const char* id, const Graph* g, const GraphLine* lines, u32 count, ImVec2 size);

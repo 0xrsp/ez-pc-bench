@@ -107,7 +107,8 @@ struct SensorChannel {
 // Copies the channel list; returns the count. `seq` (optional): sample counter, changes on every sample.
 u32 sensors_channels(SensorChannel* out, u32 max, u32* seq = nullptr);
 // One-second history of channel `ch`, oldest first, NaN where there was no value. Returns the point count.
-u32 sensors_channel_history(u32 ch, f32* out, u32 max);
+// `end` (optional): points recorded since the sensors started, the same for every channel (graph alignment).
+u32 sensors_channel_history(u32 ch, f32* out, u32 max, u32* end = nullptr);
 void sensors_reset_stats();     // min / max / avg of every channel start over
 
 // '*' wildcard match of a channel id against a comma-separated pattern list ("cpu.*,gpu0.*,temp.*").

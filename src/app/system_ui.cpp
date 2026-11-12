@@ -42,21 +42,6 @@ static void copy_report() {
     snprintf(s_status, sizeof(s_status), "Copied the report as text.");
 }
 
-static void save_report() {
-    wchar_t dir[MAX_PATH], base[MAX_PATH + 64];
-    ui_results_dir(dir);
-    char stamp[32];
-    time_t now = time(nullptr);
-    struct tm t;
-    localtime_s(&t, &now);
-    strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H%M%S", &t);
-    swprintf(base, ARRAY_COUNT(base), L"%s\\ezbench_system_%S", dir, stamp);
-    char path[MAX_PATH + 64];
-    WideCharToMultiByte(CP_UTF8, 0, base, -1, path, sizeof(path), nullptr, nullptr);
-    if (sysreport_save(base)) snprintf(s_status, sizeof(s_status), "Saved %s.txt and .toon.txt", path);
-    else snprintf(s_status, sizeof(s_status), "Could not write %s.txt", path);
-}
-
 static void draw_toolbar() {
     if (theme_button("Refresh")) {
         devices_refresh();
@@ -77,9 +62,6 @@ static void draw_toolbar() {
     ImGui::SameLine();
     if (theme_button("Copy report")) copy_report();
     theme_help("Copies the whole report as plain text.");
-    ImGui::SameLine();
-    if (theme_button("Save report")) save_report();
-    theme_help("Writes the report as plain text and as TOON into the results folder.");
     if (s_status[0]) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", s_status);

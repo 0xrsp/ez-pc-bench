@@ -120,7 +120,7 @@ SM differ by generation), USB link speed (needs hub IOCTLs), per-display VRR on/
 System report (`core/sysreport.cpp`): one model — sections of key/value lines, tables, notes (`SysReport`) — rendered
 three ways: the **System details** tool window (`app/system_ui.*`, `--tool system`, "Details" chip button on the System
 row: section list + content; Refresh, "Query GPU APIs" on a worker thread (disabled during runs), Copy report (plain
-text to the clipboard), Save report (`results\ezbench_system_<date>_<time>.txt` + `.toon.txt`)), plain text
+text to the clipboard; Save report was removed 2026-11-12, the CLI `--sysinfo <base>` still writes files)), plain text
 (`sysreport_text`) and TOON (`sysreport_toon`). CLI: `--sysinfo [base]` prints the full report (queries the GPU APIs
 first) and with a path writes `<base>.txt` / `<base>.toon.txt`. The CLI header also prints a codename / microcode line;
 the GUI's System CPU line shows codename + microarchitecture.

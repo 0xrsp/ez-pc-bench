@@ -91,18 +91,22 @@ Charts of disk tests use `GK_DISK` for throughput units whatever the unit string
 ## Sensors window
 
 - **Overview** is now Task Manager-like: a device list on the left, the selected device on the right.
-  - List entries: CPU, GPU n, Memory, Drives, Power, Temperatures (All and a driver-sensor entry were removed
-    2026-11-12). Each has a sparkline
-    thumbnail (CPU load, GPU load, memory in use, hottest drive, battery rate, hottest thermal zone) and a
+  - List entries: CPU, GPU n, Memory, Drives, Power (All, a driver-sensor entry and Temperatures were removed
+    2026-11-12; the ACPI thermal zones are in CPU, a saved `temps` device opens CPU). Each has a sparkline
+    thumbnail (CPU load, GPU load, memory in use, hottest drive, battery rate) and a
     one-line summary ("12%  4.63 GHz", "20.8 GiB / 31.3 GiB (66%)", "On AC, 100%", "hottest 42 °C"). The
     selected entry is tinted in its color with an accent bar.
   - **All** stacked every section (entry removed 2026-11-12; CPU is now the default device). With a search active
     the right side shows the matching sections and the list only the devices with a match (none highlighted).
     Picking a device clears the search.
-  - CPU: "% Utilization over 60 seconds" (large), stats (Utilization, Speed, Fastest core, Highest
+  - Graph titles carry no span ("% Utilization", not "... over 60 seconds"): the 1 / 2 / 5 / 10 min tabs above say it.
+  - Long spans on narrow boxes: `graph_time` draws one point per bucket of samples (their average, at least ~0.2 em
+    apart), buckets aligned to the absolute sample index (`Graph::end`, from `sensors_channel_history`) so they
+    don't shift every second; hover shows the bucket average and how many seconds it covers.
+  - CPU: "% Utilization" (large), stats (Utilization, Speed, Fastest core, Highest
     seen, package power, Temperature: the hottest ACPI zone, labelled "(ACPI)"; Logical processors), clock graph (Speed: load-weighted clock of the busy cores, else of all; + fastest core in orange) beside the package
-    power graph, one load tile per logical processor (4 columns up to 16 LPs, the LP clock in the caption), then
-    per-core power tiles.
+    power graph, the ACPI thermal-zone tiles ("Temperatures (ACPI)"), one load tile per logical processor (4 columns
+    up to 16 LPs, the LP clock in the caption), then per-core power tiles.
   - GPU (per adapter): utilization graph, stats (load, core / memory clock, dedicated memory used / total, power
     % of limit, temperature, fan, PCIe link with the old tooltip), tiles for the channels this GPU reports.
   - Memory: `GlobalMemoryStatusEx` once a second in the UI thread while the window is open (own 600-point ring,

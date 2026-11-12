@@ -313,40 +313,84 @@ GraphHit graph_time(const char* id, const Graph* g, const GraphLine* lines, u32 
         const f32 t = (v - lo) / (hi - lo);
         return bottom - (bottom - top) * (t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t);
     };
+
+    // More samples than the box has room for (long windows, thumbnails): one point per `b` samples, their average,
+    // so the line doesn't turn into a dense zigzag. Buckets are aligned to the absolute sample index (`g->end`), so
+    // they stay put as new samples come in.
+    u32 longest = 0;
+    for (u32 l = 0; l < count; ++l) longest = lines[l].n > longest ? lines[l].n : longest;
+    const u32 room = (u32)((rx - left) / (ImGui::GetFontSize() * 0.2f));
+    const u32 b = room >= 2 && window > room ? (window + room - 1) / room : 1;
+    const u32 end = g->end >= longest ? g->end : longest;     // samples ever recorded; the newest is end - 1
+    // Samples `back0` .. `back1` before the newest (inclusive) that share a bucket with sample `back`.
+    auto bucket = [&](u32 back, u32* back0, u32* back1) {
+        const u32 abs = end - 1 - back, start = abs - abs % b;     // bucket = samples start .. start + b - 1
+        *back0 = start + b - 1 >= end - 1 ? 0 : end - 1 - (start + b - 1);
+        *back1 = end - 1 - start;
+    };
+    // Average of line `ln` over samples back0..back1 (NaN = no value there); `t` = their mean age in samples.
+    auto average = [&](const GraphLine* ln, u32 back0, u32 back1, f32* t) {
+        f32 sum = 0.0f, tsum = 0.0f;
+        u32 c = 0;
+        for (u32 k = back0; k <= back1 && k < ln->n && k < window; ++k) {
+            const f32 v = ln->y[ln->n - 1 - k];
+            if (isnan(v)) continue;
+            sum += v;
+            tsum += (f32)k;
+            ++c;
+        }
+        if (t) *t = c ? tsum / (f32)c : 0.5f * (f32)(back0 + back1);
+        return c ? sum / (f32)c : NAN;
+    };
+
     dl->PushClipRect(f.a, ImVec2(f.b.x + 1.0f, f.b.y + 1.0f), true);
     for (u32 l = count; l-- > 0;) {     // line 0 on top
         const GraphLine* ln = &lines[l];
-        const u32 first = ln->n > window ? ln->n - window : 0, n = ln->n - first;
-        for (u32 i = 0; i < n; ++i) {
-            const f32 v = ln->y[first + i];
-            s_pts[i] = ImVec2(rx - dx * (f32)(n - 1 - i), isnan(v) ? NAN : ypos(v));
+        const u32 n = ln->n < window ? ln->n : window;
+        u32 m = 0;
+        for (u32 back = n; back-- > 0 && m < MAX_POINTS;) {    // oldest first
+            u32 back0, back1;
+            bucket(back, &back0, &back1);
+            f32 t;
+            const f32 v = average(ln, back0, back1, &t);
+            s_pts[m++] = ImVec2(rx - dx * t, isnan(v) ? NAN : ypos(v));
+            back = back0;
         }
-        draw_runs(dl, s_pts, n, bottom, kind_of(g, ln, l), !(g->flags & GF_NO_FILL) && count == 1);
+        draw_runs(dl, s_pts, m, bottom, kind_of(g, ln, l), !(g->flags & GF_NO_FILL) && count == 1);
     }
 
-    // Hover: the sample under the mouse on every line.
+    // Hover: the sample (or bucket) under the mouse on every line.
     if (f.hovered && count) {
         const f32 mx = ImGui::GetIO().MousePos.x;
         const i32 back = (i32)floorf((rx - mx) / dx + 0.5f);     // samples before the newest
-        u32 longest = 0;
-        for (u32 l = 0; l < count; ++l) longest = lines[l].n > longest ? lines[l].n : longest;
         if (back >= 0 && back < (i32)window && back < (i32)longest) {
-            const f32 x = rx - dx * (f32)back;
+            u32 back0, back1;
+            bucket((u32)back, &back0, &back1);
+            f32 vals[MAX_LINES], t = NAN;
+            for (u32 l = 0; l < count; ++l) {
+                f32 tl;
+                vals[l] = average(&lines[l], back0, back1, &tl);
+                if (isnan(t) && !isnan(vals[l])) t = tl;
+            }
+            if (b == 1 || isnan(t)) t = (f32)back;
+            const f32 x = rx - dx * t;
             dl->AddLine(ImVec2(x, f.a.y), ImVec2(x, f.b.y), dim_col(), 1.0f);
             for (u32 l = 0; l < count; ++l) {
-                const i32 i = (i32)lines[l].n - 1 - back;
-                if (i < 0 || isnan(lines[l].y[i])) continue;
-                if (hit.line < 0) { hit.line = (i32)l; hit.point = i; }
-                dl->AddCircleFilled(ImVec2(x, ypos(lines[l].y[i])), line_thickness() * 2.5f, graph_color(kind_of(g, &lines[l], l)));
+                if (isnan(vals[l])) continue;
+                if (hit.line < 0) {
+                    hit.line = (i32)l;
+                    hit.point = (i32)lines[l].n - 1 - (i32)back0;
+                    hit.value = vals[l];
+                }
+                dl->AddCircleFilled(ImVec2(x, ypos(vals[l])), line_thickness() * 2.5f, graph_color(kind_of(g, &lines[l], l)));
             }
             if (!(g->flags & GF_NO_TOOLTIP)) {
                 ImGui::BeginTooltip();
                 char v[48];
                 bool any = false;
                 for (u32 l = 0; l < count; ++l) {
-                    const i32 i = (i32)lines[l].n - 1 - back;
-                    if (i < 0) continue;
-                    value_text(v, sizeof(v), g, lines[l].y[i]);
+                    if ((i32)lines[l].n - 1 - (i32)back0 < 0) continue;
+                    value_text(v, sizeof(v), g, vals[l]);
                     const char* name = lines[l].name ? lines[l].name : g->title;
                     if (name) ImGui::Text("%s: %s", name, v);
                     else ImGui::TextUnformatted(v);
@@ -354,10 +398,13 @@ GraphHit graph_time(const char* id, const Graph* g, const GraphLine* lines, u32 
                 }
                 if (!any) ImGui::TextDisabled("No data yet");
                 if (g->step_s > 0.0f) {
-                    const f32 s = g->step_s * (f32)back;
-                    if (back == 0) ImGui::TextDisabled("Now");
-                    else if (s < 120.0f) ImGui::TextDisabled("%.0f s ago", s);
-                    else ImGui::TextDisabled("%u min %02u s ago", (u32)s / 60, (u32)s % 60);
+                    char ago[48];
+                    const f32 s = g->step_s * (f32)back0;
+                    if (back0 == 0) snprintf(ago, sizeof(ago), "Now");
+                    else if (s < 120.0f) snprintf(ago, sizeof(ago), "%.0f s ago", s);
+                    else snprintf(ago, sizeof(ago), "%u min %02u s ago", (u32)s / 60, (u32)s % 60);
+                    if (b > 1) ImGui::TextDisabled("%s, average of %.0f s", ago, g->step_s * (f32)(back1 - back0 + 1));
+                    else ImGui::TextDisabled("%s", ago);
                 }
                 ImGui::EndTooltip();
             }

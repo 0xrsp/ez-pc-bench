@@ -84,33 +84,6 @@ static void copy_report() {
     snprintf(s_ui.message, sizeof(s_ui.message), "Report copied to the clipboard.");
 }
 
-static void save_report() {
-    wchar_t path[MAX_PATH];
-    const time_t now = time(nullptr);
-    struct tm t;
-    localtime_s(&t, &now);
-    wcsftime(path, MAX_PATH, L"disk-health_%Y-%m-%d_%H%M.txt", &t);
-    OPENFILENAMEW ofn = { sizeof(ofn) };
-    ofn.hwndOwner = (HWND)ImGui::GetMainViewport()->PlatformHandleRaw;
-    ofn.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"txt";
-    ofn.lpstrTitle = L"Save disk health report";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
-    const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    const bool picked = GetSaveFileNameW(&ofn) != 0;
-    if (SUCCEEDED(co)) CoUninitialize();
-    if (!picked) return;
-    const u32 len = disk_health_report(s_ui.disks, s_ui.count, s_ui.hide_serial, s_ui.report, sizeof(s_ui.report));
-    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    DWORD written = 0;
-    const bool ok = f != INVALID_HANDLE_VALUE && WriteFile(f, "\xEF\xBB\xBF", 3, &written, nullptr) &&
-                    WriteFile(f, s_ui.report, len, &written, nullptr) && written == len;
-    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
-    snprintf(s_ui.message, sizeof(s_ui.message), ok ? "Report saved." : "Could not write the report file.");
-}
-
 // ---- drive chips ------------------------------------------------------------------------------------
 
 static void drive_chip(u32 i) {
@@ -653,14 +626,10 @@ void health_ui_draw() {
     ImGui::SameLine();
     ImGui::BeginDisabled(s_ui.count == 0);
     if (theme_button("Copy report")) copy_report();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(runner_is_running());      // the file dialog would load shell extensions mid-benchmark
-    if (theme_button("Save report...")) save_report();
-    ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine(0.0f, ImGui::GetFontSize());
     if (theme_checkbox("Hide serial", &s_ui.hide_serial)) health_set_ui_option("hide_serial", s_ui.hide_serial);
-    theme_help("Replaces serial numbers with asterisks in this window and in copied / saved reports (for screenshots).");
+    theme_help("Replaces serial numbers with asterisks in this window and in copied reports (for screenshots).");
     ImGui::SameLine(0.0f, ImGui::GetFontSize());
     ImGui::AlignTextToFramePadding();
     if (busy) ImGui::TextDisabled("Paused while a disk test runs.");

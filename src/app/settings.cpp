@@ -11,9 +11,12 @@
 #include <string.h>
 #include <wchar.h>
 
+bool g_gpu_preview = true;
+
 struct Snapshot {
     BenchParams params;
     ThemeMode theme = THEME_SYSTEM;
+    bool gpu_preview = true;
     bool selected[MAX_BENCHES];
 };
 
@@ -109,6 +112,7 @@ void settings_load(BenchParams* p, bool* selected) {
         p->gpu_height = read_u32(L"gpu_height", p->gpu_height, 64, 16384);
         p->gpu_fullscreen = read_u32(L"gpu_fullscreen", p->gpu_fullscreen, 0, 1) != 0;
         p->gpu_onscreen = read_u32(L"gpu_onscreen", p->gpu_onscreen, 0, 1) != 0;
+        g_gpu_preview = read_u32(L"gpu_preview", 1, 0, 1) != 0;
         if (read_str(L"disk_drives", w, ARRAY_COUNT(w))) {      // "C,D"; drives that aren't fixed any more are dropped
             u32 mask = 0;
             for (const wchar_t* c = w; *c; ++c) {
@@ -152,12 +156,14 @@ void settings_load(BenchParams* p, bool* selected) {
         }
     }
     s_file.params = *p;
+    s_file.gpu_preview = g_gpu_preview;
     memcpy(s_file.selected, selected, g_bench_count);
 }
 
 static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
     s->params = *p;
     s->theme = theme_mode();
+    s->gpu_preview = g_gpu_preview;
     memcpy(s->selected, selected, g_bench_count);
 }
 
@@ -169,7 +175,7 @@ static bool disk_same(const DiskOptions* x, const DiskOptions* y) {
 
 static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
-    return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
+    return a->theme == b->theme && a->gpu_preview == b->gpu_preview && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
            x->gpu_adapter == y->gpu_adapter && x->gpu_adapters == y->gpu_adapters && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
            x->gpu_fullscreen == y->gpu_fullscreen && x->gpu_onscreen == y->gpu_onscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
@@ -229,6 +235,7 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"gpu_height=%u", p->gpu_height);
     sec_add(&s, L"gpu_fullscreen=%u", p->gpu_fullscreen ? 1u : 0u);
     sec_add(&s, L"gpu_onscreen=%u", p->gpu_onscreen ? 1u : 0u);
+    sec_add(&s, L"gpu_preview=%u", out.gpu_preview ? 1u : 0u);
     wchar_t drives[64] = {};
     for (u32 d = 0, n = 0; d < 26; ++d)
         if ((p->disk_drives >> d) & 1) {

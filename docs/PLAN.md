@@ -628,6 +628,13 @@ Waiting on the user (2026-11-11):
 
 ## 12. Decision log
 
+- 2026-11-12 (Sensors / tools cleanup, user request): the Overview's Temperatures entry is gone, its ACPI zone tiles
+  sit in CPU (next to the stat row's ACPI temperature); graph titles drop "over N minutes" (the span tabs say it);
+  2–10 min graphs average samples into buckets instead of drawing a dense zigzag; the CPU clock graph's "Speed"
+  falls back to the load-weighted clock of all LPs when none is half busy (no more gaps at idle). Disk health and
+  System details keep only Copy report (Save report removed; the CLI still writes files). Settings > GPU shows a
+  photosensitivity warning under Present mode (on-screen modes flash the test patterns) and a "Show preview"
+  checkbox (`[settings] gpu_preview`).
 - 2026-11-12 (PawnIO removed, user decision): PawnIO and the advanced sensors built on it (M10) are gone because
   they added nothing useful (never even tested with the driver loaded here). Removed: `core/pawnio*`, `adv_*`,
   `unzip.*`, `sysinfo_spd.*`, `app/adv_ui.*`, the Settings row with Download & install, the Sensors "Advanced"
@@ -669,8 +676,9 @@ Waiting on the user (2026-11-11):
     1 px frame, faint 10 x 5 grid, filled line, newest at the right, caption with title and max). Colors come from the
     unit (load cyan, clock violet, power amber, temperature rose, memory magenta, latency blue, disk green, compute
     orange), self-contained in graph.cpp and independent of the theme palette.
-  - Sensors window Overview is Task Manager-like: device list with sparklines (CPU, GPU n, Memory, Drives, Power,
-    Temperatures; the "All" entry was removed 2026-11-12, CPU is the default, a search lists every match) and the
+  - Sensors window Overview is Task Manager-like: device list with sparklines (CPU, GPU n, Memory, Drives, Power;
+    the "All" and Temperatures entries were removed 2026-11-12, thermal zones are in CPU, CPU is the default, a
+    search lists every match) and the
     selected device's graphs, stats and tile grids (per-LP load, per-core power);
     span 1 / 2 / 5 / 10 min; ini `[sensors] graph_window`, `device`.
 

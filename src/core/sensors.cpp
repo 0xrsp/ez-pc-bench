@@ -34,7 +34,7 @@ static PowerLive s_power;
 static SensorChannel s_ch[CH_MAX];
 static u32 s_ch_count, s_seq;
 static f32 s_hist[CH_MAX][CH_HISTORY];      // ring, shared head: every channel gets a point each second
-static u32 s_hist_head, s_hist_count;
+static u32 s_hist_head, s_hist_count, s_hist_total;     // total: points ever recorded
 static f64 s_hist_t;
 
 static HANDLE s_thread, s_zone_thread, s_stop, s_wake;     // s_wake: sample now (a log started)
@@ -519,6 +519,7 @@ static void publish(const Sources* src, const Reading* rd) {
         for (u32 i = 0; i < s_ch_count; ++i) s_hist[i][s_hist_head] = s_ch[i].valid ? s_ch[i].value : NAN;
         s_hist_head = (s_hist_head + 1) % CH_HISTORY;
         if (s_hist_count < CH_HISTORY) ++s_hist_count;
+        ++s_hist_total;
     }
     s_last_sample = now;
     ++s_seq;
@@ -709,7 +710,7 @@ static DWORD WINAPI sensor_thread(void*) {
         s_gpus[i].vram_total_mib = (f32)(g_sys.gpus[i].dedicated_vram / MiB);
     }
     memset(&s_power, 0, sizeof(s_power));
-    s_count = s_ch_count = s_hist_head = s_hist_count = 0;
+    s_count = s_ch_count = s_hist_head = s_hist_count = s_hist_total = 0;
     open_gpu_sensors(&src);
     open_disks(&src);
     ReleaseSRWLockExclusive(&s_lock);
@@ -808,9 +809,10 @@ u32 sensors_channels(SensorChannel* out, u32 max, u32* seq) {
     return n;
 }
 
-u32 sensors_channel_history(u32 ch, f32* out, u32 max) {
+u32 sensors_channel_history(u32 ch, f32* out, u32 max, u32* end) {
     AcquireSRWLockShared(&s_lock);
     u32 n = 0;
+    if (end) *end = s_hist_total;
     if (ch < s_ch_count) {
         n = s_hist_count < max ? s_hist_count : max;
         const u32 start = (s_hist_head + CH_HISTORY - n) % CH_HISTORY;     // the newest n points

@@ -2,6 +2,7 @@
 // has a detailed tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by
 // settings.cpp (one ini for both windows).
 #include "app/settings_ui.h"
+#include "app/settings.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/presets.h"
@@ -184,6 +185,36 @@ static void draw_disk_interval(BenchParams* p) {
     }
 }
 
+// Warning box in the control column: warning-tinted background with a stripe on the left, a bold title and wrapped
+// text. Drawn in place (a child window can't sit in a table cell here).
+static void warning_box(const char* title, const char* text) {
+    const f32 fs = ImGui::GetFontSize(), pad = fs * 0.55f, stripe = fs * 0.18f, round = fs * 0.15f;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const f32 w = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImDrawListSplitter sp;      // text on top, the box (sized afterwards) below
+    sp.Split(dl, 2);
+    sp.SetCurrentChannel(dl, 1);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + stripe + pad, p.y + pad));
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - stripe - pad * 2.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_warn_container);
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    const f32 bottom = ImGui::GetItemRectMax().y + pad;
+    sp.SetCurrentChannel(dl, 0);
+    dl->AddRectFilled(p, ImVec2(p.x + w, bottom), ImGui::GetColorU32(g_pal.warn_container), round);
+    dl->AddRectFilled(p, ImVec2(p.x + stripe, bottom), ImGui::GetColorU32(g_pal.warn), round, ImDrawFlags_RoundLeft);
+    sp.Merge(dl);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, bottom));
+    ImGui::Dummy(ImVec2(w, 0.0f));
+}
+
 // Full-window ImGui window of a settings tool window, with the wrapped intro line(s).
 static void begin_window(const char* id, const char* intro) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -250,6 +281,16 @@ void settings_ui_draw() {
             p->gpu_onscreen = present != 0;
             if (present) p->gpu_fullscreen = present == 2;
         }
+        // Always visible, not just in the help: on-screen modes flash the test patterns full size.
+        ImGui::Spacing();
+        warning_box("Photosensitivity warning",
+                    "The on-screen modes show the GPU tests' rapidly flashing colors and patterns in a window or across "
+                    "the whole screen. If you, or anyone who can see the screen, may have photosensitive epilepsy, keep "
+                    "Offscreen.");
+
+        row("Show preview", "Shows a small copy of what the 3D, 2D and feature tests render next to the live numbers "
+                            "while they run (also in Offscreen mode). Off: the numbers only.");
+        theme_checkbox("##gpu_preview", &g_gpu_preview);
         end_group();
     }
 
@@ -270,6 +311,7 @@ void settings_ui_draw() {
         p->thread_count = d.thread_count;
         p->gpu_onscreen = d.gpu_onscreen;
         p->gpu_fullscreen = d.gpu_fullscreen;
+        g_gpu_preview = true;
         p->disk_write_through = d.disk_write_through;
         // Disk options; the folder target stays (it is a definition, not tuning), and the interval belongs to the
         // benchmark settings.

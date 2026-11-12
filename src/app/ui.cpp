@@ -861,7 +861,7 @@ static void draw_live() {
     const BenchDesc* b = &g_benches[cur];
 
     // With a preview: stats on the left, the rendered frame on the right (full panel height, aspect kept).
-    const bool preview = s_preview.texture && s_preview.w && (b->flags & BENCH_PREVIEW);
+    const bool preview = g_gpu_preview && s_preview.texture && s_preview.w && (b->flags & BENCH_PREVIEW);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     f32 img_w = 0.0f, img_h = 0.0f;
     if (preview) {
