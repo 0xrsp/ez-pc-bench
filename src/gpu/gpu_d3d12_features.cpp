@@ -179,6 +179,7 @@ struct GfxDesc {
     D3D12_SHADER_BYTECODE vs, hs, ds, ps;
     bool depth, cull_back;
     D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
+    bool depth_only;            // no pixel shader / render target, depth test ALWAYS (shadow-map style pass)
 };
 
 static ID3D12PipelineState* make_gfx(D3d* d, const GfxDesc* g) {
@@ -193,9 +194,10 @@ static ID3D12PipelineState* make_gfx(D3d* d, const GfxDesc* g) {
     pd.RasterizerState = raster_state(g->cull_back);
     pd.DepthStencilState = depth_state(g->depth);
     if (g->depth) pd.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    if (g->depth_only) pd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
     pd.PrimitiveTopologyType = g->topology;
-    pd.NumRenderTargets = 1;
-    pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pd.NumRenderTargets = g->depth_only ? 0 : 1;
+    pd.RTVFormats[0] = g->depth_only ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_R8G8B8A8_UNORM;
     pd.SampleDesc.Count = 1;
     ID3D12PipelineState* pso = nullptr;
     if (FAILED(d->device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso)))) return nullptr;
@@ -1071,6 +1073,7 @@ struct Async {
     ID3D12GraphicsCommandList* list;    // compute queue list
     u64 fence[FIF];                     // compute queue value per frame slot
     u32 set_alu;
+    ID3D12PipelineState* depth_pso;     // graphics part: depth-only full-screen layers
     f64 iters;                          // cs_fp32 iterations, balanced during the serial warm-up
     f64 gfx_ms, comp_ms;                // measured serial frames: summed GPU time of each part
     u32 timed;
@@ -1078,15 +1081,16 @@ struct Async {
     bool async;
 };
 
-static void async_graphics(D3d* d, const Target* t, u32 frame) {
+static void async_graphics(D3d* d, const Async* a) {
     ID3D12GraphicsCommandList* list = d->list;
-    begin_render(d, t);
-    GpuParams pc = {};
-    pc.u[0] = frame;
-    list->SetPipelineState(d->pipe[DP_FILL]);
+    begin_render(d, a->t);
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_dsv(d);
+    list->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
+    const GpuParams pc = {};
+    list->SetPipelineState(a->depth_pso);
     d3d_bind_graphics(d, list, 0, &pc);
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    list->DrawInstanced(3, FA_FILL_LAYERS, 0, 0);
+    list->DrawInstanced(3, FA_DEPTH_LAYERS, 0, 0);
 }
 
 static void async_compute(D3d* d, Async* a, ID3D12GraphicsCommandList* list) {
@@ -1096,11 +1100,11 @@ static void async_compute(D3d* d, Async* a, ID3D12GraphicsCommandList* list) {
     list->Dispatch(GC_ALU_GROUPS, 1, 1);
 }
 
-static void async_record(D3d* d, void* ctx, u32 frame, u32 slot, f32) {
+static void async_record(D3d* d, void* ctx, u32, u32 slot, f32) {
     Async* a = (Async*)ctx;
     if (!a->async) {        // serial: graphics, full barrier, compute (timestamps balance the two parts)
         timestamp(d, slot, 0);
-        async_graphics(d, a->t, frame);
+        async_graphics(d, a);
         d3d_sync_barrier(d, D3D12_BARRIER_SYNC_ALL, D3D12_BARRIER_ACCESS_COMMON);
         timestamp(d, slot, 1);
         async_compute(d, a, d->list);
@@ -1108,7 +1112,7 @@ static void async_record(D3d* d, void* ctx, u32 frame, u32 slot, f32) {
         resolve_timestamps(d, slot, 3);
         return;
     }
-    async_graphics(d, a->t, frame);
+    async_graphics(d, a);
     a->alloc[slot]->Reset();
     a->list->Reset(a->alloc[slot], nullptr);
     a->list->SetDescriptorHeaps(1, &d->view_heap);
@@ -1154,7 +1158,8 @@ static void test_async(D3d* d, const BenchParams* p, BenchLive* live, BenchResul
         ok = SUCCEEDED(d->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&a.alloc[i])));
     ok = ok && SUCCEEDED(d->device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COMPUTE, a.alloc[0], nullptr, IID_PPV_ARGS(&a.list)));
     if (ok) a.list->Close();
-    ok = ok && target_create(d, &t, p, false, false);
+    const GfxDesc g = { DXIL(vs_fullscreen), {}, {}, {}, true, false, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true };
+    ok = ok && (a.depth_pso = make_gfx(d, &g)) != nullptr && target_create(d, &t, p, false, true);
     if (!ok) {
         res_fail(out, "async compute setup failed");
     } else {
@@ -1182,6 +1187,7 @@ static void test_async(D3d* d, const BenchParams* p, BenchLive* live, BenchResul
     if (a.compute.fence) d3d_wait(&a.compute, d3d_signal(&a.compute));
     gpu_preview_clear();
     target_release(&t);
+    d3d_release(a.depth_pso);
     d3d_release(a.list);
     for (u32 i = 0; i < FIF; ++i) d3d_release(a.alloc[i]);
     d3d_release(a.compute.fence);

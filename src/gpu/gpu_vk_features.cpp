@@ -221,6 +221,7 @@ struct GfxDesc {
     bool mesh;                  // task + mesh pipeline (no vertex input / input assembly)
     bool fsr_dynamic;           // per-draw fragment shading rate (dynamic state)
     bool fsr_attachment;        // may render with a shading-rate attachment
+    bool depth_only;            // no color attachment, depth test ALWAYS (shadow-map style pass)
 };
 
 static VkPipeline make_graphics(VkCtx* v, const GfxDesc* g) {
@@ -250,11 +251,11 @@ static VkPipeline make_graphics(VkCtx* v, const GfxDesc* g) {
         ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineDepthStencilStateCreateInfo ds = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
         ds.depthTestEnable = ds.depthWriteEnable = g->depth;
-        ds.depthCompareOp = VK_COMPARE_OP_LESS;
+        ds.depthCompareOp = g->depth_only ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
         VkPipelineColorBlendAttachmentState att = {};
         att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         VkPipelineColorBlendStateCreateInfo cb = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-        cb.attachmentCount = 1;
+        cb.attachmentCount = g->depth_only ? 0 : 1;
         cb.pAttachments = &att;
         const VkDynamicState dyn[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR };
         VkPipelineDynamicStateCreateInfo dy = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
@@ -262,7 +263,7 @@ static VkPipeline make_graphics(VkCtx* v, const GfxDesc* g) {
         dy.pDynamicStates = dyn;
         const VkFormat color = VK_RT_FORMAT;
         VkPipelineRenderingCreateInfo ri = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-        ri.colorAttachmentCount = 1;
+        ri.colorAttachmentCount = g->depth_only ? 0 : 1;
         ri.pColorAttachmentFormats = &color;
         if (g->depth) ri.depthAttachmentFormat = VK_DEPTH_FORMAT;
 
@@ -1164,6 +1165,8 @@ struct Async {
     bool submitted[FIF];
     VkQueryPool ts;
     VkDescriptorSet set;                // u0 = sink
+    VkPipelineLayout depth_layout;
+    VkPipeline depth_pipe;              // graphics part: depth-only full-screen layers
     f64 iters;                          // cs_fp32 iterations, balanced during the serial warm-up
     f64 gfx_ms, comp_ms;                // measured serial frames: summed GPU time of each part
     u32 timed;
@@ -1171,13 +1174,31 @@ struct Async {
     bool async;
 };
 
-static void async_graphics(VkCtx* v, const Target* t, VkCommandBuffer cb, u32 frame) {
+// Clears color + depth (begin_render), then the depth-only layers into the cleared depth buffer.
+static void async_graphics(const Async* a, VkCommandBuffer cb) {
+    const Target* t = a->t;
     begin_render(t, cb, nullptr);
-    GpuParams pc = {};
-    pc.u[0] = frame;
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, v->pipes[VP_FILL]);
-    vkCmdPushConstants(cb, v->pipe_layout[VP_FILL], VK_PC_STAGES, 0, sizeof(pc), &pc);
-    vkCmdDraw(cb, 3, FA_FILL_LAYERS, 0, 0);
+    vkCmdEndRendering(cb);
+    const VkPipelineStageFlags2 tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    const VkAccessFlags2 rw = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    image_barrier(cb, t->depth->img, VK_IMAGE_ASPECT_DEPTH_BIT, tests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, tests, rw, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo da = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+    da.imageView = t->depth->view;
+    da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri = { VK_STRUCTURE_TYPE_RENDERING_INFO };
+    ri.renderArea = { { 0, 0 }, { t->w, t->h } };
+    ri.layerCount = 1;
+    ri.pDepthAttachment = &da;
+    vkCmdBeginRendering(cb, &ri);
+    const VkViewport vp = { 0.0f, (f32)t->h, (f32)t->w, -(f32)t->h, 0.0f, 1.0f };
+    const VkRect2D sc = { { 0, 0 }, { t->w, t->h } };
+    vkCmdSetViewport(cb, 0, 1, &vp);
+    vkCmdSetScissor(cb, 0, 1, &sc);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, a->depth_pipe);
+    vkCmdDraw(cb, 3, FA_DEPTH_LAYERS, 0, 0);
     vkCmdEndRendering(cb);
 }
 
@@ -1192,12 +1213,12 @@ static void async_compute(VkCtx* v, Async* a, VkCommandBuffer cb) {
     vkCmdDispatch(cb, GC_ALU_GROUPS, 1, 1);
 }
 
-static void async_record(VkCtx* v, void* ctx, VkCommandBuffer cb, u32 frame, u32 slot, f32) {
+static void async_record(VkCtx* v, void* ctx, VkCommandBuffer cb, u32, u32 slot, f32) {
     Async* a = (Async*)ctx;
     if (!a->async) {        // serial: graphics, full barrier, compute (timestamps balance the two parts)
         vkCmdResetQueryPool(cb, a->ts, slot * TS_PER_SLOT, 3);
         timestamp(v, a->ts, cb, slot, 0);
-        async_graphics(v, a->t, cb, frame);
+        async_graphics(a, cb);
         memory_barrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                        VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
         timestamp(v, a->ts, cb, slot, 1);
@@ -1205,7 +1226,7 @@ static void async_record(VkCtx* v, void* ctx, VkCommandBuffer cb, u32 frame, u32
         timestamp(v, a->ts, cb, slot, 2);
         return;
     }
-    async_graphics(v, a->t, cb, frame);
+    async_graphics(a, cb);
     VkCommandBuffer cc = a->cmd[slot];
     cmd_begin(cc);
     async_compute(v, a, cc);
@@ -1257,7 +1278,15 @@ static void test_async(VkCtx* v, const BenchParams* p, BenchLive* live, BenchRes
     }
     VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     for (u32 i = 0; i < FIF && ok; ++i) ok = vkCreateFence(v->dev, &fi, nullptr, &a.fence[i]) == VK_SUCCESS;
-    ok = ok && (a.ts = make_query_pool(v)) != VK_NULL_HANDLE && target_create(v, &s, &t, p, false, false);
+    a.depth_layout = make_layout(v, VK_NULL_HANDLE, VK_SHADER_STAGE_VERTEX_BIT);
+    GfxDesc g = {};
+    g.stages[0] = SHADER(VK_SHADER_STAGE_VERTEX_BIT, vs_fullscreen);
+    g.stage_count = 1;
+    g.layout = a.depth_layout;
+    g.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    g.depth = g.depth_only = true;
+    a.depth_pipe = a.depth_layout ? make_graphics(v, &g) : VK_NULL_HANDLE;
+    ok = ok && a.depth_pipe && (a.ts = make_query_pool(v)) != VK_NULL_HANDLE && target_create(v, &s, &t, p, false, true);
     VkBuf* sink = ok ? scratch_buf(v, &s, (u64)GC_ALU_GROUPS * 256 * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, MEM_DEVICE) : nullptr;
     ok = sink && (a.set = desc_alloc(v, VL_BUF1)) != VK_NULL_HANDLE;
     bool error = false;
@@ -1290,6 +1319,8 @@ static void test_async(VkCtx* v, const BenchParams* p, BenchLive* live, BenchRes
         if (a.fence[i]) vkDestroyFence(v->dev, a.fence[i], nullptr);
     if (a.pool) vkDestroyCommandPool(v->dev, a.pool, nullptr);
     if (a.ts) vkDestroyQueryPool(v->dev, a.ts, nullptr);
+    if (a.depth_pipe) vkDestroyPipeline(v->dev, a.depth_pipe, nullptr);
+    if (a.depth_layout) vkDestroyPipelineLayout(v->dev, a.depth_layout, nullptr);
     scratch_free(v, &s);
 }
 

@@ -72,12 +72,13 @@ u64 feat_sfb_texture_bytes();
 void feat_sfb_texture(u32* texels);
 
 // ---- async compute ------------------------------------------------------------------------------------
-// Graphics = FA_FILL_LAYERS full-screen layers of the pixel-fill shader (vs_fullscreen + ps_fill: ROP /
-// bandwidth bound, shader ALUs mostly idle). Compute = cs_fp32 over GC_ALU_GROUPS groups (ALU bound, no memory
-// traffic). Serial pass: graphics, a full barrier, compute, all on the graphics queue; GPU timestamps around
-// both parts scale the compute iterations during warm-up until both take equally long. Async pass: compute
-// on a compute queue. Overlap gain = serial frame time / async frame time - 1.
-constexpr u32 FA_FILL_LAYERS = 64;
+// Graphics = FA_DEPTH_LAYERS full-screen depth-only layers (vs_fullscreen, no pixel shader, depth ALWAYS +
+// write: a shadow-map-style pass bound by rasterization / depth writes, shader ALUs idle). Compute = cs_fp32
+// over GC_ALU_GROUPS groups (ALU bound, no memory traffic). Serial pass: graphics, a full barrier, compute,
+// all on the graphics queue; GPU timestamps around both parts scale the compute iterations during warm-up
+// until both take equally long. Async pass: compute on a compute queue. Overlap gain = serial frame time /
+// async frame time - 1 (100 % = perfect overlap).
+constexpr u32 FA_DEPTH_LAYERS = 128;
 constexpr f64 FA_START_ITERS = 64.0;                // cs_fp32 iterations before balancing
 
 // ---- pass statistics ---------------------------------------------------------------------------------------
