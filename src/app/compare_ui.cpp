@@ -403,11 +403,7 @@ static void draw_score(u32 runs) {
     }
 }
 
-static void export_png() {
-    wchar_t path[MAX_PATH];
-    snapshot_export_path("compare", L"png", path);
-    snapshot_request(TOOL_COMPARE, path);
-}
+static void copy_png() { snapshot_request(TOOL_COMPARE, nullptr); }
 
 static void export_html() {
     wchar_t path[MAX_PATH];
@@ -636,8 +632,9 @@ void compare_ui_draw() {
     ImGui::SameLine();
     if (theme_button("Clear")) { compare_clear(); s_cu.status[0] = 0; }
     ImGui::SameLine();
-    if (theme_button("Save PNG")) export_png();
-    theme_help("Screenshot of this window as a PNG in the results folder (for sharing, like a CrystalDiskMark screenshot).");
+    if (theme_button("Copy PNG")) copy_png();
+    theme_help("Copies a screenshot of this window to the clipboard as a PNG, ready to paste into a chat, forum post or "
+               "document (for sharing, like a CrystalDiskMark screenshot).");
     ImGui::SameLine();
     if (theme_button("Save HTML")) export_html();
     theme_help("Self-contained HTML report of these runs (score, system, every raw value) in the results folder.");
