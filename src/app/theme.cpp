@@ -24,30 +24,33 @@ static ImVec4 mix(ImVec4 a, ImVec4 b, f32 t) {
 // progress, graphs) and an orchid secondary for navigation and selection (tabs, toggles, selected list rows).
 // Separation comes from 1 px outlines, not tonal fills. Contrast (WCAG 2.x) is measured against the card color.
 //
-//  role                     dark      light     use                                         dark / light
-//  page                     #0B0E14   #F2F4F8   window background
-//  card                     #11161F   #FFFFFF   panels, cards
-//  container                #161C27   #EFF2F6   raised: frames, popups (dark)
-//  container_high           #1B2230   #E7EBF1   frame hover, headers
-//  container_highest        #232C3D   #DCE2EA   frame active, progress track
-//  on_surface               #E4E9F2   #121826   body text                                   15.9 / 17.4 : 1
-//  on_surface_variant       #9BA6B9   #4A5466   secondary text, labels                       7.4 / 7.6 : 1
-//  outline                  #5D6A80   #7C8799   button / checkbox borders                    3.3 / 3.6 : 1
-//  outline_variant          #2D3749   #CDD4DE   card, group and table lines (decorative)
-//  primary                  #3CCFEA   #00779C   filled buttons, checks, sliders, data        10.0 / 5.0 : 1
-//  on_primary               #002A33   #FFFFFF   text on primary
-//  primary_container        #0C3440   #D3F1FA   selected chip fill
-//  on_primary_container     #B4EDFA   #00303E
-//  secondary                #D07BFF   #9C2BC4   selected tab border / text accent             7.0 / 5.9 : 1
-//  on_secondary             #2B0740   #FFFFFF
-//  secondary_container      #2C1A3B   #F5E3FC   selected tab / row fill
-//  on_secondary_container   #F0D6FF   #3B0B4F
-//  ok                       #5BD68A   #17784A   pass, done, good                              9.6 / 5.4 : 1
-//  error                    #FF6E6E   #C42B2B   fail, errors                                  6.6 / 5.6 : 1
-//  warn                     #FFB648   #9A5800   caution, notes                               10.4 / 5.5 : 1
-//  warn_container           #33240C   #FFEBCC   warning banner
-//  on_warn_container        #FFE3B3   #3D2400   banner text                                  13.9 / 13.0 : 1 (on banner)
-//  heat_lo .. heat_hi       #123D2B..#5C1C24   #CBF2DA..#FFD8D8   matrix cells (green .. red)
+//  role                    dark      light     use                                    contrast d / l
+//  page                    #0B0E14   #F2F4F8   window background
+//  card                    #11161F   #FFFFFF   panels, cards
+//  container               #161C27   #EFF2F6   raised: frames, popups (dark)
+//  container_high          #1B2230   #E7EBF1   frame hover, headers
+//  container_highest       #232C3D   #DCE2EA   frame active, progress track
+//  on_surface              #E4E9F2   #121826   body text                              14.9 / 17.7
+//  on_surface_variant      #9BA6B9   #4A5466   secondary text, labels                 7.4 / 7.6
+//  outline                 #5D6A80   #7C8799   button / checkbox borders (3:1 needed) 3.3 / 3.6
+//  outline_variant         #2D3749   #CDD4DE   card, group, table lines (decorative)
+//  primary                 #3CCFEA   #00779C   filled buttons, checks, sliders, data  9.8 / 5.1
+//  on_primary              #002A33   #FFFFFF   text on primary                        8.2 / 5.1 *
+//  primary_container       #0C3440   #D3F1FA   tonal primary fill
+//  on_primary_container    #B4EDFA   #00303E   text on it                             10.4 / 11.9 *
+//  secondary               #D07BFF   #9C2BC4   selected tab / chip outline, accents   6.9 / 5.9
+//  on_secondary            #2B0740   #FFFFFF   text on secondary
+//  secondary_container     #2C1A3B   #F5E3FC   selected tab / chip / row fill
+//  on_secondary_container  #F0D6FF   #3B0B4F   text on it                             12.0 / 12.8 *
+//  ok                      #5BD68A   #17784A   pass, done, good                       9.9 / 5.5
+//  error                   #FF6E6E   #C42B2B   fail, errors                           6.7 / 5.6
+//  warn                    #FFB648   #9A5800   caution, notes, banner stripe          10.4 / 5.6
+//  warn_container          #33240C   #FFEBCC   warning banner
+//  on_warn_container       #FFE3B3   #3D2400   banner text                            12.1 / 12.4 *
+//  heat_lo .. heat_hi      #123D2B   #CBF2DA   matrix cells, green ..
+//                          #5C1C24   #FFD8D8   .. red
+//  (contrast against the card color; * = against its own fill). Group titles use primary.
+
 static Palette light_palette() {
     Palette p;
     p.page = rgb(0xF2F4F8);
