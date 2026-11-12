@@ -193,7 +193,7 @@ void theme_apply_style(f32 scale) {
     s.DisabledAlpha = 0.38f;
     s.ScaleAllSizes(scale);
     s.FontScaleDpi = scale;
-    s.FontSizeBase = roundf(15.0f * scale) / scale;    // whole-pixel body text
+    s.FontSizeBase = roundf(16.5f * scale) / scale;    // whole-pixel body text (17 px at 100 %)
 
     ImVec4* c = s.Colors;
     const ImVec4 none = { 0, 0, 0, 0 };
