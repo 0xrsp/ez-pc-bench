@@ -7,6 +7,7 @@
 #include "core/threads.h"
 #include "core/throughput.h"
 #include "core/timer.h"
+#include <immintrin.h>
 #include <math.h>
 #include <string.h>
 
@@ -21,8 +22,10 @@ static inline Cpx csub(Cpx a, Cpx b) { return { a.re - b.re, a.im - b.im }; }
 static inline Cpx cmul(Cpx a, Cpx b) { return { a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re }; }
 static inline Cpx cmul_j(Cpx a) { return { -a.im, a.re }; }    // a * i
 
-static constexpr u32 FFT_LOG2 = 16;
-static constexpr u32 FFT_N = 1u << FFT_LOG2;      // 65536 points = 1 MiB per buffer
+// 16K points: data, scratch and twiddles (768 KiB) stay in a Zen 4 L2, so MT scales with cores. At 64K
+// points 16 threads were DRAM-bound (MT / ST 2.7x).
+static constexpr u32 FFT_LOG2 = 14;
+static constexpr u32 FFT_N = 1u << FFT_LOG2;      // 16384 points = 256 KiB per buffer
 
 // Forward transform of x (n points, natural order in and out) using y as scratch. w[k] = exp(-2 pi i k / n).
 // Returns the buffer that holds the result (x or y).
@@ -154,22 +157,34 @@ static void nbody_init(NBody* b, u64 seed) {
     }
 }
 
+static inline f32 hsum8(__m256 v) {
+    __m128 s = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+    s = _mm_add_ss(s, _mm_movehdup_ps(s));
+    return _mm_cvtss_f32(s);
+}
+
+// AVX2, 8 bodies j at a time (precise FP keeps the compiler from vectorizing the sums itself). Exact
+// sqrt + divide, not the rsqrt approximation.
 static void nbody_accel(NBody* b) {
+    const __m256 soft = _mm256_set1_ps(NB_SOFT2), one = _mm256_set1_ps(1.0f);
     for (u32 i = 0; i < NB; ++i) {
-        const f32 xi = b->x[i], yi = b->y[i], zi = b->z[i];
-        f32 ax = 0.0f, ay = 0.0f, az = 0.0f;
-        for (u32 j = 0; j < NB; ++j) {
-            const f32 dx = b->x[j] - xi, dy = b->y[j] - yi, dz = b->z[j] - zi;
-            const f32 d2 = dx * dx + dy * dy + dz * dz + NB_SOFT2;
-            const f32 inv = 1.0f / sqrtf(d2);
-            const f32 s = b->m[j] * inv * inv * inv;
-            ax += dx * s;
-            ay += dy * s;
-            az += dz * s;
+        const __m256 xi = _mm256_set1_ps(b->x[i]), yi = _mm256_set1_ps(b->y[i]), zi = _mm256_set1_ps(b->z[i]);
+        __m256 ax = _mm256_setzero_ps(), ay = _mm256_setzero_ps(), az = _mm256_setzero_ps();
+        for (u32 j = 0; j < NB; j += 8) {
+            const __m256 dx = _mm256_sub_ps(_mm256_load_ps(b->x + j), xi);
+            const __m256 dy = _mm256_sub_ps(_mm256_load_ps(b->y + j), yi);
+            const __m256 dz = _mm256_sub_ps(_mm256_load_ps(b->z + j), zi);
+            const __m256 d2 = _mm256_fmadd_ps(dx, dx, _mm256_fmadd_ps(dy, dy, _mm256_fmadd_ps(dz, dz, soft)));
+            const __m256 inv = _mm256_div_ps(one, _mm256_sqrt_ps(d2));
+            const __m256 s = _mm256_mul_ps(_mm256_load_ps(b->m + j), _mm256_mul_ps(inv, _mm256_mul_ps(inv, inv)));
+            ax = _mm256_fmadd_ps(dx, s, ax);
+            ay = _mm256_fmadd_ps(dy, s, ay);
+            az = _mm256_fmadd_ps(dz, s, az);
         }
-        b->ax[i] = ax;
-        b->ay[i] = ay;
-        b->az[i] = az;
+        b->ax[i] = hsum8(ax);
+        b->ay[i] = hsum8(ay);
+        b->az[i] = hsum8(az);
     }
 }
 

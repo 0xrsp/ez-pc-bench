@@ -126,7 +126,7 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Image",          "Resize 1080p to 720p, cubic (WIC)", "cpu.img.resize", cpu_img_resize, 0 },
     { SUITE_CPU, "Parsing",        "JSON parse",                "cpu.parse.json",    cpu_parse_json,     0 },
     { SUITE_CPU, "Parsing",        "Tokenize + count words",    "cpu.parse.text",    cpu_parse_text,     0 },
-    { SUITE_CPU, "Science",        "FFT 64K complex (FP64)",    "cpu.sci.fft",       cpu_fft,            0 },
+    { SUITE_CPU, "Science",        "FFT 16K complex (FP64)",   "cpu.sci.fft",       cpu_fft,            0 },
     { SUITE_CPU, "Science",        "N-body 2048 (FP32)",        "cpu.sci.nbody",     cpu_nbody,          0 },
     { SUITE_CPU, "Science",        "Ray-box intersection",      "cpu.sci.raybox",    cpu_raybox,         0 },
     { SUITE_CPU, "Science",        "Ray-triangle intersection", "cpu.sci.raytri",    cpu_raytri,         0 },
