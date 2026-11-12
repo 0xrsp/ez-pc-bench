@@ -102,7 +102,8 @@ src/
   app/main_cli.cpp     Arg parsing, runs selected tests, live progress lines, CLI modes (--health, --sysinfo, ...)
   app/ui.cpp/.h        Suite tree, live panel, Results / Charts / Score / Ranking tabs, warnings
   app/settings*.cpp    settings.ini load/save, Settings and Benchmark settings windows
-  app/theme.*          Material palette, fonts, vector icons
+  app/theme.*          Palette (graphite / cyan / orchid), outlined controls, group boxes, fonts, vector icons
+  app/graph.*          Shared Task Manager-style graph widget (time series, x/y, bars, stats; colors by unit)
   app/library.*        Built-in reference runs (RCDATA, LZMS)
   app/compare_ui.*     Compare window;  app/score_ui.*, history_ui.*: score tab / About, History window
   app/snapshot.*       Window back buffer -> PNG (WIC): file (Score tab) or clipboard (compare)
@@ -643,6 +644,24 @@ Waiting on the user (2026-11-11):
 
 ## 12. Decision log
 
+- 2026-11-12 (look and graphs; details in [notes/theme-refresh.md](notes/theme-refresh.md),
+  [notes/graphs.md](notes/graphs.md), [notes/pawnio.md](notes/pawnio.md) §10):
+  - Theme replaces the Material 3 trial below: blue-black surfaces (dark page #0B0E14), cyan primary for actions and
+    data, orchid secondary for navigation / selection, all text WCAG AA. Radii 2-4 px (no pills), 1 px outlines on
+    frames, secondary buttons, tabs, cards and popups. `theme_group_begin/end`: titled outlined boxes, used by
+    Settings, Benchmark settings, Stability, System details, Disk health, History, About the score, Sensors log tab.
+  - One graph widget (`app/graph.*`) for every graph (no ImGui `PlotLines` left): Task Manager style (series-colored
+    1 px frame, faint 10 x 5 grid, filled line, newest at the right, caption with title and max). Colors come from the
+    unit (load cyan, clock violet, power amber, temperature rose, memory magenta, latency blue, disk green, compute
+    orange), self-contained in graph.cpp and independent of the theme palette.
+  - Sensors window Overview is Task Manager-like: device list with sparklines (All, CPU, GPU n, Memory, Drives, Power,
+    Temperatures, Advanced) and the selected device's graphs, stats and tile grids (per-LP load, per-core power);
+    span 1 / 2 / 5 / 10 min; ini `[sensors] graph_window`, `device`.
+  - PawnIO modules: downloaded with the driver (or a "Download modules" button) from the PawnIO.Modules release named by
+    `PAWNIO_MODULES_VERSION`, checked against `PAWNIO_MODULES_SHA256` (`core/pawnio_modules.h`), unpacked by our own
+    zip reader (`core/unzip.*`) into `%LOCALAPPDATA%\ez-pc-bench\pawnio\<version>\` with COPYING; no embedded
+    modules any more. The driver verifies module signatures at load. CLI `--pawnio-modules`.
+
 - 2026-11-11 (trim): features cut, UI reworked (details in [notes/](notes/), marked "Removed 2026-11-11 (trim)"):
   - Disk health: History and "Thresholds & features" tabs gone (health samples, plots, endurance projection,
     per-drive thresholds, AAM / APM). Fixed CrystalDiskInfo-style Caution limits: any reallocated / pending /
@@ -855,7 +874,7 @@ Waiting on the user (2026-11-11):
   - Explicit GPU selection for GPU suites, default = most powerful adapter.
   - High-DPI aware UI. BitLocker status shown.
   - D3D12 chosen as the DirectX API; one adapter per run; results compare in M6.
-- 2026-11-11 (UI theme, trial): Material 3 look in `app/theme.*` — light (default) + dark palettes from
+- 2026-11-11 (UI theme, trial; superseded 2026-11-12): Material 3 look in `app/theme.*` — light (default) + dark palettes from
   seed #0B57D0, flat page + white outlined cards, pill buttons, Material checkboxes (`ImGuiCol_CheckboxSelectedBg`
   is the checked fill in 1.93), segmented Results/Charts tabs, data table with horizontal dividers only.
   Font: Inter 4.1 Regular/Medium embedded as RCDATA (exe 846 KB → 1.7 MB), rasterized sharp: OversampleH/V 1,
