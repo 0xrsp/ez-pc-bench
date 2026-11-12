@@ -59,3 +59,8 @@ f32 theme_icon_button_width(const char* label, f32 h);
 bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip);
 // Wrapped tooltip for the item just drawn (also when it is disabled), after a short hover delay.
 void theme_help(const char* text);
+
+// Titled, outlined section that groups related controls (settings groups, tool-window sections). Height fits
+// the content; width = `width` (default: the full available width). Always pair with theme_group_end().
+void theme_group_begin(const char* title, f32 width = 0.0f);
+void theme_group_end();

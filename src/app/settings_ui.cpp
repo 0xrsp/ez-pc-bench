@@ -14,15 +14,15 @@
 #include <stdio.h>
 
 static bool begin_group(const char* title) {
-    ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(title);
-    ImGui::PopFont();
+    theme_group_begin(title);
     // A little vertical cell padding so rows are easy hover targets.
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(ImGui::GetStyle().CellPadding.x, ImGui::GetFontSize() * 0.2f));
     const bool ok = ImGui::BeginTable(title, 2, ImGuiTableFlags_SizingStretchProp);
     ImGui::PopStyleVar();
-    if (!ok) return false;
+    if (!ok) {
+        theme_group_end();
+        return false;
+    }
     ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
     ImGui::TableSetupColumn("control", ImGuiTableColumnFlags_WidthStretch, 0.58f);
     return true;
@@ -60,6 +60,7 @@ static void finish_row() {
 static void end_group() {
     finish_row();
     ImGui::EndTable();
+    theme_group_end();
 }
 
 // Starts a row: label, then the control column with a full-width item. `help` covers the whole row.

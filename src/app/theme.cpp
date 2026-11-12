@@ -502,3 +502,22 @@ void theme_help(const char* text) {
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
+
+void theme_group_begin(const char* title, f32 width) {
+    ImGui::PushStyleColor(ImGuiCol_Border, g_pal.outline_variant);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetFontSize() * 0.8f, ImGui::GetFontSize() * 0.6f));
+    ImGui::BeginChild(title, ImVec2(width, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    ImGui::TextUnformatted(title);
+    ImGui::PopFont();
+}
+
+void theme_group_end() {
+    ImGui::EndChild();
+    ImGui::Spacing();
+}
