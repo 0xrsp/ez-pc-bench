@@ -93,6 +93,7 @@ void graph_format(char* buf, u32 size, f64 v, const char* unit, i32 decimals) {
     if (!strcmp(unit, "MHz") && fabs(v) >= 1000.0) { snprintf(buf, size, "%.2f GHz", v / 1000.0); return; }
     if (!strcmp(unit, "MiB") && fabs(v) >= 1024.0) { snprintf(buf, size, "%.1f GiB", v / 1024.0); return; }
     if (!strcmp(unit, "%")) { snprintf(buf, size, "%.*f%%", decimals < 0 ? 0 : decimals, v); return; }
+    if (decimals < 0 && (!strcmp(unit, "MHz") || !strcmp(unit, "MiB") || !strcmp(unit, "RPM"))) decimals = 0;
     char n[32];
     if (decimals >= 0) snprintf(n, sizeof(n), "%.*f", decimals, v);
     else format_value(n, sizeof(n), v);
@@ -167,8 +168,8 @@ static f32 line_thickness() {
 static void draw_box(ImDrawList* dl, ImVec2 a, ImVec2 b, GraphKind k, bool grid, const f32* vx, u32 vx_count) {
     const bool dark = theme_is_dark();
     dl->AddRectFilled(a, b, graph_color(k, dark ? 0.06f : 0.035f));
-    if (grid) {
-        const ImU32 gc = graph_color(k, dark ? 0.15f : 0.13f);
+    if (grid && b.y - a.y >= ImGui::GetFontSize() * 1.8f) {      // no grid in table-row sized graphs
+        const ImU32 gc = graph_color(k, dark ? 0.12f : 0.11f);
         const f32 w = b.x - a.x, h = b.y - a.y;
         if (vx) {
             for (u32 i = 0; i < vx_count; ++i) dl->AddLine(ImVec2(vx[i] + 0.5f, a.y), ImVec2(vx[i] + 0.5f, b.y), gc);
@@ -335,14 +336,16 @@ GraphHit graph_time(const char* id, const Graph* g, const GraphLine* lines, u32 
             const f32 v = ln->y[first + i];
             s_pts[i] = ImVec2(rx - dx * (f32)(n - 1 - i), isnan(v) ? NAN : ypos(v));
         }
-        draw_runs(dl, s_pts, n, bottom, kind_of(g, ln, l), !(g->flags & GF_NO_FILL) && (count == 1 || l == 0));
+        draw_runs(dl, s_pts, n, bottom, kind_of(g, ln, l), !(g->flags & GF_NO_FILL) && count == 1);
     }
 
     // Hover: the sample under the mouse on every line.
     if (f.hovered && count) {
         const f32 mx = ImGui::GetIO().MousePos.x;
         const i32 back = (i32)floorf((rx - mx) / dx + 0.5f);     // samples before the newest
-        if (back >= 0 && back < (i32)window) {
+        u32 longest = 0;
+        for (u32 l = 0; l < count; ++l) longest = lines[l].n > longest ? lines[l].n : longest;
+        if (back >= 0 && back < (i32)window && back < (i32)longest) {
             const f32 x = rx - dx * (f32)back;
             dl->AddLine(ImVec2(x, f.a.y), ImVec2(x, f.b.y), dim_col(), 1.0f);
             for (u32 l = 0; l < count; ++l) {

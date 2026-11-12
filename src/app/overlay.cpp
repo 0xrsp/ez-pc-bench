@@ -1,7 +1,9 @@
 // Sensor overlay (see overlay.h). Twice a second: GDI draws white anti-aliased text on black into a DIB, the
 // gray level becomes text coverage over a translucent dark panel (premultiplied alpha), UpdateLayeredWindow
-// puts it on screen. WS_EX_TRANSPARENT + WS_EX_LAYERED make it click-through.
+// puts it on screen. WS_EX_TRANSPARENT + WS_EX_LAYERED make it click-through. Labels take the graph color of
+// their unit (graph.h, dark-theme shades), values are white.
 #include "app/overlay.h"
+#include "app/graph.h"
 #include "core/bench.h"
 #include "core/runner.h"
 #include "core/sensors.h"
@@ -25,7 +27,7 @@ static const char* const DEFAULT_IDS = "cpu.load,cpu.max_mhz,emi.cpu_pkg,temp.*,
 
 // ---- drawing (overlay thread) -------------------------------------------------------------------------
 
-struct Line { wchar_t label[32], value[32]; };
+struct Line { wchar_t label[32], value[32]; GraphKind kind; };
 
 static void widen(const char* s, wchar_t* out, int size) { MultiByteToWideChar(CP_UTF8, 0, s, -1, out, size); }
 
@@ -49,6 +51,7 @@ static u32 collect(Line* lines) {
         (g_benches[cur].suite == SUITE_GPU_VK || g_benches[cur].suite == SUITE_GPU_D3D12)) {
         swprintf(lines[n].label, 32, L"FPS");
         swprintf(lines[n].value, 32, L"%.0f", g_live.current.load(std::memory_order_relaxed));
+        lines[n].kind = GK_RATE;
         ++n;
     }
     static SensorChannel ch[CH_MAX];
@@ -62,11 +65,13 @@ static u32 collect(Line* lines) {
         if (!sensors_channel_matches(&ch[i], ids)) continue;
         widen(ch[i].label, lines[n].label, 32);
         format_value(&ch[i], lines[n].value, 32);
+        lines[n].kind = graph_kind_for_unit(ch[i].unit);
         ++n;
     }
     if (!n) {
         swprintf(lines[0].label, 32, L"Sensors");
         swprintf(lines[0].value, 32, L"\x2026");
+        lines[0].kind = GK_OTHER;
         n = 1;
     }
     return n;
@@ -144,10 +149,19 @@ static void render(HWND hwnd) {
 
     // Coverage -> premultiplied BGRA over a translucent panel with rounded corners.
     const u32 bg_a = 190, bg[3] = { 26, 22, 20 };                      // B, G, R
-    const u32 label_c[3] = { 200, 196, 190 }, value_c[3] = { 255, 255, 255 };
+    const u32 value_c[3] = { 255, 255, 255 };
+    u32 label_c[OVL_LINES][3];      // B, G, R of each line's graph color
+    for (u32 i = 0; i < n; ++i) {
+        const u32 rgb = graph_rgb(lines[i].kind, true);
+        label_c[i][0] = rgb & 0xFF;
+        label_c[i][1] = (rgb >> 8) & 0xFF;
+        label_c[i][2] = (rgb >> 16) & 0xFF;
+    }
     const i32 split = pad + label_w + gap / 2;
     const f32 rad = 8.0f * scale;
     for (i32 y = 0; y < h; ++y) {
+        const i32 row = (y - pad) / line_h;
+        const u32* lc = label_c[row < 0 ? 0 : row >= (i32)n ? n - 1 : row];
         for (i32 x = 0; x < w; ++x) {
             u32* p = &s_gdi.bits[y * w + x];
             const u32 b = *p & 0xFF, g = (*p >> 8) & 0xFF, r = (*p >> 16) & 0xFF;
@@ -156,7 +170,7 @@ static void render(HWND hwnd) {
             const f32 cx = x < rad ? rad - x - 0.5f : x >= w - rad ? x + 0.5f - (w - rad) : 0.0f;
             const f32 cy = y < rad ? rad - y - 0.5f : y >= h - rad ? y + 0.5f - (h - rad) : 0.0f;
             if (cx > 0.0f && cy > 0.0f && cx * cx + cy * cy > rad * rad) { *p = 0; continue; }
-            const u32* tc = x < split ? label_c : value_c;
+            const u32* tc = x < split ? lc : value_c;
             const u32 a = bg_a + (255 - bg_a) * cov / 255;
             u32 out = a << 24;
             for (u32 k = 0; k < 3; ++k) {
