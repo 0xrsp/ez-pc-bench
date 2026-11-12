@@ -42,9 +42,9 @@ library, CLI.
   *Open, waiting on the user (PLAN.md §11). §12 hardware generality waits on it.*
 - [ ] **Network features.** Update check, online result browser/leaderboard, email alerts all need
   network access. Decide what (if anything) talks to the network, always opt-in.
-  *Open, waiting on the user for anything beyond PawnIO. The user asked for the PawnIO "Download & install"
-  button (2026-11-11, §8): the app's first network access, only on that click. Health / tray alerts and the
-  update check wait on the rest of this decision.*
+  *Open, waiting on the user for anything beyond PawnIO and the update check. The user asked for the PawnIO
+  "Download & install" button (2026-11-11, §8): the app's first network access, only on that click; and for
+  an update check on startup (2026-11-12, §12, `dist` builds only). Health / tray alerts wait on the rest.*
 - [ ] **Resident mode.** CrystalDiskInfo/HWiNFO-style tray monitoring means a long-running process (and
   probably a scheduled task to start elevated at logon). Decide if the GUI exe may stay resident.
   *Open, waiting on the user. Tray icon and threshold alerts wait on it.*
@@ -498,8 +498,8 @@ One number for "how fast is this PC overall", plus one per component, computed o
 - [ ] **P1** Hardware generality (decide in §0): processor groups (>64 LPs), Intel hybrid, multi-CCD
   topology display, NUMA-aware memory tests, graceful AVX2-less path.
   *Waits on the §0 scope decision.*
-- [ ] **P2** Opt-in update check against GitHub Releases.
-  *Waits on the §0 network decision.*
+- [x] **P2** Update check against GitHub Releases (2026-11-12, user request): on startup in `dist` builds,
+  SHA-256 of the exe vs the latest release's asset; "Update available" button, in-place update + restart.
 - [ ] **P2** Start-with-Windows resident mode (scheduled task for elevation) for health/temperature alerts.
   *Waits on the §0 resident-mode decision.*
 - [ ] **P2** Keyboard navigation and screen-reader friendly labels in the main lists.

@@ -183,6 +183,7 @@ add_library(ezbench_core STATIC
     src/core/runfile.cpp
     src/core/score.cpp
     src/core/integrity.cpp
+    src/core/json.cpp
     src/core/history.cpp
     src/core/report.cpp
     src/core/disk_health.cpp
@@ -304,11 +305,16 @@ add_executable(ez-pc-bench WIN32
     src/app/snapshot.cpp
     src/app/settings.cpp
     src/app/theme.cpp
+    src/app/updater.cpp
     src/app/gui.rc
     ${CMAKE_BINARY_DIR}/library.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet windowscodecs urlmon wintrust crypt32)
+    shell32 cabinet windowscodecs urlmon wintrust crypt32 winhttp)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
+# Auto-update from GitHub releases (src/app/updater.h). Only release builds for publishing turn it on (the
+# `dist` preset); in dev builds the check never runs (a local build never matches the published exe).
+option(EZB_UPDATER "GUI checks GitHub for a newer ez-pc-bench.exe on startup" OFF)
+target_compile_definitions(ez-pc-bench PRIVATE EZB_UPDATER=$<BOOL:${EZB_UPDATER}>)
 
 # CLI
 add_executable(ez-pc-bench-cli
