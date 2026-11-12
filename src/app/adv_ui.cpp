@@ -3,6 +3,7 @@
 #include "app/adv_ui.h"
 #include "app/theme.h"
 #include "core/adv_sensors.h"
+#include "core/pawnio_modules.h"
 #include "core/sysinfo_spd.h"
 #include "imgui.h"
 #include <windows.h>
@@ -221,6 +222,8 @@ static void draw_values(const AdvInfo* info) {
     }
 }
 
+static void draw_modules_download();
+
 void adv_ui_draw_sensors() {
     AdvInfo info;
     const AdvStatus st = adv_status(&info);
@@ -229,6 +232,13 @@ void adv_ui_draw_sensors() {
     ImGui::TextUnformatted("Advanced sensors (PawnIO)");
     ImGui::PopFont();
     ImGui::PushTextWrapPos(0.0f);
+    if (st == ADV_NO_MODULES) {
+        ImGui::TextDisabled("The PawnIO driver is installed; the sensors also need its signed modules (PawnIO.Modules "
+                            "%s from github.com, LGPL-2.1).", PAWNIO_MODULES_VERSION);
+        draw_modules_download();
+        ImGui::PopTextWrapPos();
+        return;
+    }
     if (st != ADV_ACTIVE) {
         ImGui::TextDisabled("%s. %s", adv_status_text(st), info.detail);
         ImGui::PopTextWrapPos();
@@ -243,7 +253,7 @@ void adv_ui_draw_sensors() {
 }
 
 const char* adv_ui_settings_help() {
-    static char help[900];
+    static char help[1400];
     AdvInfo info;
     const AdvStatus st = adv_status(&info);
     snprintf(help, sizeof(help),
@@ -251,20 +261,27 @@ const char* adv_ui_settings_help() {
              "PawnIO, a signed open-source driver used by LibreHardwareMonitor, FanControl and others (%s). EzPcBench "
              "doesn't ship it. \"Download & install\" fetches the official installer (PawnIO_setup.exe, latest release "
              "on github.com/namazso/PawnIO.Setup), checks its signature and starts it; you confirm the install there. "
-             "That click is the only time EzPcBench goes online. Without PawnIO everything else works as before.\n\n"
+             "It also downloads the signed PawnIO modules the sensors use (release %s of github.com/namazso/PawnIO.Modules, "
+             "LGPL-2.1, checked against a pinned SHA-256) into %%LOCALAPPDATA%%\\ez-pc-bench\\pawnio. These buttons are "
+             "the only time EzPcBench goes online. Without PawnIO everything else works as before.\n\n"
              "Status: %s. %s%s%s",
-             ADV_PAWNIO_URL, adv_status_text(st), info.detail, info.modules[0] ? "\nModules: " : "", info.modules);
+             ADV_PAWNIO_URL, PAWNIO_MODULES_VERSION, adv_status_text(st), info.detail, info.modules[0] ? "\nModules: " : "",
+             info.modules);
     return help;
 }
 
-// ---- PawnIO installer download ----------------------------------------------------------------------
-// Only on an explicit click: download the official installer to %TEMP%\ezpcbench_pawnio\ on a worker thread,
-// require a valid Authenticode signature from namazso (PawnIO's author), run it (it asks for elevation itself:
-// requireAdministrator manifest), wait for it to exit, delete it and detect PawnIO again.
+// ---- PawnIO installer and modules download --------------------------------------------------------------
+// Only on an explicit click, on one worker thread (the UI thread only reads an atomic state):
+// - "Download & install": download the official installer to %TEMP%\ezpcbench_pawnio\, require a valid
+//   Authenticode signature from namazso (PawnIO's author), download the signed modules unless they are already
+//   there (core/pawnio_modules.h), run the installer (it asks for elevation itself: requireAdministrator
+//   manifest), wait for it to exit, delete it and detect PawnIO again;
+// - "Download modules" (driver installed, modules missing): only the modules, then detect again, so the sensors
+//   start without restarting the app.
 
-enum InstallState : u8 { INST_IDLE, INST_DOWNLOADING, INST_RUNNING, INST_DONE, INST_FAILED };
+enum InstallState : u8 { INST_IDLE, INST_DOWNLOADING, INST_MODULES, INST_RUNNING, INST_DONE, INST_FAILED };
 static std::atomic<u8> s_inst;
-static char s_inst_msg[256];        // written by the worker before it publishes INST_DONE / INST_FAILED
+static char s_inst_msg[512];        // written by the worker before it publishes INST_DONE / INST_FAILED
 static HANDLE s_inst_thread;
 
 static void inst_finish(InstallState st, const char* fmt, ...) {
@@ -321,6 +338,14 @@ static DWORD WINAPI install_thread(void*) {
         inst_finish(INST_FAILED, "Not started: the downloaded installer was rejected because %s. Get it from %s instead.",
                     why, ADV_PAWNIO_URL);
     } else {
+        // Modules first, so the detection after the install finds them. A failure here doesn't stop the install:
+        // the row then offers "Download modules" with the reason below it.
+        char mod_msg[384] = "";
+        bool mods = pawnio_modules_downloaded();
+        if (!mods) {
+            s_inst.store(INST_MODULES, std::memory_order_release);
+            mods = pawnio_modules_download(mod_msg, sizeof(mod_msg));
+        }
         s_inst.store(INST_RUNNING, std::memory_order_release);
         SHELLEXECUTEINFOW sei = { sizeof(sei) };
         sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
@@ -342,6 +367,8 @@ static DWORD WINAPI install_thread(void*) {
             if (adv_status(nullptr) == ADV_NOT_INSTALLED)
                 inst_finish(INST_DONE, code ? "The installer ended (code %lu) without installing PawnIO."
                                             : "The installer closed without installing PawnIO.", code);
+            else if (!mods)
+                inst_finish(INST_FAILED, "PawnIO installed, but its modules weren't downloaded: %s", mod_msg);
             else
                 inst_finish(INST_DONE, "PawnIO installed.");
         }
@@ -352,36 +379,63 @@ static DWORD WINAPI install_thread(void*) {
     return 0;
 }
 
-static void install_start() {
+static DWORD WINAPI modules_thread(void*) {
+    char msg[384];
+    const bool ok = pawnio_modules_download(msg, sizeof(msg));
+    if (ok) adv_redetect();
+    inst_finish(ok ? INST_DONE : INST_FAILED, "%s", msg);
+    return 0;
+}
+
+static void job_start(bool modules_only) {
     if (s_inst_thread) {
         WaitForSingleObject(s_inst_thread, INFINITE);     // finished (state DONE / FAILED) before a retry
         CloseHandle(s_inst_thread);
     }
     s_inst_msg[0] = 0;
-    s_inst.store(INST_DOWNLOADING, std::memory_order_release);
-    s_inst_thread = CreateThread(nullptr, 0, install_thread, nullptr, 0, nullptr);
+    s_inst.store(modules_only ? INST_MODULES : INST_DOWNLOADING, std::memory_order_release);
+    s_inst_thread = CreateThread(nullptr, 0, modules_only ? modules_thread : install_thread, nullptr, 0, nullptr);
     if (!s_inst_thread) inst_finish(INST_FAILED, "Couldn't start the download (error %lu).", GetLastError());
+}
+
+// Progress text while the worker is busy; returns false (nothing drawn) when it isn't.
+static bool draw_progress(u8 st) {
+    const char* what = st == INST_DOWNLOADING ? "Downloading the PawnIO installer"
+                     : st == INST_MODULES ? "Downloading the PawnIO modules"
+                     : st == INST_RUNNING ? "Installer running" : nullptr;
+    if (!what) return false;
+    static const char* const dots[] = { "", ".", "..", "..." };
+    ImGui::TextDisabled("%s%s", what, dots[(int)(ImGui::GetTime() * 2.0) % 4]);
+    return true;
+}
+
+// The last job's outcome / error line, under the button.
+static void draw_outcome(u8 st) {
+    if (!s_inst_msg[0] || (st != INST_DONE && st != INST_FAILED)) return;
+    ImGui::PushTextWrapPos(0.0f);
+    if (st == INST_FAILED) ImGui::TextColored(g_pal.error, "%s", s_inst_msg);
+    else ImGui::TextDisabled("%s", s_inst_msg);
+    ImGui::PopTextWrapPos();
 }
 
 // The "Not installed" cell: Download & install, its progress, and the outcome / error line.
 static void draw_install() {
     const u8 st = s_inst.load(std::memory_order_acquire);
     ImGui::AlignTextToFramePadding();
-    if (st == INST_DOWNLOADING || st == INST_RUNNING) {
-        static const char* const dots[] = { "", ".", "..", "..." };
-        ImGui::TextDisabled("%s%s", st == INST_DOWNLOADING ? "Downloading the PawnIO installer" : "Installer running",
-                            dots[(int)(ImGui::GetTime() * 2.0) % 4]);
-        return;
-    }
+    if (draw_progress(st)) return;
     ImGui::TextUnformatted("Not installed");
     ImGui::SameLine();
-    if (theme_button("Download & install")) install_start();     // what it does: the row's help (adv_ui_settings_help)
-    if (s_inst_msg[0] && (st == INST_DONE || st == INST_FAILED)) {
-        ImGui::PushTextWrapPos(0.0f);
-        if (st == INST_FAILED) ImGui::TextColored(g_pal.error, "%s", s_inst_msg);
-        else ImGui::TextDisabled("%s", s_inst_msg);
-        ImGui::PopTextWrapPos();
-    }
+    if (theme_button("Download & install")) job_start(false);     // what it does: the row's help (adv_ui_settings_help)
+    draw_outcome(st);
+}
+
+// Driver installed, modules missing: one button (Settings row and Sensors window), progress, outcome.
+static void draw_modules_download() {
+    const u8 st = s_inst.load(std::memory_order_acquire);
+    ImGui::AlignTextToFramePadding();
+    if (draw_progress(st)) return;
+    if (theme_button("Download modules")) job_start(true);
+    draw_outcome(st);
 }
 
 void adv_ui_settings_control() {
@@ -394,6 +448,10 @@ void adv_ui_settings_control() {
     bool on = adv_enabled();
     if (theme_checkbox("##adv", &on)) adv_set_enabled(on);
     ImGui::SameLine();
+    if (st == ADV_NO_MODULES) {
+        draw_modules_download();
+        return;
+    }
     ImGui::AlignTextToFramePadding();
     if (st == ADV_ACTIVE) ImGui::TextUnformatted("On");
     else ImGui::TextDisabled("%s", st == ADV_OFF ? "Off" : adv_status_text(st));
