@@ -113,8 +113,8 @@ const SuiteDesc g_suites[SUITE_COUNT] = {
     { SUITE_SMOKE,     "Smoke test",   "smoke",     smoke_init, smoke_shutdown },
     { SUITE_CPU,       "CPU",          "cpu",       cpu_init,   cpu_shutdown },
     { SUITE_MEM,       "Memory",       "mem",       mem_init,   mem_shutdown },
-    { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    gpu_vk_init,    gpu_vk_shutdown },
-    { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", gpu_d3d12_init, gpu_d3d12_shutdown },
+    { SUITE_GPU_VK,    "GPU (Vulkan)", "gpu_vk",    gpu_vk_suite_init,    gpu_suite_shutdown },
+    { SUITE_GPU_D3D12, "GPU (D3D12)",  "gpu_d3d12", gpu_d3d12_suite_init, gpu_suite_shutdown },
     { SUITE_DISK,      "Disk",         "disk",      disk_init,  disk_shutdown },
 };
 

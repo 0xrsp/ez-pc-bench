@@ -341,6 +341,7 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
         else if (!strcmp(path, "system.power.on_ac")) s_file.on_ac = !strcmp(v, "true");
         else if (!strcmp(path, "system.power.mode")) copy_str(s_file.mode, sizeof(s_file.mode), v);
         else if (!strcmp(path, "params.gpu")) copy_str(s_file.gpu, sizeof(s_file.gpu), v);
+        else if (!strcmp(path, "params.gpus")) copy_str(s_file.gpu, sizeof(s_file.gpu), v);    // several adapters, after gpu
         else if (!strcmp(path, "params.duration_ms")) s_file.duration_ms = atof(v);
     }
     if (!s_file.have_app) { snprintf(err, err_size, "not an EzPcBench results file"); return false; }
@@ -476,6 +477,14 @@ bool compare_add_current(char* err, u32 err_size) {
     format_ram(c->info[CI_RAM], sizeof(c->info[0]), (f64)s->ram.installed_bytes, (f64)s->ram.total_bytes, m0 ? m0->type : "",
                m0 ? m0->configured_mts : 0);
     copy_str(c->info[CI_GPU], sizeof(c->info[0]), p->gpu_adapter < s->gpu_count ? s->gpus[p->gpu_adapter].name : "");
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {     // several adapters: "A + B" like params.gpus
+        c->info[CI_GPU][0] = 0;
+        for (u32 i = 0; i < s->gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                const size_t len = strlen(c->info[CI_GPU]);
+                snprintf(c->info[CI_GPU] + len, sizeof(c->info[0]) - len, "%s%s", len ? " + " : "", s->gpus[i].name);
+            }
+    }
     char models[26][64] = {};
     for (u32 i = 0; i < s->drive_count; ++i)
         if (s->drives[i].letter >= 'A' && s->drives[i].letter <= 'Z')

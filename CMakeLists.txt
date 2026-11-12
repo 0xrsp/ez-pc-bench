@@ -98,6 +98,33 @@ ezb_shader(../../stability/stab.hlsl vs_stab_full         vs_6_0)
 ezb_shader(../../stability/stab.hlsl ps_stab_render       ps_6_0)
 ezb_shader(../../stability/stab.hlsl cs_stab_render_check cs_6_0)
 ezb_shader(../../stability/stab.hlsl cs_stab_power        cs_6_0)
+# Extra GPU tests (src/gpu/gpu_ext.h)
+ezb_shader(compute_ext.hlsl cs_fp64          cs_6_0)
+ezb_shader(compute_ext.hlsl cs_dp4a          cs_6_4)
+ezb_shader(compute_ext.hlsl cs_atomic_one    cs_6_0)
+ezb_shader(compute_ext.hlsl cs_atomic_unique cs_6_0)
+ezb_shader(compute_ext.hlsl cs_atomic_lds    cs_6_0)
+ezb_shader(memory.hlsl      cs_chase         cs_6_0)
+ezb_shader(memory.hlsl      cs_chase_init    cs_6_0)
+ezb_shader(memory.hlsl      cs_sweep         cs_6_0)
+ezb_shader(memory.hlsl      cs_mem_fill      cs_6_0)
+ezb_shader(texture.hlsl     cs_tex_sample    cs_6_0)
+ezb_shader(texture.hlsl     cs_tex_aniso     cs_6_0)
+ezb_shader(pso.hlsl         cs_pso           cs_6_0)
+ezb_shader(pso.hlsl         vs_pso           vs_6_0)
+ezb_shader(pso.hlsl         ps_pso           ps_6_0)
+# Vulkan-only GLSL (cooperative matrix): SPIR-V words as a C initializer list in <name>_spv.inc
+find_program(GLSLC glslc HINTS "$ENV{VULKAN_SDK}/Bin" NO_DEFAULT_PATH REQUIRED)
+function(ezb_glsl file name)
+    set(src ${SHADER_SRC}/${file})
+    set(inc ${SHADER_OUT}/${name}_spv.inc)
+    add_custom_command(OUTPUT ${inc}
+        COMMAND ${GLSLC} --target-env=vulkan1.3 -O -mfmt=c ${ARGN} -o ${inc} ${src}
+        DEPENDS ${src} VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${inc} PARENT_SCOPE)
+endfunction()
+ezb_glsl(coopmat.comp coopmat_f16)
+ezb_glsl(coopmat.comp coopmat_i8 -DINT8)
 add_custom_target(gpu_shaders DEPENDS ${SHADER_HEADERS})
 
 # Core: benchmarks, runner, sysinfo, results (shared by GUI and CLI)
@@ -190,7 +217,17 @@ add_library(ezbench_core STATIC
     src/stability/stab_cpu.cpp
     src/stability/stab_mem.cpp
     src/stability/stab_disk.cpp
-    src/stability/stab_gpu.cpp)
+    src/stability/stab_gpu.cpp
+    src/gpu/gpu_multi.cpp
+    src/gpu/gpu_ext.cpp
+    src/gpu/gpu_vk_ext.cpp
+    src/gpu/gpu_vk_memory.cpp
+    src/gpu/gpu_vk_pso.cpp
+    src/gpu/gpu_vk_texture.cpp
+    src/gpu/gpu_d3d12_ext.cpp
+    src/gpu/gpu_d3d12_memory.cpp
+    src/gpu/gpu_d3d12_pso.cpp
+    src/gpu/gpu_d3d12_texture.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
