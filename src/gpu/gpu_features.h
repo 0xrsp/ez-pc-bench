@@ -78,7 +78,7 @@ void feat_sfb_texture(u32* texels);
 // all on the graphics queue; GPU timestamps around both parts scale the compute iterations during warm-up
 // until both take equally long. Async pass: compute on a compute queue. Overlap gain = serial frame time /
 // async frame time - 1 (100 % = perfect overlap).
-constexpr u32 FA_DEPTH_LAYERS = 128;
+constexpr u32 FA_DEPTH_LAYERS = 512;
 constexpr f64 FA_START_ITERS = 64.0;                // cs_fp32 iterations before balancing
 
 // ---- pass statistics ---------------------------------------------------------------------------------------
