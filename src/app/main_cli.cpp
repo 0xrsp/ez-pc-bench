@@ -1,5 +1,6 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
 #include "core/adv_sensors.h"
+#include "app/stability_cli.h"
 #include "core/baseline.h"
 #include "core/bench.h"
 #include "core/disk_health.h"
@@ -71,7 +72,9 @@ static void print_usage() {
         "                         fps, frame times, 1%% / 0.1%% lows. * = the busiest presenting process\n"
         "  --capture-etl <file>   Analyze present events from a recorded .etl trace instead (--capture = pid)\n"
         "  --capture-selftest     Check the event decoding and frame analysis on synthetic events\n"
-        "  --pause                Wait for Enter before exiting\n");
+        "  --pause                Wait for Enter before exiting\n"
+        "  --stress <tests> ...   Stability tester mode (options below)\n\n");
+    stability_cli_usage();
 }
 
 // '*' wildcard match.
@@ -414,6 +417,8 @@ static int run_capture(const char* target, f64 seconds, const wchar_t* etl, cons
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     sysinfo_init();
+    for (int i = 1; i < argc; ++i)      // stability tester: its own mode and options
+        if (!wcscmp(argv[i], L"--stress") || !wcscmp(argv[i], L"--whea-history")) return stability_cli(argc, argv);
     runner_init();
 
     bool selected[MAX_BENCHES] = {};

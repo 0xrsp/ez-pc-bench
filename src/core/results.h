@@ -48,5 +48,5 @@ bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f
 
 // Results file in TOON (see toon.h for the subset, results.cpp for the layout). Saved as *.toon.txt.
 bool results_write_toon(const wchar_t* path, const BenchParams* p);
-// The `system:` block of a results file (also used by frame captures, frames/frame_capture.cpp).
+// The `system:` block alone (also written by frame captures and the stability report).
 void results_write_system(FILE* f);

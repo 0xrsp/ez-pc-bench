@@ -14,6 +14,7 @@
 #include "core/sysinfo_spd.h"
 #include "core/sysinfo_ext.h"
 #include "core/timer.h"
+#include "stability/stability.h"
 #include "imgui.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -86,6 +87,10 @@ void ui_select_only(const char* ids) {
 
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
+    if (stab_is_running()) {     // never two heavy loads at once
+        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "A stability test is running; stop it first.");
+        return;
+    }
     bool run[MAX_BENCHES];      // hidden suites never run, whatever the saved selection says
     for (u32 i = 0; i < g_bench_count; ++i) run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
     runner_start(run, &s_ui.params);
@@ -183,6 +188,8 @@ static const ToolButton s_tool_buttons[] = {
                                           "frame times, 1% / 0.1% lows and a frame-time graph. Needs administrator rights." },
     { TOOL_HISTORY, ICON_HISTORY, "History", "Every finished run is saved to results\\history. Trend of the score or any "
                                              "metric across runs (driver / BIOS / Windows update regressions)." },
+    { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "
+                                               "check their results for errors, with WHEA monitoring and temperature limits." },
     { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
 };
 
