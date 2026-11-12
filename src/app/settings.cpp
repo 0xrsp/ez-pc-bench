@@ -24,15 +24,14 @@ static Snapshot s_file;                         // what the ini holds (defaults 
 static Snapshot s_last;                         // state at the previous tick
 static bool s_started, s_dirty;
 static f64 s_dirty_since;
-// Command-line overrides (--duration, --sustain, --light/--dark, --only, --gpu-present): the ini keeps its value
-// until the user changes it.
+// Command-line overrides (--duration, --sustain, --light/--dark/--theme, --only, --gpu-present): the ini keeps
+// its value until the user changes it.
 static bool s_keep_duration, s_keep_theme, s_keep_selection, s_keep_present, s_keep_sustain;
 static bool s_start_onscreen, s_start_fullscreen;
 static u32 s_start_duration, s_start_sustain;
 static ThemeMode s_start_theme;
 static bool s_start_selected[MAX_BENCHES];
 
-static const wchar_t* const THEME_NAMES[] = { L"system", L"light", L"dark" };
 static const wchar_t* const DISK_UNIT_NAMES[] = { L"MB/s", L"GB/s", L"IOPS", L"us" };     // DiskUnit order
 
 static const wchar_t* ini_path() {
@@ -73,11 +72,12 @@ static bool read_str(const wchar_t* key, wchar_t* out, u32 size) {
     return GetPrivateProfileStringW(L"settings", key, L"", out, size, ini_path()) > 0;
 }
 
-ThemeMode settings_load_theme() {
-    wchar_t v[16];
-    if (ini_path()[0] && read_str(L"theme", v, ARRAY_COUNT(v)))
-        for (u32 i = 0; i < ARRAY_COUNT(THEME_NAMES); ++i)
-            if (!_wcsicmp(v, THEME_NAMES[i])) s_file.theme = (ThemeMode)i;
+ThemeMode settings_load_theme() {      // theme=system | light | dark | <theme id> (theme.h); unknown = system
+    wchar_t v[64];
+    char id[64];
+    if (ini_path()[0] && read_str(L"theme", v, ARRAY_COUNT(v)) &&
+        WideCharToMultiByte(CP_UTF8, 0, v, -1, id, sizeof(id), nullptr, nullptr) > 0)
+        theme_find(id, &s_file.theme);
     return s_file.theme;
 }
 
@@ -210,7 +210,9 @@ static void write_all(const Snapshot* cur) {
 
     static wchar_t buf[32768], old[32768];
     Section s = { buf, ARRAY_COUNT(buf), 0 };
-    sec_add(&s, L"theme=%s", THEME_NAMES[out.theme < ARRAY_COUNT(THEME_NAMES) ? out.theme : 0]);
+    wchar_t theme[64];
+    MultiByteToWideChar(CP_UTF8, 0, theme_id(out.theme), -1, theme, ARRAY_COUNT(theme));
+    sec_add(&s, L"theme=%s", theme);
     sec_add(&s, L"duration_ms=%u", p->duration_ms);
     sec_add(&s, L"threads=%u", p->thread_count);
     if (p->gpu_adapter < g_sys.gpu_count) {

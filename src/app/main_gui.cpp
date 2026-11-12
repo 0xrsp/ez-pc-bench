@@ -194,17 +194,22 @@ static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+static COLORREF to_colorref(const f32 c[3]) {
+    return RGB((int)(c[0] * 255 + 0.5f), (int)(c[1] * 255 + 0.5f), (int)(c[2] * 255 + 0.5f));
+}
 static COLORREF bg_colorref() {
     f32 c[3];
     theme_bg_rgb(c);
-    return RGB((int)(c[0] * 255 + 0.5f), (int)(c[1] * 255 + 0.5f), (int)(c[2] * 255 + 0.5f));
+    return to_colorref(c);
 }
 
 // Title bar matching the app background and mode (Windows 11; silently ignored elsewhere).
 static void style_title_bar(HWND hwnd) {
     const BOOL dark = theme_is_dark();
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    const COLORREF caption = bg_colorref(), text = dark ? RGB(0xE2, 0xE2, 0xE9) : RGB(0x19, 0x1C, 0x20);
+    f32 fg[3];
+    theme_text_rgb(fg);
+    const COLORREF caption = bg_colorref(), text = to_colorref(fg);
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
 }
@@ -403,11 +408,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     const bool no_elevate = cmdline && wcsstr(cmdline, L"--no-elevate");
     if (!no_elevate && !is_elevated() && relaunch_elevated(L"")) return 0;
 
-    // Theme first: the window class brush and title bar use its colors. Saved mode (default: follow Windows),
-    // --dark / --light override it for this session.
-    const ThemeMode saved_theme = settings_load_theme();
-    theme_set_mode(cmdline && wcsstr(cmdline, L"--dark") ? THEME_DARK : cmdline && wcsstr(cmdline, L"--light") ? THEME_LIGHT
-                                                                                                                : saved_theme);
+    // Theme first: the window class brush and title bar use its colors. Saved theme (default: follow Windows),
+    // --dark / --light / --theme <id> override it for this session.
+    ThemeMode theme = settings_load_theme();
+    if (cmdline && wcsstr(cmdline, L"--dark")) theme = THEME_DARK;
+    else if (cmdline && wcsstr(cmdline, L"--light")) theme = THEME_LIGHT;
+    else if (const wchar_t* t = cmdline ? wcsstr(cmdline, L"--theme ") : nullptr) {     // dev: screenshots
+        char id[64] = {};
+        for (u32 n = 0, i = 8; t[i] && t[i] != L' ' && n + 1 < sizeof(id); ++i) id[n++] = (char)t[i];
+        theme_find(id, &theme);
+    }
+    theme_set_mode(theme);
     theme_take_change();
 
     sysinfo_init();

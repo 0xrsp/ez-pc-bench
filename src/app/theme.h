@@ -1,6 +1,7 @@
 #pragma once
-// Theme (dark / light) with Inter: blue-black surfaces, cyan primary + orchid secondary accent, 1 px outlines,
-// small radii (palette table in theme.cpp).
+// Themes with Inter: plain Light / Dark (neutral grays, one blue accent) plus named color schemes (Solarized,
+// Monokai, Dracula, Nord, ...), 1 px outlines, small radii. One static table in theme.cpp; each row maps the
+// scheme's published colors onto the palette roles below.
 #include "core/types.h"
 #include "imgui.h"
 
@@ -11,29 +12,45 @@ struct ThemeFonts {
 };
 extern ThemeFonts g_fonts;
 
-// Color roles for the current mode.
+constexpr u32 THEME_SERIES = 9;     // graph hues per theme, GraphKind order (graph.h)
+
+// Color roles of the current theme.
 struct Palette {
     ImVec4 page;                    // window background
     ImVec4 card;                    // cards / panels
     ImVec4 container, container_high, container_highest;
     ImVec4 on_surface, on_surface_variant;
     ImVec4 outline, outline_variant;
+    ImVec4 group_title;             // group box titles
     ImVec4 primary, on_primary, primary_container, on_primary_container;          // actions, data
     ImVec4 secondary, on_secondary, secondary_container, on_secondary_container;  // navigation, selection
     ImVec4 ok, error, warn, warn_container, on_warn_container;
     ImVec4 heat_lo, heat_hi;        // matrix cell colors
+    u32 series[THEME_SERIES];       // graph line colors 0xRRGGBB (graph.cpp maps units to them)
 };
 extern Palette g_pal;
 
 void theme_load_fonts();                    // Inter from the exe's resources (Segoe UI fallback)
-void theme_apply_style(f32 dpi_scale);      // uses the current mode
-enum ThemeMode : u8 { THEME_SYSTEM, THEME_LIGHT, THEME_DARK };
-bool theme_is_dark();
+void theme_apply_style(f32 dpi_scale);      // uses the current theme
+
+// Theme choice: 0 = follow Windows (plain Light or Dark from the app mode), 1 = Light, 2 = Dark, then the named
+// themes (theme_count() in all). Saved in the ini by id ("system", "light", "dark", "solarized-dark", ...).
+enum ThemeMode : u8 { THEME_SYSTEM, THEME_LIGHT, THEME_DARK };     // values past THEME_DARK: named themes
+u32 theme_count();
+const char* theme_name(ThemeMode t);        // "Follow Windows", "Light", "Solarized Dark", ...
+const char* theme_id(ThemeMode t);          // "system", "light", "solarized-dark", ...
+bool theme_find(const char* id, ThemeMode* out);    // by id, case-insensitive
+bool theme_is_dark();                       // the effective theme: title bar mode, dark / light variants
 ThemeMode theme_mode();
-void theme_set_mode(ThemeMode mode);        // System follows Windows' app mode; takes effect between frames
+void theme_set_mode(ThemeMode mode);        // takes effect between frames
 void theme_system_changed();                // call on WM_SETTINGCHANGE "ImmersiveColorSet"
-bool theme_take_change();                   // true once after the effective light/dark changed
+bool theme_take_change();                   // true once after the effective theme changed
 void theme_bg_rgb(f32 out[3]);              // page color (window clear / title bar)
+void theme_text_rgb(f32 out[3]);            // body text color (title bar text)
+u32 theme_series_rgb(ThemeMode t, u32 kind);    // a theme's graph hue, any thread (the overlay uses Dark's)
+// Small preview of theme `t` at `pos`, `h` tall (combo entries): its card color with text and accent marks.
+// Returns the width. Follow Windows shows Light and Dark side by side.
+f32 theme_swatch(ImDrawList* dl, ImVec2 pos, f32 h, ThemeMode t);
 
 f32 theme_font_size(f32 mult);              // base font size * mult, snapped to whole pixels
 // Result numbers. Cascadia Mono looks larger than Inter at the same size, so it's drawn a bit smaller.

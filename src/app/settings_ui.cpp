@@ -75,6 +75,36 @@ static void row(const char* label, const char* help) {
     ImGui::SetNextItemWidth(-FLT_MIN);
 }
 
+// Theme dropdown: a color swatch before each name; the named schemes below a separator.
+static void theme_combo() {
+    const ThemeMode cur = theme_mode();
+    const f32 h = ImGui::GetTextLineHeight(), gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    if (ImGui::BeginCombo("##theme", "", ImGuiComboFlags_HeightLargest)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, h * 0.35f));
+        for (u32 i = 0; i < theme_count(); ++i) {
+            const ThemeMode t = (ThemeMode)i;
+            if (t == THEME_DARK + 1) ImGui::Separator();
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable("##t", t == cur)) theme_set_mode(t);
+            if (t == cur) ImGui::SetItemDefaultFocus();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 p = ImGui::GetItemRectMin();
+            const f32 w = theme_swatch(dl, p, h, t);
+            dl->AddText(ImVec2(p.x + w + gap, p.y), ImGui::GetColorU32(ImGuiCol_Text), theme_name(t));
+            ImGui::PopID();
+        }
+        ImGui::PopStyleVar();
+        ImGui::EndCombo();
+    }
+    if (ImGui::BeginComboPreview()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const f32 w = theme_swatch(dl, p, h, cur);
+        dl->AddText(ImVec2(p.x + w + gap, p.y), ImGui::GetColorU32(ImGuiCol_Text), theme_name(cur));
+        ImGui::EndComboPreview();
+    }
+}
+
 // Disk options beyond file size / passes / write-through (DiskOptions in core/bench.h).
 static void draw_disk_options(BenchParams* p) {
     DiskOptions* o = &p->disk;
@@ -172,12 +202,12 @@ void settings_ui_draw() {
     const bool running = runner_is_running();
 
     if (begin_group("Appearance")) {
-        static const char* const modes[] = { "Follow Windows", "Light", "Dark" };
-        const char* help = "Follow Windows uses the light / dark app mode from Windows Settings > Personalization > Colors "
-                           "and switches live when you change it. Light or Dark keeps that look regardless of Windows.";
+        const char* help = "Follow Windows uses plain Light or Dark to match the app mode in Windows Settings > "
+                           "Personalization > Colors and switches live when you change it. Light and Dark are plain neutral "
+                           "themes; the others are popular color schemes (Solarized, Monokai, Dracula, Nord, ...). Graph "
+                           "lines use each theme's own hues.";
         row("Theme", help);
-        int mode = (int)theme_mode();
-        if (ImGui::Combo("##theme", &mode, modes, (int)ARRAY_COUNT(modes))) theme_set_mode((ThemeMode)mode);
+        theme_combo();
         end_group();
     }
 
