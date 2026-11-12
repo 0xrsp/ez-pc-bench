@@ -136,6 +136,21 @@ void settings_ui_draw() {
             p->gpu_width = (u32)(res[0] < 64 ? 64 : res[0] > 7680 ? 7680 : res[0]);
             p->gpu_height = (u32)(res[1] < 64 ? 64 : res[1] > 4320 ? 4320 : res[1]);
         }
+
+        const char* present_help = "Where the 3D and 2D tests show their frames. Offscreen (default) renders into an "
+                                   "image that never reaches the screen: clean GPU throughput, no compositor or vsync in "
+                                   "the way. On-screen opens a benchmark window (or covers the screen) and presents every "
+                                   "frame through a real swapchain with vsync off and tearing allowed, like a game; frame "
+                                   "times then include presentation, and where the driver reports it you also get "
+                                   "displayed-frame times and display latency. On laptops whose screen is driven by the "
+                                   "integrated GPU, frames from the dedicated GPU are copied across to it. Esc stops a test.";
+        row("Present mode", present_help);
+        static const char* const present_modes[] = { "Offscreen", "On-screen, windowed", "On-screen, fullscreen" };
+        int present = !p->gpu_onscreen ? 0 : p->gpu_fullscreen ? 2 : 1;
+        if (ImGui::Combo("##present", &present, present_modes, (int)ARRAY_COUNT(present_modes))) {
+            p->gpu_onscreen = present != 0;
+            if (present) p->gpu_fullscreen = present == 2;
+        }
         end_group();
     }
 
@@ -184,6 +199,8 @@ void settings_ui_draw() {
         p->thread_count = d.thread_count;
         p->gpu_width = d.gpu_width;
         p->gpu_height = d.gpu_height;
+        p->gpu_onscreen = d.gpu_onscreen;
+        p->gpu_fullscreen = d.gpu_fullscreen;
         p->disk_file_bytes = d.disk_file_bytes;
         p->disk_passes = d.disk_passes;
         p->disk_write_through = d.disk_write_through;

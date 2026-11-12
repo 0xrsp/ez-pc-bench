@@ -134,7 +134,7 @@ static const char* kind_name(ResultKind k) {
     return k == RESULT_SERIES ? "series" : k == RESULT_MATRIX ? "matrix" : "values";
 }
 
-static void write_system(FILE* f) {
+void results_write_system(FILE* f) {
     const SysInfo* s = &g_sys;
     toon_key(f, 0, "system");
     toon_key(f, 1, "cpu");
@@ -230,6 +230,7 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_str(f, 1, "gpu", p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "");
     toon_num(f, 1, "gpu_width", p->gpu_width);
     toon_num(f, 1, "gpu_height", p->gpu_height);
+    toon_str(f, 1, "gpu_present", !p->gpu_onscreen ? "offscreen" : p->gpu_fullscreen ? "fullscreen" : "windowed");
     u32 drives = 0;
     for (u32 d = 0; d < 26; ++d) drives += (p->disk_drives >> d) & 1;
     fprintf(f, "  disk_drives[%u]: ", drives);
@@ -308,7 +309,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     toon_str(f, 0, "app", "ez-pc-bench");
     toon_num(f, 0, "format", 1);
     toon_str(f, 0, "timestamp", stamp);
-    write_system(f);
+    results_write_system(f);
     write_params(f, p);
 
     u32 tests = 0, metrics = 0;

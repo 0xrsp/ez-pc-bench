@@ -1,6 +1,7 @@
 // GUI entry: Win32 window + D3D11 swapchain + Dear ImGui loop, throttled while benchmarks run. The compare
 // window is a second top-level window with its own ImGui context and swapchain on the same device.
 #include "app/compare_ui.h"
+#include "app/frames_ui.h"
 #include "app/settings.h"
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
@@ -57,6 +58,7 @@ static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
     { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - Frame capture", 1100, 800, frames_ui_draw, frames_ui_on_open, frames_ui_on_close, false },
 };
 
 struct ToolWin {
@@ -447,12 +449,18 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (strstr(ids, "smoke")) ui_set_dev(true);             // smoke tests are only visible in dev mode
             ui_select_only(ids);
         }
+        if (const wchar_t* g = wcsstr(cmdline, L"--gpu-present ")) {    // dev: on-screen GPU mode for this session
+            BenchParams* bp = ui_params();
+            g += 14;
+            bp->gpu_onscreen = !wcsncmp(g, L"windowed", 8) || !wcsncmp(g, L"fullscreen", 10);
+            if (bp->gpu_onscreen) bp->gpu_fullscreen = g[0] == L'f';
+        }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
         if (wcsstr(cmdline, L"--overlay")) temps_ui_show_overlay();     // sensor overlay with the saved channels
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health", L"frames" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)

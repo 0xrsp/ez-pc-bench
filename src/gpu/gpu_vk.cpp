@@ -106,15 +106,16 @@ static bool create_instance(VkCtx* v, char* error, u32 error_size) {
 
     VkInstanceCreateInfo ci = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     ci.pApplicationInfo = &app;
+    const char* exts[4];
+    ci.enabledExtensionCount = vkp_instance_extensions(v, exts);     // surface, for the on-screen mode
+    ci.ppEnabledExtensionNames = exts;
     bool debug = false;
 #ifndef NDEBUG
     const char* layer = "VK_LAYER_KHRONOS_validation";
-    const char* ext = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (has_layer(layer)) {
         ci.enabledLayerCount = 1;
         ci.ppEnabledLayerNames = &layer;
-        ci.enabledExtensionCount = 1;
-        ci.ppEnabledExtensionNames = &ext;
+        exts[ci.enabledExtensionCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
         debug = true;
     } else {
         fputs("[vulkan] validation layer not available\n", stderr);
@@ -211,9 +212,15 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     VkPhysicalDeviceFeatures2 ef = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &e12 };
     ef.features.shaderInt16 = v->fp16;
 
+    const char* dev_exts[8];
+    u32 dev_ext_count = 0;
+    e13.pNext = vkp_device_extensions(v, dev_exts, &dev_ext_count, e13.pNext);   // swapchain etc. (on-screen mode)
+
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &ef };
     ci.queueCreateInfoCount = v->xfer_family != v->gfx_family ? 2 : 1;
     ci.pQueueCreateInfos = qci;
+    ci.enabledExtensionCount = dev_ext_count;
+    ci.ppEnabledExtensionNames = dev_exts;
     VkResult r = vkCreateDevice(v->phys, &ci, nullptr, &v->dev);
     if (r != VK_SUCCESS) return fail(error, error_size, "vkCreateDevice", r);
     vkGetDeviceQueue(v->dev, v->gfx_family, 0, &v->gfx_queue);
