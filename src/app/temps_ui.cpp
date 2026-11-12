@@ -2,6 +2,7 @@
 // then temperatures in one table per group (CPU / system, GPUs, drives); each row shows the current value
 // colored against its warning threshold, min / max since the window opened and a two-minute sparkline.
 #include "app/temps_ui.h"
+#include "app/adv_ui.h"
 #include "app/theme.h"
 #include "core/sensors.h"
 #include "imgui.h"
@@ -147,8 +148,15 @@ static void draw_gpu_live(u32 n) {
 }
 
 
-void temps_ui_on_open() { sensors_start(); }
-void temps_ui_on_close() { sensors_stop(); }
+void temps_ui_on_open() {
+    sensors_start();
+    adv_ui_sensors_open();      // PawnIO sampling (no-op without PawnIO)
+}
+
+void temps_ui_on_close() {
+    adv_ui_sensors_close();
+    sensors_stop();
+}
 
 static ImVec4 temp_color(const SensorReading* s) {
     if (s->warn_c > 0.0f && s->temp_c >= s->warn_c) return g_pal.error;
@@ -240,13 +248,15 @@ void temps_ui_draw() {
     draw_group(SG_CPU, "Temperatures: CPU and system", n);
     draw_group(SG_GPU, "Temperatures: graphics", n);
     draw_group(SG_DISK, "Temperatures: drives", n);
+    adv_ui_draw_sensors();
 
     ImGui::Spacing();
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled("CPU and system readings are Windows' ACPI thermal zones; on most laptops one of them follows "
                         "the CPU package. Exact per-core CPU temperatures and RAM temperatures need a kernel driver, "
-                        "which EzPcBench doesn't install. Drive readings pause while a disk test runs.");
+                        "which EzPcBench doesn't install; they come from PawnIO when you have installed it (Settings, "
+                        "Advanced sensors). Drive readings pause while a disk test runs.");
     ImGui::PopTextWrapPos();
     ImGui::End();
 }

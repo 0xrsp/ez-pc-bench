@@ -1,4 +1,5 @@
 // Console front end: runs selected benchmarks headless, prints live progress, writes JSON.
+#include "core/adv_sensors.h"
 #include "core/baseline.h"
 #include "core/bench.h"
 #include "core/disk_health.h"
@@ -8,6 +9,7 @@
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_spd.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +35,8 @@ static void print_usage() {
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --health [--hide-serial]  Print the disk health report of every drive and exit\n"
         "  --elevate              Relaunch as administrator in a new console\n"
+        "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
+        "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
         "  --pause                Wait for Enter before exiting\n");
 }
 
@@ -158,6 +162,8 @@ static void print_sysinfo(const BenchParams* p, const bool* selected) {
         printf("%s %llu GiB %s-%u", i ? "," : " |", s->ram.modules[i].size_bytes / GiB, s->ram.modules[i].type,
                s->ram.modules[i].configured_mts);
     printf("\n");
+    char timings[192];      // PawnIO only (core/sysinfo_spd.h)
+    if (memdetail_timings_line(timings, sizeof(timings))) printf("      %s\n", timings);
     for (u32 i = 0; i < s->gpu_count; ++i)
         printf("GPU%u  %s, driver %s%s\n", i, s->gpus[i].name, s->gpus[i].driver[0] ? s->gpus[i].driver : "?",
                s->gpus[i].hags < 0 ? "" : s->gpus[i].hags ? ", HW scheduling on" : ", HW scheduling off");
@@ -218,7 +224,8 @@ int wmain(int argc, wchar_t** argv) {
     runner_init();
 
     bool selected[MAX_BENCHES] = {};
-    bool any_run = false, from_preset = false, list = false, pause = false, elevate = false, health = false, hide_serial = false;
+    bool any_run = false, from_preset = false, list = false, pause = false, elevate = false, health = false,
+         hide_serial = false, adv_report = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     BenchParams params;
@@ -235,6 +242,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--list")) list = true;
         else if (!wcscmp(a, L"--pause")) pause = true;
         else if (!wcscmp(a, L"--elevate")) elevate = true;
+        else if (!wcscmp(a, L"--adv-report")) adv_report = true;
+        else if (!wcscmp(a, L"--no-adv-sensors")) adv_set_enabled(false);
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
@@ -274,6 +283,12 @@ int wmain(int argc, wchar_t** argv) {
     if (elevate && !g_sys.elevated) {
         if (relaunch_elevated(L"--pause")) return 0;
         fprintf(stderr, "Elevation declined or failed; continuing without admin rights.\n");
+    }
+
+    adv_init();         // PawnIO advanced sensors: no-op unless installed (and not --no-adv-sensors)
+    if (adv_report) {
+        adv_print_report();
+        return 0;
     }
 
     if (!any_run)

@@ -1,6 +1,7 @@
 // Settings window: one row per setting (label | control) in titled groups; every row has a detailed
 // tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by settings.cpp.
 #include "app/settings_ui.h"
+#include "app/adv_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/runner.h"
@@ -33,7 +34,7 @@ static f64 s_hover_since;
 static void finish_row() {
     if (!s_row_help) return;
     const ImGuiID id = ImGui::GetID(s_row_help);
-    const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+    const bool hovered = ImGui::IsWindowHovered() &&     // (AllowWhenDisabled is an item flag; ImGui rejects it here)
                          ImGui::TableGetHoveredRow() == ImGui::TableGetRowIndex() && !ImGui::IsAnyItemActive() &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     if (hovered) {
@@ -166,6 +167,12 @@ void settings_ui_draw() {
                               "speed; most drives are much slower this way. Off by default, like most benchmarks.";
         row("Write-through (FUA)", wt_help);
         theme_checkbox("##wt", &p->disk_write_through);
+        end_group();
+    }
+
+    if (begin_group("Sensors")) {
+        row("Advanced sensors (PawnIO)", adv_ui_settings_help());
+        adv_ui_settings_control();
         end_group();
     }
 

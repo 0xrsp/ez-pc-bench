@@ -3,6 +3,7 @@
 #include "core/monitor.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_spd.h"
 #include "core/toon.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -166,6 +167,7 @@ static void write_system(FILE* f) {
         toon_cell_str(&r, m->locator);
         toon_row_end(&r);
     }
+    memdetail_write_toon(f, 2);     // system.ram.timings / .spd, only with PawnIO
 
     toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id,driver,hags");
     for (u32 i = 0; i < s->gpu_count; ++i) {

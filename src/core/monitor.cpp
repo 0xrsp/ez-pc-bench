@@ -1,6 +1,7 @@
 // Run monitor (see monitor.h). One sampling thread per run; per-test aggregates are published to g_env
 // when the runner moves on to the next test (or the run ends).
 #include "core/monitor.h"
+#include "core/adv_sensors.h"
 #include "core/hwread.h"
 #include "core/results.h"
 #include "core/runner.h"
@@ -27,8 +28,8 @@ constexpr f32 CPU_HOT_C = 95.0f;
 // ---- sampling -------------------------------------------------------------------------------------------
 // Readers in hwread.*. The CPU clock query stalls under all-core load (see hwread.h), so samples get further
 // apart during multi-thread tests; averages are time-weighted for that reason. The ACPI thermal-zone counter
-// stalls for 5-20 s under load and on many laptops doesn't follow the CPU, so CPU temperature waits for the
-// PawnIO sensors (FUTURE.md section 8); cpu_temp_max stays NaN until then.
+// stalls for 5-20 s under load and on many laptops doesn't follow the CPU, so CPU temperature comes only from the
+// PawnIO sensors (adv_sensors.h, 1 Hz); without PawnIO cpu_temp_max stays NaN.
 
 struct Sources {
     CpuReader cpu;
@@ -55,7 +56,8 @@ static void close_sources(Sources* s) {
 }
 
 static void sample_cpu(Sources* s, Sample* out) {
-    out->cpu_mhz = out->cpu_mhz_max = out->cpu_util = out->cpu_temp = NAN;
+    out->cpu_mhz = out->cpu_mhz_max = out->cpu_util = NAN;
+    out->cpu_temp = adv_cpu_temp(2.5f);     // NaN without PawnIO or when the 1 Hz sample is stale
     f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];
     const u32 n = cpu_reader_sample(&s->cpu, util, mhz);
     if (!n) return;
@@ -269,6 +271,7 @@ void monitor_begin(u32 gpu_adapter) {
     SYSTEM_POWER_STATUS ps;
     s_run_on_battery = GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0;
     acc_reset(&s_acc, -1);
+    adv_start();            // PawnIO CPU temperature (no-op without PawnIO)
     s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_thread = CreateThread(nullptr, 0, monitor_thread, nullptr, 0, nullptr);
     // Short bursts (~2 ms every 250 ms) that must not starve behind HIGHEST-priority benchmark threads.
@@ -282,6 +285,7 @@ void monitor_end() {
     CloseHandle(s_thread);
     CloseHandle(s_stop);
     s_thread = s_stop = nullptr;
+    adv_stop();
 }
 
 // ---- formatting ---------------------------------------------------------------------------------------
