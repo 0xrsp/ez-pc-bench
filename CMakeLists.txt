@@ -103,6 +103,11 @@ add_library(ezbench_core STATIC
     src/core/toon.cpp
     src/core/sysinfo.cpp
     src/core/sysinfo_win.cpp
+    src/core/sysinfo_cpu.cpp
+    src/core/sysinfo_devices.cpp
+    src/core/sysinfo_display.cpp
+    src/core/sysinfo_gpu.cpp
+    src/core/sysreport.cpp
     src/core/physdisk.cpp
     src/core/sensors.cpp
     src/core/monitor.cpp
@@ -136,6 +141,8 @@ add_library(ezbench_core STATIC
     src/core/throughput.cpp
     src/mem/mem_bench.cpp
     src/mem/mem_kernels.cpp
+    src/mem/mem_grid.cpp
+    src/mem/mem_load.cpp
     src/cpu/cpu_bench.cpp
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
@@ -165,13 +172,14 @@ target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
     d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi
-    cabinet windowscodecs bcrypt oleaut32)
+    cabinet windowscodecs bcrypt oleaut32 cfgmgr32 iphlpapi)
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
     src/cpu/cpu_topo.cpp src/cpu/cpu_compress.cpp src/cpu/cpu_image.cpp src/cpu/cpu_parse.cpp src/cpu/cpu_sci.cpp
     src/cpu/cpu_hash.cpp src/cpu/cpu_ai.cpp src/cpu/cpu_pi.cpp src/cpu/cpu_micro.cpp
-    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
+    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp src/mem/mem_grid.cpp src/mem/mem_load.cpp
+    PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
 
 # Run library: reference runs in library/*.toon.txt, packed + LZMS-compressed by a small host tool and
 # embedded in the GUI exe as RCDATA 103 (read by src/app/library.cpp).
@@ -215,6 +223,8 @@ add_executable(ez-pc-bench WIN32
     src/app/adv_ui.cpp
     src/app/frames_ui.cpp
     src/app/frames_graph.cpp
+    src/app/mem_charts.cpp
+    src/app/system_ui.cpp
     src/app/library.cpp
     src/app/score_ui.cpp
     src/app/history_ui.cpp

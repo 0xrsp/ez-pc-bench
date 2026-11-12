@@ -69,6 +69,11 @@ BENCH_FN(mem_triad);
 BENCH_FN(mem_latency);
 BENCH_FN(mem_sweep_st);
 BENCH_FN(mem_sweep_mt);
+BENCH_FN(mem_grid);          // mem/mem_grid.cpp
+BENCH_FN(mem_lat_loaded);    // mem/mem_load.cpp
+BENCH_FN(mem_lat_pages);
+BENCH_FN(mem_bw_mix);
+BENCH_FN(mem_bw_scaling);
 
 // disk/disk_bench.cpp
 SUITE_FNS(disk);
@@ -140,11 +145,16 @@ const BenchDesc g_benches[] = {
     { SUITE_CPU, "Microarchitecture", "Branch predictor",       "cpu.micro.branch",  cpu_branch,         BENCH_DEFAULT_OFF },
     { SUITE_CPU, "Microarchitecture", "Code footprint (op cache, L1i)", "cpu.micro.code", cpu_code_footprint, BENCH_DEFAULT_OFF },
 
+    { SUITE_MEM, "Cache & memory", "L1 / L2 / L3 / DRAM grid",  "mem.grid",          mem_grid,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Read",                     "mem.bw.read",       mem_read,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Write",                     "mem.bw.write",      mem_write,          0 },
     { SUITE_MEM, "DRAM bandwidth", "Copy",                      "mem.bw.copy",       mem_copy,           0 },
     { SUITE_MEM, "DRAM bandwidth", "Triad (a = b + s*c)",       "mem.bw.triad",      mem_triad,          0 },
+    { SUITE_MEM, "DRAM bandwidth", "Read / write mix",          "mem.bw.mix",        mem_bw_mix,         0 },
+    { SUITE_MEM, "DRAM bandwidth", "Thread scaling",            "mem.bw.scaling",    mem_bw_scaling,     0 },
     { SUITE_MEM, "Latency",        "Random access latency",     "mem.lat.chase",     mem_latency,        0 },
+    { SUITE_MEM, "Latency",        "Loaded latency (vs bandwidth)", "mem.lat.loaded", mem_lat_loaded,     0 },
+    { SUITE_MEM, "Latency",        "4 KiB vs 2 MiB pages",      "mem.lat.pages",     mem_lat_pages,      BENCH_DEFAULT_OFF },
     { SUITE_MEM, "Cache sweep",    "Read sweep, one thread",    "mem.sweep.st",      mem_sweep_st,       0 },
     { SUITE_MEM, "Cache sweep",    "Read sweep, all threads",   "mem.sweep.mt",      mem_sweep_mt,       0 },
 

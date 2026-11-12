@@ -1,5 +1,6 @@
 #include "core/sysinfo.h"
 #include "core/elevation.h"
+#include "core/sysinfo_ext.h"
 #include <windows.h>
 #include <dxgi1_6.h>
 #include <powrprof.h>
@@ -541,6 +542,7 @@ void sysinfo_init() {
     memset(&g_sys, 0, sizeof(g_sys));
     cpu_query(&g_sys.cpu);
     cpu_topology(&g_sys.cpu);
+    cpu_details_query(&g_cpux);
     smbios_query(&g_sys.ram, &g_sys.board);
     gpu_query(&g_sys);
     gpu_details_query(&g_sys);

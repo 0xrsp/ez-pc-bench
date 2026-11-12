@@ -1,6 +1,7 @@
 // Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
 #include "app/score_ui.h"
+#include "app/mem_charts.h"
 #include "app/settings.h"
 #include "app/theme.h"
 #include "core/elevation.h"
@@ -11,6 +12,7 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/sysinfo_spd.h"
+#include "core/sysinfo_ext.h"
 #include "core/timer.h"
 #include "imgui.h"
 #include <windows.h>
@@ -172,6 +174,9 @@ struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const ch
 static const ToolButton s_tool_buttons[] = {
     { TOOL_TEMPS, ICON_THERMOMETER, "Sensors", "Live CPU clock and load per core, GPU clocks / load / VRAM / PCIe "
                                                "link, and CPU, GPU and drive temperatures in their own window." },
+    { TOOL_SYSTEM, ICON_CHIP, "Details", "System details: CPU codename, microcode, caches and core map, chipset, "
+                                          "GPU details, displays, PCI and USB devices, network and audio. Copy or "
+                                          "save the full report." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
     { TOOL_FRAMES, ICON_FRAMES, "Frames", "Frame capture of any running game or app (like PresentMon / CapFrameX): fps, "
@@ -218,7 +223,9 @@ static void draw_sysinfo() {
     if (!system_header_row()) return;
     ImGui::Indent(ImGui::GetStyle().FramePadding.x);
     const CpuInfo* c = &s->cpu;
-    sys_line("CPU", "%s  (%u cores / %u threads)", c->brand, c->cores, c->threads);
+    sys_line("CPU", "%s  (%u cores / %u threads)%s%s%s%s", c->brand, c->cores, c->threads,
+             g_cpux.codename[0] ? "  \xC2\xB7  " : "", g_cpux.codename, g_cpux.codename[0] && g_cpux.microarch[0] ? ", " : "",
+             g_cpux.codename[0] ? g_cpux.microarch : "");
     sys_line("", "L1D %u KiB, L2 %u KiB per core, L3 %u KiB  \xC2\xB7  %s%s%s%s%s", c->l1d_kib, c->l2_kib, c->l3_kib,
              c->avx2 ? "AVX2 " : "", c->fma ? "FMA " : "", c->avx512f ? "AVX-512 " : "", c->sha ? "SHA " : "",
              c->vaes ? "VAES" : "");
@@ -812,24 +819,34 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
-// One plot per run of consecutive points with the same metric name (e.g. per-core ALU rate, then clock).
-static void draw_series_group(const BenchResult* r, const Metric* m, u32 n);
+// One plot per metric name (a series can hold several, e.g. "Read" and "Write" per thread count).
+static void draw_series_one(const BenchResult* r, const char* name);
 
 static void draw_series(const BenchResult* r) {
     const Metric* m = res_metrics(r);
-    for (u32 start = 0, g = 0; start < r->count; ++g) {
-        u32 end = start + 1;
-        while (end < r->count && !strcmp(m[end].name, m[start].name)) ++end;
-        ImGui::PushID((int)g);
-        draw_series_group(r, m + start, end - start);
+    const char* names[8];
+    u32 count = 0;
+    for (u32 k = 0; k < r->count; ++k) {
+        bool seen = false;
+        for (u32 i = 0; i < count && !seen; ++i) seen = !strcmp(names[i], m[k].name);
+        if (!seen && count < ARRAY_COUNT(names)) names[count++] = m[k].name;
+    }
+    for (u32 i = 0; i < count; ++i) {
+        ImGui::PushID((int)i);
+        draw_series_one(r, count > 1 ? names[i] : nullptr);
         ImGui::PopID();
-        start = end;
     }
 }
 
-static void draw_series_group(const BenchResult* r, const Metric* m, u32 count) {
+static void draw_series_one(const BenchResult* r, const char* name) {
     static f32 ys[1024];
-    const u32 n = count < 1024 ? count : 1024;
+    static Metric pts[1024];
+    const Metric* all = res_metrics(r);
+    u32 n = 0;
+    for (u32 k = 0; k < r->count && n < 1024; ++k)
+        if (!name || !strcmp(all[k].name, name)) pts[n++] = all[k];
+    if (!n) return;
+    const Metric* m = pts;
     f32 hi = 0.0f;
     for (u32 k = 0; k < n; ++k) {
         ys[k] = (f32)m[k].value;
@@ -934,12 +951,14 @@ static void draw_charts() {
         if (status_of(i) != ST_DONE) continue;
         const BenchResult* r = &g_results[i];
         const bool sustained = g_sustain[i].passes >= 2;
-        if (r->count == 0 || (r->kind == RESULT_VALUES && !sustained)) continue;
+        const bool own_view = mem_chart_has_view(i);
+        if (r->count == 0 || (r->kind == RESULT_VALUES && !sustained && !own_view)) continue;
         any = true;
         const BenchDesc* b = &g_benches[i];
         ImGui::PushID((int)i);
         if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
-            if (r->kind == RESULT_SERIES) draw_series(r);
+            if (own_view) mem_chart_draw(i, r);
+            else if (r->kind == RESULT_SERIES) draw_series(r);
             else if (r->kind == RESULT_MATRIX) draw_matrix(r);
             if (sustained) draw_sustain(i);
             ImGui::TreePop();

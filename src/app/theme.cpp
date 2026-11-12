@@ -443,6 +443,19 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             dl->AddLine(c, ImVec2(c.x + r * 0.42f, c.y + r * 0.22f), col, line);
             break;
         }
+        case ICON_CHIP: {     // package with three pins per side
+            const f32 b = r * 0.62f;
+            dl->AddRect(ImVec2(c.x - b, c.y - b), ImVec2(c.x + b, c.y + b), col, r * 0.12f, line);
+            dl->AddRectFilled(ImVec2(c.x - b * 0.42f, c.y - b * 0.42f), ImVec2(c.x + b * 0.42f, c.y + b * 0.42f), col, r * 0.06f);
+            for (int k = -1; k <= 1; ++k) {
+                const f32 o = k * b * 0.6f;
+                dl->AddLine(ImVec2(c.x + o, c.y - b), ImVec2(c.x + o, c.y - r), col, line);
+                dl->AddLine(ImVec2(c.x + o, c.y + b), ImVec2(c.x + o, c.y + r), col, line);
+                dl->AddLine(ImVec2(c.x - b, c.y + o), ImVec2(c.x - r, c.y + o), col, line);
+                dl->AddLine(ImVec2(c.x + b, c.y + o), ImVec2(c.x + r, c.y + o), col, line);
+            }
+            break;
+        }
     }
 }
 

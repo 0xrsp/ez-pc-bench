@@ -128,3 +128,62 @@ void* k_mem_chase(void* p, u64 steps) {
         : "+r"(p), "+r"(steps) : : "cc", "memory");
     return p;
 }
+
+void k_mem_read_delay(const void* p, u64 bytes, u64 delay) {
+    const u8* ptr = (const u8*)p;
+    const u8* end = ptr + bytes;
+    u64 spin;
+    __asm__ volatile(
+        "1:\n\t"
+        "vmovdqa 0(%0), %%ymm0\n\t"   "vmovdqa 32(%0), %%ymm1\n\t"
+        "vmovdqa 64(%0), %%ymm2\n\t"  "vmovdqa 96(%0), %%ymm3\n\t"
+        "vmovdqa 128(%0), %%ymm4\n\t" "vmovdqa 160(%0), %%ymm5\n\t"
+        "vmovdqa 192(%0), %%ymm6\n\t" "vmovdqa 224(%0), %%ymm7\n\t"
+        "mov %3, %1\n\t"
+        "test %1, %1\n\t"
+        "jz 3f\n\t"
+        "2:\n\t"
+        "dec %1\n\t"
+        "jnz 2b\n\t"
+        "3:\n\t"
+        "add $256, %0\n\t"
+        "cmp %2, %0\n\t"
+        "jb 1b\n\t"
+        "vzeroupper\n\t"
+        : "+r"(ptr), "=&r"(spin) : "r"(end), "r"(delay) : YMM_CLOBBERS);
+}
+
+#define MIX_LOADS                                                                \
+    "vmovdqa 0(%1), %%ymm0\n\t"  "vmovdqa 32(%1), %%ymm1\n\t"                    \
+    "vmovdqa 64(%1), %%ymm2\n\t" "vmovdqa 96(%1), %%ymm3\n\t"
+#define MIX_XOR(O0, O1, O2, O3)                                                  \
+    "vpxor " O0 "(%1), %%ymm0, %%ymm0\n\t" "vpxor " O1 "(%1), %%ymm1, %%ymm1\n\t" \
+    "vpxor " O2 "(%1), %%ymm2, %%ymm2\n\t" "vpxor " O3 "(%1), %%ymm3, %%ymm3\n\t"
+#define MIX_STORES                                                               \
+    "vmovdqa %%ymm0, 0(%0)\n\t"  "vmovdqa %%ymm1, 32(%0)\n\t"                    \
+    "vmovdqa %%ymm2, 64(%0)\n\t" "vmovdqa %%ymm3, 96(%0)\n\t"
+
+void k_mem_mix(void* dst, const void* src, u64 dst_bytes, u32 reads) {
+    u8* d = (u8*)dst;
+    const u8* s = (const u8*)src;
+    const u8* end = d + dst_bytes;
+    if (reads <= 1) {
+        __asm__ volatile(
+            "1:\n\t" MIX_LOADS MIX_STORES
+            "add $128, %0\n\t" "add $128, %1\n\t"
+            "cmp %2, %0\n\t" "jb 1b\n\t" "vzeroupper\n\t"
+            : "+r"(d), "+r"(s) : "r"(end) : YMM_CLOBBERS);
+    } else if (reads == 2) {
+        __asm__ volatile(
+            "1:\n\t" MIX_LOADS MIX_XOR("128", "160", "192", "224") MIX_STORES
+            "add $128, %0\n\t" "add $256, %1\n\t"
+            "cmp %2, %0\n\t" "jb 1b\n\t" "vzeroupper\n\t"
+            : "+r"(d), "+r"(s) : "r"(end) : YMM_CLOBBERS);
+    } else {
+        __asm__ volatile(
+            "1:\n\t" MIX_LOADS MIX_XOR("128", "160", "192", "224") MIX_XOR("256", "288", "320", "352") MIX_STORES
+            "add $128, %0\n\t" "add $384, %1\n\t"
+            "cmp %2, %0\n\t" "jb 1b\n\t" "vzeroupper\n\t"
+            : "+r"(d), "+r"(s) : "r"(end) : YMM_CLOBBERS);
+    }
+}

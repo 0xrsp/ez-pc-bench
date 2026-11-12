@@ -9,6 +9,7 @@
 #include "app/history_ui.h"
 #include "app/snapshot.h"
 #include "app/temps_ui.h"
+#include "app/system_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/adv_sensors.h"
@@ -62,6 +63,7 @@ static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
     { L"EzPcBench - Frame capture", 1100, 800, frames_ui_draw, frames_ui_on_open, frames_ui_on_close, false },
     { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
+    { L"EzPcBench - System details", 1180, 800, system_ui_draw, system_ui_on_open, nullptr, false },
 };
 
 struct ToolWin {
@@ -472,7 +474,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
             static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health",
-                                                                          L"frames", L"history" };
+                                                                          L"frames", L"history", L"system" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
