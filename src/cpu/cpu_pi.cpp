@@ -4,8 +4,9 @@
 // Checks: every FFT product is verified modulo 2^61 - 1 and its rounding error must stay below 0.2; the
 // result must start with the known 50 digits and have the six 9s at decimal places 762-767; the single-
 // and multi-thread runs must agree on every digit.
-// Multi-thread: the series is split into one range per thread, merged pairwise in parallel; the final
-// merges and the Newton steps run on one thread.
+// Multi-thread: the series is split into one range per thread; each merge level runs its products as
+// parallel tasks (3-4 per pair) and the two Newton iterations run side by side. Each multiplication itself is
+// single-threaded, so the last merge and the final products limit the speed-up.
 #include "cpu/cpu_internal.h"
 #include "core/mem_util.h"
 #include "core/results.h"
@@ -425,20 +426,36 @@ static void fx_invsqrt_small(Big* z, u32 v, u32 prec, PiThread* th) {
     }
 }
 
-// pi with `prec` fractional limbs from the series sums Q and T.
-static void pi_finish(Big* pi, const Big* q, const Big* t, u32 prec, PiThread* th) {
-    // Q / T = (Qtop * B^(q.n - prec)) * (1 / Ttop) * B^(-t.n) with Qtop, Ttop as fractions of prec limbs:
-    // Q / T = qf * B^(q.n) / (tf * B^(t.n)) where qf, tf are the fractions.
+// The two independent Newton iterations, on two pool threads in the multi-thread run.
+struct NewtonJob {
+    Big* y;             // 1 / tf
+    Big* z;             // 1 / sqrt(10005)
+    const Big* t;
+    u32 prec;
+    PiThread* th;       // th[0], th[1]
+};
+
+static void newton_task(u32 index, u32, void* user) {
+    NewtonJob* j = (NewtonJob*)user;
+    if (index == 0) fx_reciprocal(j->y, j->t, j->prec, &j->th[0]);
+    else fx_invsqrt_small(j->z, 10005, j->prec, &j->th[1]);
+}
+
+// pi with `prec` fractional limbs from the series sums Q and T. `parallel`: th has at least 2 entries and the
+// Newton iterations run on two pool threads.
+static void pi_finish(Big* pi, const Big* q, const Big* t, u32 prec, PiThread* th, bool parallel) {
+    // Q / T = qf * B^(q.n) / (tf * B^(t.n)) where qf, tf are Q and T as fractions of prec limbs.
     Big y = {}, qf = {}, qt = {}, z = {}, s = {};
-    fx_reciprocal(&y, t, prec, th);                 // 1 / tf
+    NewtonJob nj = { &y, &z, t, prec, th };
+    if (parallel) pool_run(2, newton_task, &nj);
+    else { newton_task(0, 2, &nj); fx_invsqrt_small(&z, 10005, prec, th); }
     fx_top(&qf, q, prec);
     fx_mul(&qt, &qf, &y, prec, th);                 // qf / tf
     // Shift by B^(q.n - t.n).
     Big tmp = {};
     bn_shift(&tmp, &qt, (i32)q->n - (i32)t->n);
     bn_free(&qt);
-    fx_invsqrt_small(&z, 10005, prec, th);
-    fx_mul(&s, &tmp, &z, prec, th);                 // Q / (T sqrt(10005))
+    fx_mul(&s, &tmp, &z, prec, th);                // Q / (T sqrt(10005))
     bn_mul_small(&s, &s, 10005);                    // * sqrt(10005)^2 -> Q sqrt(10005) / T
     bn_mul_small(pi, &s, 426880);
     bn_free(&y); bn_free(&qf); bn_free(&tmp); bn_free(&z); bn_free(&s);
@@ -455,13 +472,18 @@ static u32 frac_digit(const Big* x, u32 prec, u32 j) {
 
 // ---- test ------------------------------------------------------------------------------------------------
 
+// One big multiplication of a merge level, run as its own pool task.
+struct MulJob { const Big* a; const Big* b; Big* out; };
+
 struct PiRun {
     u64 terms;
-    u32 parts;
+    u32 parts;                  // series ranges, a power of 2
     u64 lo[MAX_LP + 1];
     PQT part[MAX_LP];
     PiThread th[MAX_LP];
-    u32 pair_count, stride;     // merge level: part[i * 2 * stride] += part[i * 2 * stride + stride]
+    MulJob jobs[4 * MAX_LP];
+    u32 job_base;
+    Big t1[MAX_LP], t2[MAX_LP], nq[MAX_LP], np[MAX_LP];     // merge products per pair
 };
 static PiRun s_run;
 
@@ -470,14 +492,41 @@ static void part_task(u32 index, u32, void* user) {
     bs(r->lo[index], r->lo[index + 1], &r->part[index], true, &r->th[index]);
 }
 
-static void merge_task(u32 index, u32, void* user) {
+static void mul_task(u32 index, u32, void* user) {
     PiRun* r = (PiRun*)user;
-    const u32 a = index * 2 * r->stride, b = a + r->stride;
-    const bool top = r->stride * 2 >= r->parts;
-    pqt_merge(&r->part[a], &r->part[b], !top, &r->th[index]);
+    const MulJob* j = &r->jobs[r->job_base + index];
+    bn_mul(j->out, j->a, j->b, &r->th[index]);
 }
 
-// Computes pi with `threads` series ranges; returns seconds, digits in *pi (prec fractional limbs).
+// Merges part[2i*stride] with part[2i*stride + stride] for every pair, all products as parallel tasks.
+static void merge_level(PiRun* r, u32 stride, u32 threads) {
+    const u32 pairs = r->parts / (2 * stride);
+    const bool top = pairs == 1;
+    u32 n = 0;
+    for (u32 i = 0; i < pairs; ++i) {
+        PQT* l = &r->part[2 * i * stride];
+        PQT* rt = &r->part[2 * i * stride + stride];
+        r->jobs[n++] = { &rt->q, &l->t, &r->t1[i] };       // Q2 T1
+        r->jobs[n++] = { &l->p, &rt->t, &r->t2[i] };       // P1 T2
+        r->jobs[n++] = { &l->q, &rt->q, &r->nq[i] };
+        if (!top) r->jobs[n++] = { &l->p, &rt->p, &r->np[i] };
+    }
+    for (r->job_base = 0; r->job_base < n; r->job_base += threads)
+        pool_run(n - r->job_base < threads ? n - r->job_base : threads, mul_task, r);
+    for (u32 i = 0; i < pairs; ++i) {
+        PQT* l = &r->part[2 * i * stride];
+        bn_add(&l->t, &r->t1[i], &r->t2[i]);
+        bn_free(&l->q);
+        l->q = r->nq[i];
+        r->nq[i] = {};
+        if (!top) { bn_free(&l->p); l->p = r->np[i]; r->np[i] = {}; }
+        bn_free(&r->t1[i]);
+        bn_free(&r->t2[i]);
+        pqt_free(&r->part[2 * i * stride + stride]);
+    }
+}
+
+// Computes pi with `threads` (power of 2) series ranges; returns seconds, digits in *pi (prec fractional limbs).
 static f64 pi_compute(u32 threads, Big* pi, u32 prec) {
     PiRun* r = &s_run;
     r->parts = threads;
@@ -485,13 +534,8 @@ static f64 pi_compute(u32 threads, Big* pi, u32 prec) {
     const f64 t0 = timer_now();
     if (threads == 1) bs(0, r->terms, &r->part[0], false, &r->th[0]);
     else pool_run(threads, part_task, r);
-    for (r->stride = 1; r->stride < threads; r->stride *= 2) {
-        r->pair_count = (threads + 2 * r->stride - 1) / (2 * r->stride);
-        u32 real_pairs = 0;     // pairs with a right half (odd part counts leave the last one alone)
-        for (u32 i = 0; i < r->pair_count; ++i) real_pairs += i * 2 * r->stride + r->stride < threads;
-        pool_run(real_pairs, merge_task, r);
-    }
-    pi_finish(pi, &r->part[0].q, &r->part[0].t, prec, &r->th[0]);
+    for (u32 stride = 1; stride < threads; stride *= 2) merge_level(r, stride, threads);
+    pi_finish(pi, &r->part[0].q, &r->part[0].t, prec, r->th, threads >= 2);
     const f64 dt = timer_now() - t0;
     pqt_free(&r->part[0]);
     return dt;

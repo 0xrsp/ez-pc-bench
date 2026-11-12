@@ -246,8 +246,11 @@ void cpu_instr_table(void*, const BenchParams* p, BenchLive* live, BenchResult* 
 // `iters` iterations over a byte pattern of length `len` (repeated): one conditional branch on the byte,
 // branch-free wrap-around. Returns the number of taken branches.
 static u64 branch_loop(const u8* pattern, u64 len, u64 iters) {
-    u64 taken = 0, idx = 0, zero = 0;
+    // The wrap value lives in r11 (zeroed here): as a separate "r"(0) input, clang gave it the same register
+    // as idx, which also starts at 0, and the wrap never happened.
+    u64 taken = 0, idx = 0;
     __asm__ volatile(
+        "xor %%r11d, %%r11d\n\t"
         "1:\n\t"
         "movzbl (%[p],%[i]), %%eax\n\t"
         "test %%eax, %%eax\n\t"
@@ -256,12 +259,12 @@ static u64 branch_loop(const u8* pattern, u64 len, u64 iters) {
         "2:\n\t"
         "add $1, %[i]\n\t"
         "cmp %[len], %[i]\n\t"
-        "cmove %[z], %[i]\n\t"
+        "cmove %%r11, %[i]\n\t"
         "dec %[n]\n\t"
         "jnz 1b\n\t"
         : [t] "+r"(taken), [i] "+r"(idx), [n] "+r"(iters)
-        : [p] "r"(pattern), [len] "r"(len), [z] "r"(zero)
-        : "rax", "cc", "memory");
+        : [p] "r"(pattern), [len] "r"(len)
+        : "rax", "r11", "cc", "memory");
     return taken;
 }
 
