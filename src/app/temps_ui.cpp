@@ -331,7 +331,8 @@ static const char* const RAILS_HELP = "Energy Metering Interface: power rails th
                                       "RAPL-style energy counters). Averaged over the last second.";
 static const char* const CLOCK_HELP = "Effective clock per logical processor (Windows' APERF/MPERF-based \"% Processor "
                                       "Performance\" x the nominal clock) and its load over the last second. Idle cores "
-                                      "report parked clocks; \"busy cores\" averages only the ones at least half busy. "
+                                      "report parked clocks, so \"Speed\" averages the cores at least half busy, weighted by load (all of "
+                                      "them, weighted by load, when none is). "
                                       "Under full load these readings can lag by a second.";
 
 static bool core_rail(u32 i) { return !strncmp(s_power.rail_name[i], "CPU core ", 9); }
@@ -408,11 +409,11 @@ static void draw_cpu(bool full, u32 n_read) {
         snprintf(v, sizeof(v), "%.0f%%", c->avg_util);
         stat(&first, "Utilization", v, GK_LOAD);
         graph_format(v, sizeof(v), c->busy_mhz, "MHz");
-        stat(&first, "Speed, busy cores", isnan(c->busy_mhz) ? "idle" : v, GK_FREQ);
+        stat(&first, "Speed", v, GK_FREQ);
         theme_help(CLOCK_HELP);
         const SensorChannel* fastest = channel_by_id("cpu.max_mhz");
         graph_format(v, sizeof(v), fastest && fastest->valid ? fastest->value : NAN, "MHz");
-        stat(&first, "Fastest core", v, GK_FREQ);
+        stat(&first, "Fastest core", v, GK_RATE);
         graph_format(v, sizeof(v), c->max_mhz, "MHz");
         stat(&first, "Highest seen", v);
         if (pkg >= 0) {
@@ -450,11 +451,11 @@ static void draw_cpu(bool full, u32 n_read) {
                 GraphLine lines[2];
                 lines[0].y = s_h[0];
                 lines[0].n = n0;
-                lines[0].name = "Busy cores";
+                lines[0].name = "Speed";
                 lines[1].y = s_h[1];
                 lines[1].n = n1;
                 lines[1].name = "Fastest core";
-                lines[1].kind = GK_LATENCY;
+                lines[1].kind = GK_RATE;    // orange: apart from the clock hue in every theme, unused elsewhere here
                 graph_time("##clock", &g, lines, 2, ImVec2(0.0f, fs * 6.0f));
             }
             if (pkg_shown) {

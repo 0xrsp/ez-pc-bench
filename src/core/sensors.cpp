@@ -284,21 +284,25 @@ static void publish_cpu(const Reading* rd) {
     if (!rd->lps) return;
     CpuLive* c = &s_cpu;
     c->lps = rd->lps;
-    f64 sum = 0.0, wsum = 0.0, w = 0.0;
+    // Load-weighted clock of the LPs >= 50 % busy; when none is, of all LPs (keeps the series continuous at idle).
+    f64 sum = 0.0, wsum = 0.0, w = 0.0, all_wsum = 0.0, all_w = 0.0;
     f32 hi = NAN;
     for (u32 i = 0; i < rd->lps; ++i) {
         c->util[i] = rd->util[i];
         c->mhz[i] = rd->mhz[i];
         sum += rd->util[i];
-        if (!isnan(rd->mhz[i]) && !(rd->mhz[i] <= hi)) hi = rd->mhz[i];
-        if (rd->util[i] >= 50.0f && !isnan(rd->mhz[i])) {
+        if (isnan(rd->mhz[i])) continue;
+        if (!(rd->mhz[i] <= hi)) hi = rd->mhz[i];
+        all_wsum += (f64)rd->mhz[i] * rd->util[i];
+        all_w += rd->util[i];
+        if (rd->util[i] >= 50.0f) {
             wsum += (f64)rd->mhz[i] * rd->util[i];
             w += rd->util[i];
         }
     }
     if (!isnan(hi) && !(hi <= c->max_mhz)) c->max_mhz = hi;
     c->avg_util = (f32)(sum / rd->lps);
-    c->busy_mhz = w > 0.0 ? (f32)(wsum / w) : NAN;
+    c->busy_mhz = w > 0.0 ? (f32)(wsum / w) : all_w > 0.0 ? (f32)(all_wsum / all_w) : NAN;
     if (c->hist_count < SENSOR_HISTORY) c->util_hist[c->hist_count++] = c->avg_util;
     else {
         memmove(c->util_hist, c->util_hist + 1, (SENSOR_HISTORY - 1) * sizeof(f32));
@@ -325,7 +329,7 @@ static void cpu_channels(const EmiReader* emi) {
     const CpuLive* c = &s_cpu;
     const bool ok = c->lps > 0;
     ch_put("cpu.load", "CPU load", "CPU load", "%", CHG_CPU, 0, 1, ok ? c->avg_util : NAN);
-    ch_put("cpu.busy_mhz", "CPU clock, busy cores", "CPU clock", "MHz", CHG_CPU, 0, 0, ok ? c->busy_mhz : NAN);
+    ch_put("cpu.busy_mhz", "CPU clock, load-weighted", "CPU clock", "MHz", CHG_CPU, 0, 0, ok ? c->busy_mhz : NAN);
     f32 hi = NAN;
     for (u32 i = 0; i < c->lps; ++i) hi = !isnan(c->mhz[i]) && !(c->mhz[i] <= hi) ? c->mhz[i] : hi;
     ch_put("cpu.max_mhz", "CPU clock, fastest core", "CPU max clock", "MHz", CHG_CPU, 0, 0, hi);

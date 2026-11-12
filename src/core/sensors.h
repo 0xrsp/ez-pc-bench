@@ -36,7 +36,7 @@ struct CpuLive {
     u32 lps;                                // 0 until the second sample
     f32 util[HW_MAX_LPS], mhz[HW_MAX_LPS];  // per logical processor; mhz NaN = not reported this time
     f32 avg_util;                           // all LPs
-    f32 busy_mhz;                           // utilization-weighted clock of the LPs >= 50 % busy (NaN if none)
+    f32 busy_mhz;                           // load-weighted clock of the LPs >= 50 % busy, else of all LPs
     f32 max_mhz;                            // highest LP clock since the window opened
     f32 util_hist[SENSOR_HISTORY];
     u32 hist_count;

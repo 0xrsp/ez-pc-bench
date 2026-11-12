@@ -99,8 +99,8 @@ Charts of disk tests use `GK_DISK` for throughput units whatever the unit string
   - **All** stacked every section (entry removed 2026-11-12; CPU is now the default device). With a search active
     the right side shows the matching sections and the list only the devices with a match (none highlighted).
     Picking a device clears the search.
-  - CPU: "% Utilization over 60 seconds" (large), stats (Utilization, Speed of busy cores, Fastest core, Highest
-    seen, package power, Temperature: the hottest ACPI zone, labelled "(ACPI)"; Logical processors), clock graph (busy cores + fastest core, two lines) beside the package
+  - CPU: "% Utilization over 60 seconds" (large), stats (Utilization, Speed, Fastest core, Highest
+    seen, package power, Temperature: the hottest ACPI zone, labelled "(ACPI)"; Logical processors), clock graph (Speed: load-weighted clock of the busy cores, else of all; + fastest core in orange) beside the package
     power graph, one load tile per logical processor (4 columns up to 16 LPs, the LP clock in the caption), then
     per-core power tiles.
   - GPU (per adapter): utilization graph, stats (load, core / memory clock, dedicated memory used / total, power
