@@ -185,11 +185,11 @@ static void draw_disk_interval(BenchParams* p) {
     }
 }
 
-// Small warning chip on the current line (frame height, warning-tinted, outlined); hovering it shows `text`
-// instead of the row's help.
-static void warning_chip(const char* id, const char* label, const char* text) {
+// Small warning chip on the current line, `h` tall (warning-tinted, outlined); hovering it shows `text` instead of
+// the row's help.
+static void warning_chip(const char* id, const char* label, const char* text, f32 h) {
     const f32 fs = ImGui::GetFontSize(), pad = fs * 0.55f, round = fs * 0.2f;
-    const ImVec2 ts = ImGui::CalcTextSize(label), size(ts.x + pad * 2.0f, ImGui::GetFrameHeight());
+    const ImVec2 ts = ImGui::CalcTextSize(label), size(ts.x + pad * 2.0f, h);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -276,11 +276,12 @@ void settings_ui_draw() {
                             "while they run (also in Offscreen mode). Off: the numbers only.");
         theme_checkbox("##gpu_preview", &g_gpu_preview);
         // Visible, not only in the help: the on-screen modes flash the test patterns full size.
+        const f32 box_h = ImGui::GetItemRectSize().y;     // the chip matches the checkbox
         ImGui::SameLine(0.0f, ImGui::GetFontSize());
         warning_chip("##flash", "Photosensitivity warning",
                      "Photosensitivity warning: the on-screen present modes show the GPU tests' rapidly flashing colors "
                      "and patterns in a window or across the whole screen. If you, or anyone who can see the screen, may "
-                     "have photosensitive epilepsy, keep Offscreen.");
+                     "have photosensitive epilepsy, keep Offscreen.", box_h);
         end_group();
     }
 
