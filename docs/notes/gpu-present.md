@@ -1,5 +1,11 @@
 # GPU on-screen mode and frame capture (stream notes)
 
+> **Removed 2026-11-11 (trim)**: frame capture of other applications (part B) is gone: `src/frames/`, the Frames tool window
+> (`frames_ui.*`, `frames_graph.*`, `TOOL_FRAMES`, `ICON_FRAMES`, `--tool frames`), the CLI `--capture`,
+> `--capture-etl`, `--capture-selftest`, and the compare window's frame-time graph / `frames[N]` table / `kind: frames`
+> support (compare accepts `kind: benchmark` or no kind only). Part B is kept below as a record. The on-screen mode
+> (part A, `--gpu-present`, `src/gpu/gpu_present*`) stays.
+
 FUTURE.md §5: **P2 on-screen mode with a real swapchain** and **P3 frame capture of other applications**.
 Measured 2026-11-11 on the target laptop (Ryzen 7 250, RTX 5060 Laptop + Radeon 780M, Optimus, panel on
 the 780M), **on battery** (Balanced), so absolute numbers are low; the ratios are what matters.
@@ -74,7 +80,10 @@ visible in D3D12's displayed frame time.
   messages (the D3D12 debug layer isn't installed on this PC). Closing the benchmark window mid-test (WM_CLOSE
   from a script) ends that test as failed "stopped: the benchmark window was closed" and the run continues.
 
-## B. Frame capture of other applications (PresentMon / CapFrameX replacement)
+## B. Frame capture of other applications (PresentMon / CapFrameX replacement) — **Removed 2026-11-11 (trim)**
+
+Everything in this part was deleted; `--seconds` remains for the sensor log only. `results_write_system` stays public
+(the stability report uses it).
 
 ### What it does
 - `src/frames/frame_capture.*`: real-time ETW session `EzPcBench-FrameCapture` (QPC clock, 64 KiB buffers,
@@ -133,10 +142,10 @@ visible in D3D12's displayed frame time.
 - P2 On-screen mode with a real swapchain: **done** (D3D12 + Vulkan, windowed / fullscreen, tearing,
   present-to-present; displayed-frame data from frame statistics / present_wait). Partial: no
   `VK_EXT_present_timing`, no VRR-specific test.
-- P3 Frame capture of other applications: **done for present-to-present** (fps, frame times, lows, graph,
-  TOON, compare). Partial: no displayed-frame reconstruction; live capture untested without admin.
+- P3 Frame capture of other applications: ~~done for present-to-present~~ **Removed 2026-11-11 (trim)** (the whole feature).
 
 ## Merge notes
+(Frame capture files and edits listed here were removed again on 2026-11-11 (trim); only the `gpu_present*` part stands.)
 - New files: `src/gpu/gpu_present.{h,cpp}`, `gpu_present_d3d12.cpp`, `gpu_present_vk.cpp`,
   `src/frames/frame_capture.{h,cpp}`, `src/app/frames_ui.{h,cpp}`, `src/app/frames_graph.{h,cpp}`.
 - Edits to existing GPU files (small, additive): `gpu_d3d12_internal.h` (present API), `gpu_d3d12_raster.cpp`
