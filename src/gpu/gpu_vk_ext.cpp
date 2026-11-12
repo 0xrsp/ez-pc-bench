@@ -64,7 +64,10 @@ void vk_ext_enable_features(VkCtx* v, VkDeviceCreateInfo* ci) {
     x->int8 = q12.shaderInt8;
     x->subgroup_size = p11.subgroupSize;
     x->subgroup_size_control = q13.subgroupSizeControl && (p13.requiredSubgroupSizeStages & VK_SHADER_STAGE_COMPUTE_BIT);
-    x->coop_matrix = has_cm && cm.cooperativeMatrix && q12.vulkanMemoryModel;
+    // coopmat.comp declares the Vulkan memory model and LocalSizeId; once the memory model is on, Device-scope
+    // atomics (dxc's InterlockedAdd) need its device-scope feature too (validation VUID 06265).
+    x->coop_matrix = has_cm && cm.cooperativeMatrix && q12.vulkanMemoryModel && q12.vulkanMemoryModelDeviceScope &&
+                     q13.maintenance4;
 
     // Turn the supported ones on in the requested chain, keeping whatever create_device already asked for.
     VkBaseOutStructure* last = nullptr;
@@ -79,11 +82,12 @@ void vk_ext_enable_features(VkCtx* v, VkDeviceCreateInfo* ci) {
             VkPhysicalDeviceVulkan12Features* f = (VkPhysicalDeviceVulkan12Features*)s;
             f->shaderInt8 |= q12.shaderInt8;
             f->shaderFloat16 |= q12.shaderFloat16;
-            if (x->coop_matrix) f->vulkanMemoryModel = VK_TRUE;
+            if (x->coop_matrix) f->vulkanMemoryModel = f->vulkanMemoryModelDeviceScope = VK_TRUE;
         } else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES) {
             VkPhysicalDeviceVulkan13Features* f = (VkPhysicalDeviceVulkan13Features*)s;
             f->shaderIntegerDotProduct |= q13.shaderIntegerDotProduct;
             f->subgroupSizeControl |= q13.subgroupSizeControl;
+            if (x->coop_matrix) f->maintenance4 = VK_TRUE;
         }
     }
     u32 n = 0;
