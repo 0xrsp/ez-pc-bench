@@ -15,6 +15,9 @@
 #include "core/hwread.h"
 
 constexpr const char* ADV_PAWNIO_URL = "https://pawnio.eu";
+// The official installer, latest release. The GUI's "Download & install" button (Settings) fetches it; that click
+// is the app's only network access.
+constexpr const wchar_t* ADV_PAWNIO_SETUP_URL = L"https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe";
 constexpr u32 ADV_MAX_CCDS = 16;
 constexpr u32 ADV_MAX_CORES = 64;
 constexpr u32 ADV_MAX_DIMMS = 8;
@@ -87,6 +90,7 @@ struct AdvMem {
 void adv_init();
 void adv_shutdown();
 void adv_set_enabled(bool on);  // Settings switch (default on); turning it off closes the driver handles
+void adv_redetect();            // detect PawnIO again (after its installer ran) and reopen the modules
 bool adv_enabled();
 AdvStatus adv_status(AdvInfo* info);    // info optional
 const char* adv_status_text(AdvStatus s);  // "on", "off", "not installed", ...

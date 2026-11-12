@@ -17,6 +17,7 @@
 #include "stability/stability.h"
 #include "disk/disk.h"
 #include "imgui.h"
+#include "imgui_internal.h"     // OpenPopupEx / ImHashStr (dev: --open-gpu-combo)
 #include <windows.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -247,7 +248,8 @@ static const ToolButton s_tool_buttons[] = {
                                              "metric across runs (driver / BIOS / Windows update regressions)." },
     { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "
                                                "check their results for errors, with WHEA monitoring and temperature limits." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: theme, threads, GPU resolution and present mode, disk options, "
+                                         "advanced sensors. The run settings presets change are next to Run." },
 };
 
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
@@ -428,6 +430,28 @@ u32 ui_take_tool_requests() {
 BenchParams* ui_params() { return &s_ui.params; }
 bool* ui_selection() { return s_ui.selected; }
 
+static u32 s_open_gpu_combo;     // dev (--open-gpu-combo): frame counter until the GPU combo opens itself
+
+void ui_open_gpu_combo() { s_open_gpu_combo = 1; }
+
+// Adapter name without the vendor words and trademark marks, for the several-GPUs combo preview:
+// "NVIDIA GeForce RTX 5060 Laptop GPU" -> "RTX 5060 Laptop GPU", "AMD Radeon(TM) 760M Graphics" -> "Radeon 760M Graphics".
+static void gpu_display_name(const char* name, char* out, u32 size) {
+    static const char* const skip[] = { "NVIDIA ", "GeForce ", "AMD ", "Intel(R) ", "Intel " };
+    for (bool again = true; again;) {
+        again = false;
+        for (u32 i = 0; i < ARRAY_COUNT(skip); ++i)
+            if (!strncmp(name, skip[i], strlen(skip[i]))) { name += strlen(skip[i]); again = true; }
+    }
+    u32 n = 0;
+    for (const char* c = name; *c && n + 1 < size;) {
+        if (!strncmp(c, "(TM)", 4)) { c += 4; continue; }
+        if (!strncmp(c, "(R)", 3)) { c += 3; continue; }
+        out[n++] = *c++;
+    }
+    out[n] = 0;
+}
+
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
 // Preset combo: shows the preset the current selection + settings match, "Custom" otherwise.
 static void draw_preset() {
@@ -460,25 +484,48 @@ static void draw_targets() {
         if (p->gpu_adapter >= g_sys.gpu_count) p->gpu_adapter = 0;
         const u32 valid = g_sys.gpu_count >= 32 ? ~0u : (1u << g_sys.gpu_count) - 1;
         u32 mask = (p->gpu_adapters & valid) ? (p->gpu_adapters & valid) : 1u << p->gpu_adapter;
+        // Preview: the full name of one adapter, "2 GPUs: RTX 5060 Laptop GPU, Radeon 760M Graphics" for several.
         char preview[256];
-        if (mask & (mask - 1)) {
-            preview[0] = 0;
-            for (u32 i = 0; i < g_sys.gpu_count; ++i)
+        const u32 ticked = (u32)__builtin_popcount(mask);
+        if (ticked > 1) {
+            int len = snprintf(preview, sizeof(preview), "%u GPUs: ", ticked);
+            for (u32 i = 0, n = 0; i < g_sys.gpu_count && len < (int)sizeof(preview); ++i)
                 if ((mask >> i) & 1) {
-                    const size_t len = strlen(preview);
-                    snprintf(preview + len, sizeof(preview) - len, "%s%s", len ? " + " : "", g_sys.gpus[i].name);
+                    char s[128];
+                    gpu_display_name(g_sys.gpus[i].name, s, sizeof(s));
+                    len += snprintf(preview + len, sizeof(preview) - len, "%s%s", n++ ? ", " : "", s);
                 }
         } else {
             snprintf(preview, sizeof(preview), "%s", g_sys.gpus[p->gpu_adapter].name);
         }
-        ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview).x + ImGui::GetFrameHeight() * 2.0f);
-        if (ImGui::BeginCombo("##gpu", preview)) {
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f);
+        if (s_open_gpu_combo && ++s_open_gpu_combo == 4) {     // dev (--open-gpu-combo): opened on the 3rd frame
+            ImGui::OpenPopupEx(ImHashStr("##ComboPopup", 0, ImGui::GetID("##gpu")));
+            s_open_gpu_combo = 0;
+        }
+        // Compact popup: tight vertical padding; rows as tall as plain combo items.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetStyle().WindowPadding.x, ImGui::GetStyle().FramePadding.y));
+        const bool open = ImGui::BeginCombo("##gpu", preview);
+        ImGui::PopStyleVar();
+        if (open) {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            const f32 box = theme_checkbox_height();
+            f32 name_w = 0.0f;
             for (u32 i = 0; i < g_sys.gpu_count; ++i) {
-                char label[192];
-                snprintf(label, sizeof(label), "%s  (%llu MiB)", g_sys.gpus[i].name, g_sys.gpus[i].dedicated_vram / MiB);
-                bool on = (mask >> i) & 1;
-                if (ImGui::Checkbox(label, &on) && (mask ^ (1u << i))) mask ^= 1u << i;
+                const f32 w = ImGui::CalcTextSize(g_sys.gpus[i].name).x;
+                name_w = w > name_w ? w : name_w;
             }
+            const f32 vram_x = ImGui::GetCursorPosX() + box + st.ItemInnerSpacing.x + name_w + ImGui::GetFontSize() * 1.5f;
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(st.ItemSpacing.x, ImGui::GetTextLineHeightWithSpacing() - box));
+            for (u32 i = 0; i < g_sys.gpu_count; ++i) {
+                ImGui::PushID((int)i);
+                bool on = (mask >> i) & 1;
+                if (theme_checkbox(g_sys.gpus[i].name, &on) && (mask ^ (1u << i))) mask ^= 1u << i;
+                ImGui::SameLine(vram_x);
+                ImGui::TextDisabled("%.1f GiB VRAM", g_sys.gpus[i].dedicated_vram / (f64)GiB);
+                ImGui::PopID();
+            }
+            ImGui::PopStyleVar();
             ImGui::EndCombo();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -529,6 +576,11 @@ static void draw_toolbar() {
     ImGui::BeginDisabled(!running);
     if (theme_button("Cancel")) runner_cancel();
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_icon_button("##bench_settings", ICON_SLIDERS, nullptr, ImGui::GetFrameHeight(),
+                          "Benchmark settings: duration per phase, repeat, sustained mode, disk test file size, passes "
+                          "and interval. Presets change these."))
+        ui_request_tool(TOOL_BENCH);
 
     ImGui::SameLine();
     ImGui::BeginDisabled(running);

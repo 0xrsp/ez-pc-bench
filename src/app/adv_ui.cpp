@@ -5,7 +5,14 @@
 #include "core/adv_sensors.h"
 #include "core/sysinfo_spd.h"
 #include "imgui.h"
+#include <windows.h>
+#include <shellapi.h>
+#include <urlmon.h>
+#include <wintrust.h>
+#include <softpub.h>
+#include <atomic>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -236,28 +243,152 @@ void adv_ui_draw_sensors() {
 }
 
 const char* adv_ui_settings_help() {
-    static char help[640];
+    static char help[900];
     AdvInfo info;
     const AdvStatus st = adv_status(&info);
     snprintf(help, sizeof(help),
              "Per-core and package CPU temperatures, CPU power, voltages, memory temperatures, SPD and timings through "
-             "PawnIO, a signed open-source driver used by LibreHardwareMonitor, FanControl and others. EzPcBench never "
-             "installs it: get the official installer from %s. Without it everything else works as before.\n\n"
+             "PawnIO, a signed open-source driver used by LibreHardwareMonitor, FanControl and others (%s). EzPcBench "
+             "doesn't ship it. \"Download & install\" fetches the official installer (PawnIO_setup.exe, latest release "
+             "on github.com/namazso/PawnIO.Setup), checks its signature and starts it; you confirm the install there. "
+             "That click is the only time EzPcBench goes online. Without PawnIO everything else works as before.\n\n"
              "Status: %s. %s%s%s",
              ADV_PAWNIO_URL, adv_status_text(st), info.detail, info.modules[0] ? "\nModules: " : "", info.modules);
     return help;
+}
+
+// ---- PawnIO installer download ----------------------------------------------------------------------
+// Only on an explicit click: download the official installer to %TEMP%\ezpcbench_pawnio\ on a worker thread,
+// require a valid Authenticode signature from namazso (PawnIO's author), run it (it asks for elevation itself:
+// requireAdministrator manifest), wait for it to exit, delete it and detect PawnIO again.
+
+enum InstallState : u8 { INST_IDLE, INST_DOWNLOADING, INST_RUNNING, INST_DONE, INST_FAILED };
+static std::atomic<u8> s_inst;
+static char s_inst_msg[256];        // written by the worker before it publishes INST_DONE / INST_FAILED
+static HANDLE s_inst_thread;
+
+static void inst_finish(InstallState st, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(s_inst_msg, sizeof(s_inst_msg), fmt, args);
+    va_end(args);
+    s_inst.store(st, std::memory_order_release);
+}
+
+// Valid, trusted Authenticode signature whose signer's organization is namazso.
+static bool signed_by_pawnio_author(const wchar_t* path, char* why, u32 size) {
+    WINTRUST_FILE_INFO file = { sizeof(file) };
+    file.pcwszFilePath = path;
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    WINTRUST_DATA wd = { sizeof(wd) };
+    wd.dwUIChoice = WTD_UI_NONE;
+    wd.fdwRevocationChecks = WTD_REVOKE_NONE;
+    wd.dwUnionChoice = WTD_CHOICE_FILE;
+    wd.pFile = &file;
+    wd.dwStateAction = WTD_STATEACTION_VERIFY;
+    const LONG trust = WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &wd);
+    bool ok = trust == ERROR_SUCCESS;
+    if (!ok) snprintf(why, size, "its signature isn't valid (0x%08lX)", (unsigned long)trust);
+    if (ok) {
+        wchar_t org[128] = L"";
+        CRYPT_PROVIDER_DATA* pd = WTHelperProvDataFromStateData(wd.hWVTStateData);
+        CRYPT_PROVIDER_SGNR* sg = pd ? WTHelperGetProvSignerFromChain(pd, 0, FALSE, 0) : nullptr;
+        CRYPT_PROVIDER_CERT* cert = sg ? WTHelperGetProvCertFromChain(sg, 0) : nullptr;
+        if (cert)
+            CertGetNameStringW(cert->pCert, CERT_NAME_ATTR_TYPE, 0, (void*)szOID_ORGANIZATION_NAME, org, ARRAY_COUNT(org));
+        ok = !_wcsicmp(org, L"namazso");
+        if (!ok) snprintf(why, size, "it is signed by \"%ls\", not by PawnIO's author", org);
+    }
+    wd.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust((HWND)INVALID_HANDLE_VALUE, &action, &wd);
+    return ok;
+}
+
+static DWORD WINAPI install_thread(void*) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    wchar_t dir[MAX_PATH], path[MAX_PATH];
+    GetTempPathW(MAX_PATH, dir);
+    wcscat_s(dir, L"ezpcbench_pawnio");
+    CreateDirectoryW(dir, nullptr);
+    swprintf(path, MAX_PATH, L"%s\\PawnIO_setup.exe", dir);
+    DeleteFileW(path);
+    const HRESULT hr = URLDownloadToFileW(nullptr, ADV_PAWNIO_SETUP_URL, path, 0, nullptr);
+    char why[160];
+    if (FAILED(hr)) {
+        inst_finish(INST_FAILED, "Download failed (error 0x%08lX). Check the internet connection, or get the installer "
+                                 "from %s.", (unsigned long)hr, ADV_PAWNIO_URL);
+    } else if (!signed_by_pawnio_author(path, why, sizeof(why))) {
+        inst_finish(INST_FAILED, "Not started: the downloaded installer was rejected because %s. Get it from %s instead.",
+                    why, ADV_PAWNIO_URL);
+    } else {
+        s_inst.store(INST_RUNNING, std::memory_order_release);
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+        sei.lpFile = path;
+        sei.lpDirectory = dir;
+        sei.nShow = SW_SHOWNORMAL;
+        if (!ShellExecuteExW(&sei)) {
+            const DWORD err = GetLastError();
+            if (err == ERROR_CANCELLED) inst_finish(INST_FAILED, "Not installed: administrator rights were refused.");
+            else inst_finish(INST_FAILED, "Couldn't start the installer (error %lu).", err);
+        } else {
+            DWORD code = 0;
+            if (sei.hProcess) {
+                WaitForSingleObject(sei.hProcess, INFINITE);
+                GetExitCodeProcess(sei.hProcess, &code);
+                CloseHandle(sei.hProcess);
+            }
+            adv_redetect();
+            if (adv_status(nullptr) == ADV_NOT_INSTALLED)
+                inst_finish(INST_DONE, code ? "The installer ended (code %lu) without installing PawnIO."
+                                            : "The installer closed without installing PawnIO.", code);
+            else
+                inst_finish(INST_DONE, "PawnIO installed.");
+        }
+    }
+    DeleteFileW(path);
+    RemoveDirectoryW(dir);
+    CoUninitialize();
+    return 0;
+}
+
+static void install_start() {
+    if (s_inst_thread) {
+        WaitForSingleObject(s_inst_thread, INFINITE);     // finished (state DONE / FAILED) before a retry
+        CloseHandle(s_inst_thread);
+    }
+    s_inst_msg[0] = 0;
+    s_inst.store(INST_DOWNLOADING, std::memory_order_release);
+    s_inst_thread = CreateThread(nullptr, 0, install_thread, nullptr, 0, nullptr);
+    if (!s_inst_thread) inst_finish(INST_FAILED, "Couldn't start the download (error %lu).", GetLastError());
+}
+
+// The "Not installed" cell: Download & install, its progress, and the outcome / error line.
+static void draw_install() {
+    const u8 st = s_inst.load(std::memory_order_acquire);
+    ImGui::AlignTextToFramePadding();
+    if (st == INST_DOWNLOADING || st == INST_RUNNING) {
+        static const char* const dots[] = { "", ".", "..", "..." };
+        ImGui::TextDisabled("%s%s", st == INST_DOWNLOADING ? "Downloading the PawnIO installer" : "Installer running",
+                            dots[(int)(ImGui::GetTime() * 2.0) % 4]);
+        return;
+    }
+    ImGui::TextUnformatted("Not installed");
+    ImGui::SameLine();
+    if (theme_button("Download & install")) install_start();     // what it does: the row's help (adv_ui_settings_help)
+    if (s_inst_msg[0] && (st == INST_DONE || st == INST_FAILED)) {
+        ImGui::PushTextWrapPos(0.0f);
+        if (st == INST_FAILED) ImGui::TextColored(g_pal.error, "%s", s_inst_msg);
+        else ImGui::TextDisabled("%s", s_inst_msg);
+        ImGui::PopTextWrapPos();
+    }
 }
 
 void adv_ui_settings_control() {
     AdvInfo info;
     const AdvStatus st = adv_status(&info);
     if (st == ADV_NOT_INSTALLED) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("Not installed");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", ADV_PAWNIO_URL);
-        ImGui::SameLine();
-        if (theme_button("Copy link")) ImGui::SetClipboardText(ADV_PAWNIO_URL);
+        draw_install();
         return;
     }
     bool on = adv_enabled();

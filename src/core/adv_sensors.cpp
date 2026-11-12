@@ -115,8 +115,8 @@ static void detect_and_open() {
     snprintf(s_info.driver_version, sizeof(s_info.driver_version), "%s", version);
     if (d == PAWN_ABSENT) {
         s_info.status = ADV_NOT_INSTALLED;
-        snprintf(s_info.detail, sizeof(s_info.detail), "PawnIO isn't installed. Its official installer is at %s; "
-                 "EzPcBench never installs drivers itself.", ADV_PAWNIO_URL);
+        snprintf(s_info.detail, sizeof(s_info.detail), "PawnIO isn't installed. Its official installer is at %s "
+                 "(the GUI's Settings > Download & install fetches and starts it).", ADV_PAWNIO_URL);
     } else if (!s_enabled) {
         s_info.status = ADV_OFF;
         snprintf(s_info.detail, sizeof(s_info.detail), "PawnIO is installed; advanced sensors are switched off.");
@@ -208,6 +208,17 @@ void adv_set_enabled(bool on) {
     ReleaseSRWLockExclusive(&s_ctl);
 }
 
+void adv_redetect() {
+    AcquireSRWLockExclusive(&s_ctl);
+    if (s_inited) {
+        stop_thread();
+        close_modules();
+        detect_and_open();
+        if (s_users) start_thread();
+    }
+    ReleaseSRWLockExclusive(&s_ctl);
+}
+
 bool adv_enabled() { return s_enabled; }
 
 AdvStatus adv_status(AdvInfo* info) {
@@ -269,6 +280,7 @@ void adv_print_report() {
     if (s_info.modules[0]) printf("  modules                %s\n", s_info.modules);
     if (s_info.detail[0]) printf("  %s\n", s_info.detail);
     if (s_info.smbus_note[0]) printf("  SMBus: %s\n", s_info.smbus_note);
+    if (s_info.status == ADV_NOT_INSTALLED) printf("  installer: %ls\n", ADV_PAWNIO_SETUP_URL);
     if (s_info.status != ADV_ACTIVE || s_thread) {
         ReleaseSRWLockExclusive(&s_ctl);
         return;

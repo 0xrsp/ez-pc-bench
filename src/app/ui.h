@@ -11,6 +11,7 @@ void ui_show_charts();                  // dev: open the Charts tab (--charts)
 void ui_select_only(const char* ids);   // dev: comma-separated test ids / prefixes ("smoke.preview,cpu.int")
 void ui_set_dev(bool dev);              // dev: show the smoke-test suite
 void ui_set_tab(const char* name);      // dev: results / charts / score / ranking
+void ui_open_gpu_combo();               // dev: open the GPU combo's popup a few frames after start (screenshots)
 void ui_set_preview(void* texture, u32 w, u32 h);   // GPU test preview (ImTextureID), null when inactive
 void ui_apply_style(f32 dpi_scale);     // (re)build style for a DPI scale
 void ui_draw();                         // one frame of the whole UI

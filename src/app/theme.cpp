@@ -193,7 +193,7 @@ void theme_apply_style(f32 scale) {
     s.DisabledAlpha = 0.38f;
     s.ScaleAllSizes(scale);
     s.FontScaleDpi = scale;
-    s.FontSizeBase = roundf(15.0f * scale) / scale;    // whole-pixel body text
+    s.FontSizeBase = roundf(16.5f * scale) / scale;    // whole-pixel body text (17 px at 100 %)
 
     ImVec4* c = s.Colors;
     const ImVec4 none = { 0, 0, 0, 0 };
@@ -452,6 +452,16 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
                                    ImVec2(c.x + r * 0.15f, c.y + r * 0.8f), ImVec2(c.x + r * 0.4f, c.y),
                                    ImVec2(c.x + r, c.y) };
             dl->AddPolyline(pts, (int)ARRAY_COUNT(pts), col, line);
+            break;
+        }
+        case ICON_SLIDERS: {    // three horizontal sliders with their knobs at different positions
+            const f32 knob[] = { 0.35f, -0.4f, 0.1f };
+            for (int k = 0; k < 3; ++k) {
+                const f32 y = c.y + (k - 1) * r * 0.62f, x = c.x + knob[k] * r;
+                dl->AddLine(ImVec2(c.x - r, y), ImVec2(c.x + r, y), col, line);
+                dl->AddCircleFilled(ImVec2(x, y), r * 0.24f, bg, 12);
+                dl->AddCircle(ImVec2(x, y), r * 0.24f, col, 12, line);
+            }
             break;
         }
     }

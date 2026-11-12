@@ -1,4 +1,9 @@
 #pragma once
-// Settings window contents (theme and the parameters of the next run). Hover a setting for details.
+// Settings windows. Hover a setting for details.
+//   settings_ui_draw: app settings that presets never change (theme, threads, GPU resolution / present mode,
+//                     disk options, advanced sensors).
+//   bench_settings_ui_draw: the run settings presets set (phase duration, repeat, sustained mode, disk test
+//                     file size, passes and interval).
 
 void settings_ui_draw();
+void bench_settings_ui_draw();

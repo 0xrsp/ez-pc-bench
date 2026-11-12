@@ -318,7 +318,7 @@ add_executable(ez-pc-bench WIN32
     ${CMAKE_BINARY_DIR}/library.rc
     ${CMAKE_BINARY_DIR}/pawnio_modules.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet windowscodecs)
+    shell32 cabinet windowscodecs urlmon wintrust crypt32)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
 
 # CLI

@@ -59,12 +59,13 @@ struct ToolDesc {
 };
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
-    { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
-    { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
+    { L"EzPcBench - Settings", 680, 720, settings_ui_draw, nullptr, nullptr, false },
+    { L"EzPcBench - Sensors", 1100, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
     { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
     { L"EzPcBench - System details", 1180, 800, system_ui_draw, system_ui_on_open, nullptr, false },
     { L"EzPcBench - Stability", 1400, 900, stability_ui_draw, stability_ui_on_open, nullptr, false },
+    { L"EzPcBench - Benchmark settings", 680, 580, bench_settings_ui_draw, nullptr, nullptr, false },
 };
 
 struct ToolWin {
@@ -451,6 +452,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         if (const wchar_t* s = wcsstr(cmdline, L"--sustain ")) ui_set_sustain((u32)(_wtof(s + 10) * 60.0 + 0.5));
         if (wcsstr(cmdline, L"--charts")) ui_show_charts();
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
+        if (wcsstr(cmdline, L"--open-gpu-combo")) ui_open_gpu_combo();  // dev: GPU combo popup open (screenshots)
         if (const wchar_t* t = wcsstr(cmdline, L"--tab ")) {       // dev: open the output panel on this tab
             char name[16] = {};
             for (u32 n = 0, i = 6; t[i] && t[i] != L' ' && n + 1 < sizeof(name); ++i) name[n++] = (char)t[i];
@@ -475,7 +477,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
             static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health",
-                                                                          L"history", L"system", L"stability" };
+                                                                          L"history", L"system", L"stability", L"bench" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
