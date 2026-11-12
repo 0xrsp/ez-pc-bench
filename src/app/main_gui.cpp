@@ -61,7 +61,7 @@ struct ToolDesc {
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
     { L"EzPcBench - Settings", 680, 720, settings_ui_draw, nullptr, nullptr, false },
-    { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
+    { L"EzPcBench - Sensors", 1100, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
     { L"EzPcBench - Frame capture", 1100, 800, frames_ui_draw, frames_ui_on_open, frames_ui_on_close, false },
     { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
