@@ -7,9 +7,8 @@
 //     IOCTLs, SAT or a USB bridge's vendor CDB (core/ata), RAID members via CSMI (core/csmi); all need
 //     administrator rights. Without them: IDENTIFY and the Device Statistics log through the storage
 //     property query, and IOCTL_STORAGE_PREDICT_FAILURE as the last resort.
-// Status Good / Caution / Bad from the drive's own verdicts plus per-drive thresholds (core/health_store).
+// Status Good / Caution / Bad from the drive's own verdicts plus fixed CrystalDiskInfo-style Caution limits.
 #include "core/ata.h"
-#include "core/health_store.h"
 #include "core/nvme_dev.h"
 #include "core/physdisk.h"
 #include "core/smart_attr.h"
@@ -60,7 +59,6 @@ constexpr u32 PARTITIONS_MAX = 16;
 struct DiskHealth {
     PhysDisk disk;
     DiskLocation loc;
-    char key[96];                       // health store key
     bool raid_member;                   // found through CSMI, not a \\.\PhysicalDriveN
     u32 csmi_index;
 
@@ -69,7 +67,6 @@ struct DiskHealth {
     bool full_access;                   // read/write handle (administrator)
     HealthProto proto;
     char source[96];                    // how the data was read
-    HealthThresholds thresholds;
 
     // Info panel.
     char model[96], serial[48], firmware[24];
@@ -123,30 +120,17 @@ struct DiskHealth {
     char test_running[24];
     SelfTestEntry tests[SELFTEST_MAX];
     u32 test_count;
-
-    // AAM / APM (ATA, mostly HDDs).
-    bool aam_supported, aam_enabled, apm_supported, apm_enabled;
-    u8 aam_value, aam_recommended, apm_value;
 };
 
 // Reads every physical disk (and RAID members when a RAID volume is present). Synchronous: a few IOCTLs per
-// drive (milliseconds; longer for USB bridges); don't call during disk tests. Appends a history sample.
+// drive (milliseconds; longer for USB bridges); don't call during disk tests.
 u32 disk_health_scan(DiskHealth* out, u32 max);
-// Re-evaluates the status after the thresholds changed (saves them).
-void disk_health_set_thresholds(DiskHealth* h, const HealthThresholds* t);
-// History sample from the current values.
-void disk_health_sample(const DiskHealth* h, HealthSample* out);
 
 enum SelfTestKind : u8 { SELFTEST_SHORT, SELFTEST_EXTENDED, SELFTEST_CONVEYANCE, SELFTEST_ABORT };
 // Starts / aborts a self-test. Only from an explicit user action. False with `err` set on failure.
 bool disk_selftest_start(DiskHealth* h, SelfTestKind kind, char* err, u32 err_size);
 // Refreshes test progress and the self-test log (cheap; poll every few seconds while a test runs).
 void disk_selftest_poll(DiskHealth* h);
-
-// ATA SET FEATURES: AAM (`value` 128..254, 0 = disable) and APM (1..254, 0 = disable). Changes the drive's
-// behaviour until power-off; never called without an explicit confirmation.
-bool disk_set_aam(DiskHealth* h, u8 value, char* err, u32 err_size);
-bool disk_set_apm(DiskHealth* h, u8 value, char* err, u32 err_size);
 
 // Plain-text report of the drives (CrystalDiskInfo "Copy" / "Save as text"). Returns the length.
 u32 disk_health_report(const DiskHealth* drives, u32 count, bool hide_serial, char* out, u32 size);

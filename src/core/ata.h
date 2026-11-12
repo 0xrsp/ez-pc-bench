@@ -1,6 +1,6 @@
 #pragma once
 // ATA commands for SATA / PATA drives and SATA drives behind USB bridges or RAID controllers: IDENTIFY DEVICE,
-// SMART (READ DATA / THRESHOLDS / LOG, RETURN STATUS, EXECUTE OFF-LINE for self-tests) and SET FEATURES (AAM / APM).
+// SMART (READ DATA / THRESHOLDS / LOG, RETURN STATUS, EXECUTE OFF-LINE for self-tests).
 // Every transport except the query-property ones needs a read/write handle, i.e. administrator rights.
 #include "core/types.h"
 
@@ -46,7 +46,6 @@ bool ata_smart_read_thresholds(AtaDev* d, u8 out[512]);
 bool ata_smart_read_log(AtaDev* d, u8 address, u8 out[512]);     // SMART READ LOG (1 sector)
 i32 ata_smart_status(AtaDev* d);                                // 1 = threshold exceeded, 0 = OK, -1 = unknown
 bool ata_smart_execute(AtaDev* d, u8 subcommand);              // EXECUTE OFF-LINE IMMEDIATE (self-tests)
-bool ata_set_features(AtaDev* d, u8 feature, u8 count);         // AAM / APM
 
 // Finds a transport that answers IDENTIFY DEVICE. `rw`: read/write handle; `bus_type`: STORAGE_BUS_TYPE;
 // `usb_vid` / `usb_pid`: the enclosure bridge (0 if not USB). Fills `id` on success.
@@ -72,7 +71,6 @@ struct AtaIdInfo {
     char standard[64];                      // "ACS-3 | SATA 3.2"
     bool smart, smart_enabled, lba48, ncq, trim, write_cache, write_cache_enabled, devsleep, apm, apm_enabled,
          aam, aam_enabled, security, gpl, sct, sanitize;
-    u8 apm_value, aam_value, aam_recommended;
 };
 void ata_parse_identify(const u8 id[512], AtaIdInfo* out);
 

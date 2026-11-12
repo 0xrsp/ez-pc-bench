@@ -18,7 +18,7 @@ const char* const ATA_TRANSPORT_NAMES[ATA_TR_COUNT] = {
     "JMicron USB bridge", "Prolific USB bridge", "Sunplus USB bridge", "Cypress USB bridge", "CSMI (RAID)",
 };
 
-constexpr u8 ATA_CMD_IDENTIFY = 0xEC, ATA_CMD_SMART = 0xB0, ATA_CMD_SET_FEATURES = 0xEF;
+constexpr u8 ATA_CMD_IDENTIFY = 0xEC, ATA_CMD_SMART = 0xB0;
 constexpr u8 SUB_READ_DATA = 0xD0, SUB_READ_THRESHOLDS = 0xD1, SUB_EXECUTE_OFFLINE = 0xD4, SUB_READ_LOG = 0xD5,
              SUB_RETURN_STATUS = 0xDA;
 
@@ -239,11 +239,6 @@ bool ata_smart_execute(AtaDev* d, u8 subcommand) {
     return ata_cmd(d, &r, nullptr, nullptr, nullptr, 0, ATA_NO_DATA);
 }
 
-bool ata_set_features(AtaDev* d, u8 feature, u8 count) {
-    const AtaRegs r = { feature, count, 0, 0, 0, 0, ATA_CMD_SET_FEATURES };
-    return ata_cmd(d, &r, nullptr, nullptr, nullptr, 0, ATA_NO_DATA);
-}
-
 bool ata_attach(AtaDev* d, HANDLE rw, u32 bus_type, u16 usb_vid, u16 usb_pid, u8 id[512]) {
     AtaTransport order[6];
     u32 n = 0;
@@ -372,9 +367,6 @@ void ata_parse_identify(const u8* id, AtaIdInfo* o) {
     o->trim = (word(id, 169) & 0x1) != 0;
     o->sct = (word(id, 206) & 0x1) != 0;
     o->sanitize = (word(id, 59) & 0x1000) != 0;
-    o->apm_value = (u8)word(id, 91);
-    o->aam_value = (u8)word(id, 94);
-    o->aam_recommended = (u8)(word(id, 94) >> 8);
 
     // Standard: the newest major version bit, then the SATA transport version.
     static const char* const majors[] = { nullptr, nullptr, nullptr, nullptr, "ATA/ATAPI-4", "ATA/ATAPI-5", "ATA/ATAPI-6",

@@ -3,13 +3,17 @@
 #include "core/csmi.h"
 #include <windows.h>
 #include <winioctl.h>
-#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 const char* const HEALTH_STATUS_NAMES[4] = { "Unknown", "Good", "Caution", "Bad" };
+
+// Caution limits (CrystalDiskInfo defaults): any reallocated (05), pending (C5) or uncorrectable (C6) sector or
+// NVMe media error, or 10 % of rated endurance left.
+constexpr i64 CAUTION_COUNT = 1;
+constexpr i32 CAUTION_LIFE_LEFT_PCT = 10;
 
 static CsmiDisk s_csmi[CSMI_MAX];
 static u32 s_csmi_count;
@@ -274,24 +278,23 @@ static void read_nvme(DiskHealth* h) {
 static void evaluate_nvme(DiskHealth* h) {
     const u8* l = h->nvme_health;
     const u8 cw = l[0], spare = l[3], spare_thr = l[4], used = l[5];
-    const HealthThresholds* t = &h->thresholds;
     h->status = HEALTH_GOOD;
     if (cw & 0x08) add_reason(h, HEALTH_BAD, "the drive has switched to read-only mode");
     if (cw & 0x04) add_reason(h, HEALTH_BAD, "the drive reports degraded reliability");
     if ((cw & 0x01) || spare < spare_thr) add_reason(h, HEALTH_BAD, "spare blocks (%u %%) are below the drive's threshold (%u %%)", spare, spare_thr);
     if (cw & 0x10) add_reason(h, HEALTH_BAD, "the cache backup (power-loss protection) failed");
     if (cw & 0x02) add_reason(h, HEALTH_CAUTION, "the drive is outside its temperature limits");
-    if (t->media_errors && h->media_errors >= (i64)t->media_errors)
-        add_reason(h, HEALTH_CAUTION, "unrecovered media errors: %lld (Caution from %u)", (long long)h->media_errors, t->media_errors);
-    if (t->life_left_pct && h->life_left_pct >= 0 && h->life_left_pct <= (i32)t->life_left_pct)
-        add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %u %%)", h->life_left_pct, t->life_left_pct);
+    if (h->media_errors >= CAUTION_COUNT)
+        add_reason(h, HEALTH_CAUTION, "unrecovered media errors: %lld", (long long)h->media_errors);
+    if (h->life_left_pct >= 0 && h->life_left_pct <= CAUTION_LIFE_LEFT_PCT)
+        add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %d %%)", h->life_left_pct, CAUTION_LIFE_LEFT_PCT);
     for (u32 i = 0; i < h->row_count; ++i) {
         SmartRow* r = &h->rows[i];
         r->level = HEALTH_GOOD;
         if (r->id == 0x01 && cw) r->level = (cw & 0x1D) ? HEALTH_BAD : HEALTH_CAUTION;
         if (r->id == 0x03 && spare < spare_thr) r->level = HEALTH_BAD;
-        if (r->id == 0x05 && t->life_left_pct && 100 - (i32)used <= (i32)t->life_left_pct) r->level = HEALTH_CAUTION;
-        if (r->id == 0x0E && t->media_errors && h->media_errors >= (i64)t->media_errors) r->level = HEALTH_CAUTION;
+        if (r->id == 0x05 && 100 - (i32)used <= CAUTION_LIFE_LEFT_PCT) r->level = HEALTH_CAUTION;
+        if (r->id == 0x0E && h->media_errors >= CAUTION_COUNT) r->level = HEALTH_CAUTION;
     }
 }
 
@@ -440,13 +443,6 @@ static void ata_info(DiskHealth* h) {
     if (id->sct) list_add(f, fs, "SCT");
     if (id->security) list_add(f, fs, "Security");
     if (id->sanitize) list_add(f, fs, "Sanitize");
-    h->aam_supported = id->aam;
-    h->aam_enabled = id->aam_enabled;
-    h->aam_value = id->aam_value;
-    h->aam_recommended = id->aam_recommended;
-    h->apm_supported = id->apm;
-    h->apm_enabled = id->apm_enabled;
-    h->apm_value = id->apm_value;
     h->vendor = smart_vendor(id->model, id->rotation == 1);
 }
 
@@ -501,7 +497,6 @@ static void read_ata(DiskHealth* h, HANDLE q, HANDLE rw) {
 }
 
 static void evaluate_ata(DiskHealth* h) {
-    const HealthThresholds* t = &h->thresholds;
     h->status = HEALTH_GOOD;
     if (h->smart_status == 1) add_reason(h, HEALTH_BAD, "SMART reports that the drive is failing (threshold exceeded)");
     for (u32 i = 0; i < h->row_count; ++i) {
@@ -511,19 +506,18 @@ static void evaluate_ata(DiskHealth* h) {
             r->level = HEALTH_BAD;
             add_reason(h, HEALTH_BAD, "%02X %s is at or below its threshold (%u <= %u)", r->id, r->name, r->current, r->threshold);
         }
-        const u32 raw32 = (u32)smart_raw48(r->raw);
-        const u32 lim = r->id == 0x05 ? t->reallocated : r->id == 0xC5 ? t->pending : r->id == 0xC6 ? t->uncorrectable : 0;
-        if (lim && raw32 >= lim && r->level < HEALTH_CAUTION) r->level = HEALTH_CAUTION;
-        if (r->unit == SU_LIFE && t->life_left_pct && r->current <= t->life_left_pct && r->level < HEALTH_CAUTION) r->level = HEALTH_CAUTION;
+        const bool counter = r->id == 0x05 || r->id == 0xC5 || r->id == 0xC6;
+        if (counter && (u32)smart_raw48(r->raw) >= CAUTION_COUNT && r->level < HEALTH_CAUTION) r->level = HEALTH_CAUTION;
+        if (r->unit == SU_LIFE && r->current <= CAUTION_LIFE_LEFT_PCT && r->level < HEALTH_CAUTION) r->level = HEALTH_CAUTION;
     }
-    if (t->reallocated && h->reallocated >= (i64)t->reallocated)
-        add_reason(h, HEALTH_CAUTION, "reallocated sectors: %lld (Caution from %u)", (long long)h->reallocated, t->reallocated);
-    if (t->pending && h->pending >= (i64)t->pending)
-        add_reason(h, HEALTH_CAUTION, "sectors pending reallocation: %lld (Caution from %u)", (long long)h->pending, t->pending);
-    if (t->uncorrectable && h->uncorrectable >= (i64)t->uncorrectable)
-        add_reason(h, HEALTH_CAUTION, "uncorrectable sectors: %lld (Caution from %u)", (long long)h->uncorrectable, t->uncorrectable);
-    if (t->life_left_pct && h->life_left_pct >= 0 && h->life_left_pct <= (i32)t->life_left_pct)
-        add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %u %%)", h->life_left_pct, t->life_left_pct);
+    if (h->reallocated >= CAUTION_COUNT)
+        add_reason(h, HEALTH_CAUTION, "reallocated sectors: %lld", (long long)h->reallocated);
+    if (h->pending >= CAUTION_COUNT)
+        add_reason(h, HEALTH_CAUTION, "sectors pending reallocation: %lld", (long long)h->pending);
+    if (h->uncorrectable >= CAUTION_COUNT)
+        add_reason(h, HEALTH_CAUTION, "uncorrectable sectors: %lld", (long long)h->uncorrectable);
+    if (h->life_left_pct >= 0 && h->life_left_pct <= CAUTION_LIFE_LEFT_PCT)
+        add_reason(h, HEALTH_CAUTION, "%d %% of rated endurance left (Caution at %d %%)", h->life_left_pct, CAUTION_LIFE_LEFT_PCT);
     if (!h->have_smart && h->uncorrectable < 0 && h->life_left_pct < 0) {
         h->status = HEALTH_UNKNOWN;
         snprintf(h->status_text, sizeof(h->status_text), "%s",
@@ -654,20 +648,6 @@ static void read_raid_member(DiskHealth* h, CsmiDisk* c) {
     ata_rows(h);
 }
 
-void disk_health_sample(const DiskHealth* h, HealthSample* s) {
-    s->time = (i64)time(nullptr);
-    for (u32 i = 0; i < HF_COUNT; ++i) s->v[i] = NAN;
-    if (h->have_temp) s->v[HF_TEMP_C] = h->temp_c;
-    if (h->life_left_pct >= 0) s->v[HF_LIFE_USED] = 100 - h->life_left_pct;
-    if (h->have_host_writes) s->v[HF_WRITTEN_GB] = h->host_writes_bytes / 1e9;
-    if (h->have_host_reads) s->v[HF_READ_GB] = h->host_reads_bytes / 1e9;
-    if (h->have_power_on_hours) s->v[HF_POWER_ON_H] = (f64)h->power_on_hours;
-    if (h->reallocated >= 0) s->v[HF_REALLOCATED] = (f64)h->reallocated;
-    if (h->pending >= 0) s->v[HF_PENDING] = (f64)h->pending;
-    if (h->uncorrectable >= 0) s->v[HF_UNCORRECTABLE] = (f64)h->uncorrectable;
-    if (h->media_errors >= 0) s->v[HF_MEDIA_ERRORS] = (f64)h->media_errors;
-}
-
 u32 disk_health_scan(DiskHealth* out, u32 max) {
     PhysDisk disks[PHYSDISK_MAX];
     u32 n = physdisk_enum(disks, PHYSDISK_MAX < max ? PHYSDISK_MAX : max);
@@ -690,18 +670,8 @@ u32 disk_health_scan(DiskHealth* out, u32 max) {
             ++n;
         }
     }
-    for (u32 i = 0; i < n; ++i) {
-        DiskHealth* h = &out[i];
-        if (h->disk.virtual_disk) continue;
-        health_drive_key(h->model, h->serial, h->key, sizeof(h->key));
-        health_thresholds_load(h->key, &h->thresholds);
-        evaluate(h);
-        if (h->proto != HPROTO_NONE) {
-            HealthSample s;
-            disk_health_sample(h, &s);
-            health_history_add(h->key, h->model, &s);
-        }
-    }
+    for (u32 i = 0; i < n; ++i)
+        if (!out[i].disk.virtual_disk) evaluate(&out[i]);
     return n;
 }
 
@@ -710,13 +680,7 @@ void disk_health_close() {
     s_csmi_count = 0;
 }
 
-void disk_health_set_thresholds(DiskHealth* h, const HealthThresholds* t) {
-    h->thresholds = *t;
-    health_thresholds_save(h->key, t);
-    evaluate(h);
-}
-
-// ---- self-tests / features --------------------------------------------------------------------------------
+// ---- self-tests -------------------------------------------------------------------------------------------
 
 // Read/write handle for commands: the RAID controller handle, or the disk reopened.
 static HANDLE command_handle(DiskHealth* h, bool* close) {
@@ -785,43 +749,6 @@ void disk_selftest_poll(DiskHealth* h) {
         }
         if (close) CloseHandle(rw);
     }
-}
-
-static bool set_feature(DiskHealth* h, u8 feature, u8 count, char* err, u32 err_size) {
-    err[0] = 0;
-    if (h->proto != HPROTO_ATA || h->ata.tr == ATA_TR_NONE || h->ata.tr == ATA_TR_SMART_IOCTL) {
-        snprintf(err, err_size, "not available on this drive / connection");
-        return false;
-    }
-    bool close = false;
-    HANDLE rw = command_handle(h, &close);
-    if (rw == INVALID_HANDLE_VALUE) {
-        snprintf(err, err_size, "needs administrator rights");
-        return false;
-    }
-    AtaDev d = h->ata;
-    d.h = rw;
-    const bool ok = ata_set_features(&d, feature, count);
-    if (ok && ata_identify(&d, h->ata_id)) {    // re-read the current values
-        ata_parse_identify(h->ata_id, &h->id);
-        h->aam_enabled = h->id.aam_enabled;
-        h->aam_value = h->id.aam_value;
-        h->apm_enabled = h->id.apm_enabled;
-        h->apm_value = h->id.apm_value;
-    }
-    if (close) CloseHandle(rw);
-    if (!ok) snprintf(err, err_size, "the drive rejected SET FEATURES");
-    return ok;
-}
-
-bool disk_set_aam(DiskHealth* h, u8 value, char* err, u32 err_size) {
-    if (!h->aam_supported) { snprintf(err, err_size, "the drive doesn't support AAM"); return false; }
-    return value ? set_feature(h, 0x42, value < 128 ? 128 : value > 254 ? 254 : value, err, err_size) : set_feature(h, 0xC2, 0, err, err_size);
-}
-
-bool disk_set_apm(DiskHealth* h, u8 value, char* err, u32 err_size) {
-    if (!h->apm_supported) { snprintf(err, err_size, "the drive doesn't support APM"); return false; }
-    return value ? set_feature(h, 0x05, value > 254 ? 254 : value, err, err_size) : set_feature(h, 0x85, 0, err, err_size);
 }
 
 // ---- text report ------------------------------------------------------------------------------------------
