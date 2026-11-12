@@ -1,6 +1,7 @@
 // Driverless CPU / GPU readers (see hwread.h).
 #include "core/hwread.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include "core/timer.h"
 #include <windows.h>
 #include <winternl.h>
@@ -94,13 +95,16 @@ u32 cpu_reader_sample(CpuReader* r, f32* util, f32* mhz) {
     }
     memcpy(prev, cur, sizeof(cur));
 
+    // Plausible range: up to 15 % over the SMBIOS max clock when the firmware reports one (5.1 GHz here; PDH reads
+    // up to ~5.5 GHz on this CPU), else 3.5x nominal. Rates over short intervals under load spike far beyond it.
+    const f64 max_pct = g_cpux.max_mhz > 0 && r->base_mhz > 0.0f ? g_cpux.max_mhz * 1.15 / r->base_mhz * 100.0 : 350.0;
     PDH_FMT_COUNTERVALUE_ITEM_W* items;
     const DWORD m = r->base_mhz > 0.0f && clock_ok ? counter_array(r->buf, r->perf, &items) : 0;
     for (DWORD i = 0; i < m; ++i) {
         const i32 lp = lp_index(items[i].szName);
         const f64 pct = items[i].FmtValue.doubleValue;
         if (lp < 0 || (u32)lp >= n || items[i].FmtValue.CStatus != ERROR_SUCCESS) continue;
-        if (pct > 0.0 && pct < 350.0) mhz[lp] = (f32)(pct * r->base_mhz / 100.0);
+        if (pct > 0.0 && pct < max_pct) mhz[lp] = (f32)(pct * r->base_mhz / 100.0);
     }
     return n;
 }
