@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"     // TableGetHoveredRow, OpenPopupEx (dev: --open-theme-combo)
 #include <windows.h>
+#include <math.h>
 #include <stdio.h>
 
 static bool begin_group(const char* title) {
@@ -185,25 +186,47 @@ static void draw_disk_interval(BenchParams* p) {
     }
 }
 
-// Small warning chip on the current line, `h` tall (warning-tinted, outlined); hovering it shows `text` instead of
-// the row's help.
-static void warning_chip(const char* id, const char* label, const char* text, f32 h) {
-    const f32 fs = ImGui::GetFontSize(), pad = fs * 0.55f, round = fs * 0.2f;
-    const ImVec2 ts = ImGui::CalcTextSize(label), size(ts.x + pad * 2.0f, h);
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(id, size);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 b(p.x + size.x, p.y + size.y);
-    dl->AddRectFilled(p, b, ImGui::GetColorU32(g_pal.warn_container), round);
-    dl->AddRect(p, b, ImGui::GetColorU32(g_pal.warn), round);
-    dl->AddText(ImVec2(p.x + pad, p.y + (size.y - ts.y) * 0.5f), ImGui::GetColorU32(g_pal.on_warn_container), label);
-    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
-    s_row_help = nullptr;   // this tooltip, not the row's
-    ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(fs * 26.0f);
-    ImGui::TextUnformatted(text);
-    ImGui::PopTextWrapPos();
-    ImGui::EndTooltip();
+// Present mode dropdown. The on-screen modes flash the GPU test patterns in a window or across the screen, so their
+// entries carry a warning (full text on hover). Returns true when the choice changed.
+static const char* const FLASH_LABEL = "EPILEPSY WARNING";
+static const char* const FLASH_TEXT = "Photosensitivity warning: the on-screen present modes show the GPU tests' rapidly "
+                                      "flashing colors and patterns in a window or across the whole screen. If you, or "
+                                      "anyone who can see the screen, may have photosensitive epilepsy, keep Offscreen.";
+
+static bool present_combo(int* present) {
+    static const char* const modes[] = { "Offscreen", "On-screen, windowed", "On-screen, fullscreen" };
+    // The warnings line up after the longest mode name; the popup is at least wide enough for them.
+    f32 name_w = 0.0f;
+    for (u32 i = 1; i < ARRAY_COUNT(modes); ++i) name_w = fmaxf(name_w, ImGui::CalcTextSize(modes[i]).x);
+    const f32 gap = ImGui::GetFontSize() * 1.2f;
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    const f32 warn_w = ImGui::CalcTextSize(FLASH_LABEL).x;
+    ImGui::PopFont();
+    const f32 need = name_w + gap + warn_w + ImGui::GetStyle().WindowPadding.x * 2.0f;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(fmaxf(need, ImGui::CalcItemWidth()), 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+    if (!ImGui::BeginCombo("##present", modes[*present])) return false;
+    bool changed = false;
+    for (int i = 0; i < (int)ARRAY_COUNT(modes); ++i) {
+        const ImVec2 text_pos = ImGui::GetCursorScreenPos();    // where the Selectable puts its label
+        if (ImGui::Selectable(modes[i], *present == i)) {
+            changed = *present != i;
+            *present = i;
+        }
+        if (i == 0) continue;   // Offscreen: nothing on screen
+        ImGui::PushFont(g_fonts.medium, 0.0f);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(text_pos.x + name_w + gap, text_pos.y), ImGui::GetColorU32(g_pal.warn),
+                                            FLASH_LABEL);
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
+            ImGui::TextUnformatted(FLASH_TEXT);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
+    ImGui::EndCombo();
+    return changed;
 }
 
 // Full-window ImGui window of a settings tool window, with the wrapped intro line(s).
@@ -264,24 +287,17 @@ void settings_ui_draw() {
                                    "frame through a real swapchain with vsync off and tearing allowed, like a game; frame "
                                    "times then include presentation, and where the driver reports it you also get "
                                    "displayed-frame times and display latency. On laptops whose screen is driven by the "
-                                   "integrated GPU, frames from the dedicated GPU are copied across to it. Esc stops a test.";
+                                   "integrated GPU, frames from the dedicated GPU are copied across to it. Esc stops a test. "
+                                   "Epilepsy warning: the on-screen modes flash the test patterns on screen.";
         row("Present mode", present_help);
-        static const char* const present_modes[] = { "Offscreen", "On-screen, windowed", "On-screen, fullscreen" };
         int present = !p->gpu_onscreen ? 0 : p->gpu_fullscreen ? 2 : 1;
-        if (ImGui::Combo("##present", &present, present_modes, (int)ARRAY_COUNT(present_modes))) {
+        if (present_combo(&present)) {
             p->gpu_onscreen = present != 0;
             if (present) p->gpu_fullscreen = present == 2;
         }
         row("Show preview", "Shows a small copy of what the 3D, 2D and feature tests render next to the live numbers "
                             "while they run (also in Offscreen mode). Off: the numbers only.");
         theme_checkbox("##gpu_preview", &g_gpu_preview);
-        // Visible, not only in the help: the on-screen modes flash the test patterns full size.
-        const f32 box_h = ImGui::GetItemRectSize().y;     // the chip matches the checkbox
-        ImGui::SameLine(0.0f, ImGui::GetFontSize());
-        warning_chip("##flash", "Photosensitivity warning",
-                     "Photosensitivity warning: the on-screen present modes show the GPU tests' rapidly flashing colors "
-                     "and patterns in a window or across the whole screen. If you, or anyone who can see the screen, may "
-                     "have photosensitive epilepsy, keep Offscreen.", box_h);
         end_group();
     }
 

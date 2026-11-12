@@ -633,8 +633,8 @@ Waiting on the user (2026-11-11):
   2–10 min graphs average samples into buckets instead of drawing a dense zigzag; the CPU clock graph's "Speed"
   falls back to the load-weighted clock of all LPs when none is half busy (no more gaps at idle). Disk health and
   System details keep only Copy report (Save report removed; the CLI still writes files). Settings > GPU has a "Show preview"
-  checkbox (`[settings] gpu_preview`) with a small "Photosensitivity warning" chip beside it (the full text on
-  hover: on-screen present modes flash the test patterns).
+  checkbox (`[settings] gpu_preview`), and the Present mode dropdown marks both on-screen modes with a yellow
+  "EPILEPSY WARNING" (full photosensitivity text on hover: they flash the test patterns on screen).
 - 2026-11-12 (PawnIO removed, user decision): PawnIO and the advanced sensors built on it (M10) are gone because
   they added nothing useful (never even tested with the driver loaded here). Removed: `core/pawnio*`, `adv_*`,
   `unzip.*`, `sysinfo_spd.*`, `app/adv_ui.*`, the Settings row with Download & install, the Sensors "Advanced"
