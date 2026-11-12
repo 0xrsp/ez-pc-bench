@@ -113,6 +113,8 @@ add_library(ezbench_core STATIC
     src/core/adv_smbus.cpp
     src/core/adv_umc.cpp
     src/core/sysinfo_spd.cpp
+    src/core/battery.cpp
+    src/core/emi.cpp
     src/core/presets.cpp
     src/core/disk_health.cpp
     src/core/ata.cpp
@@ -187,6 +189,7 @@ add_executable(ez-pc-bench WIN32
     src/app/compare_ui.cpp
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
+    src/app/overlay.cpp
     src/app/health_ui.cpp
     src/app/adv_ui.cpp
     src/app/library.cpp

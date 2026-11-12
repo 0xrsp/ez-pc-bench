@@ -9,3 +9,6 @@ void settings_load(BenchParams* p, bool* selected);     // after sysinfo_init; i
 // Values that command-line flags overrode at startup are not written unless the user changes them.
 void settings_tick(const BenchParams* p, const bool* selected);
 void settings_flush(const BenchParams* p, const bool* selected);   // at exit: save pending changes now
+// The ini (created with a UTF-16 BOM if missing), for tool windows that keep their own [section]; null if
+// %APPDATA% is unavailable. This file only rewrites [settings] and [tests].
+const wchar_t* settings_ini_file();

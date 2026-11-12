@@ -3,7 +3,7 @@
 //   - CPU utilization and the clock of a busy core (measured in place, see monitor.cpp),
 //   - the test GPU's core / memory clock, temperature and power (D3DKMT perf data) and engine utilization
 //     (PDH "GPU Engine"),
-//   - the power source,
+//   - the power source and, on battery, the discharge rate (core/battery.*, read at most once a second),
 // and folds the samples into per-test aggregates (g_env, indexed by bench id) that are stored with the
 // results. No driver needed; values a platform doesn't report stay NaN.
 #include "core/bench.h"
@@ -30,6 +30,7 @@ struct TestEnv {
     f32 gpu_power;          // % of the driver's power limit, average
     f32 cpu_drop, gpu_drop; // % clock drop, first third -> last third of the worst phase (positive = slower)
     u32 flags;              // EnvFlags
+    f32 bat_discharge_w;    // W drawn from the battery, average while discharging (NaN on AC / no battery)
 };
 
 extern TestEnv g_env[MAX_BENCHES];

@@ -28,7 +28,7 @@ void toon_row_end(ToonRow* r);
 
 // ---- reader -------------------------------------------------------------------------------------
 
-constexpr u32 TOON_MAX_FIELDS = 16;
+constexpr u32 TOON_MAX_FIELDS = 24;
 constexpr u32 TOON_CELL = 256;
 
 struct ToonReader {

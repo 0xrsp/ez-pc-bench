@@ -8,8 +8,10 @@
 #include "core/presets.h"
 #include "core/results.h"
 #include "core/runner.h"
+#include "core/sensors.h"
 #include "core/sysinfo.h"
 #include "core/sysinfo_spd.h"
+#include "core/timer.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +36,13 @@ static void print_usage() {
         "                         --run and later options override it\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --health [--hide-serial]  Print the disk health report of every drive and exit\n"
+        "  --log-sensors <file>   Log sensors (clocks, load, temperatures, battery, power rails) to a .csv or\n"
+        "                         .toon.txt file; alone for --seconds, with --run / --preset during the run\n"
+        "  --interval <ms>        Sensor log interval (default 1000, minimum 100)\n"
+        "  --seconds <n>          Sensor log length without a run (default 60; Ctrl+C stops early)\n"
+        "  --sensors <patterns>   Channels to log, e.g. cpu.*,gpu0.*,bat.* (default: all but per-core;\n"
+        "                         'all' = everything)\n"
+        "  --list-sensors         List the sensor channel ids with their current values\n"
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
         "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
@@ -70,8 +79,11 @@ static bool select_patterns(const char* list, bool* selected) {
     return any;
 }
 
+static std::atomic<bool> s_ctrl_c;
+
 static BOOL WINAPI on_ctrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) {
+        s_ctrl_c.store(true);
         if (runner_is_running()) {
             runner_cancel();
             return TRUE;
@@ -218,6 +230,77 @@ static void to_utf8(const wchar_t* w, char* out, int size) {
     WideCharToMultiByte(CP_UTF8, 0, w, -1, out, size, nullptr, nullptr);
 }
 
+// ---- sensors ------------------------------------------------------------------------------------
+
+static SensorChannel s_channels[CH_MAX];
+
+// Starts the sampler and waits (up to 5 s) for the second sample: rate values (clock, load, power) need two.
+static void sensors_warm_up() {
+    sensors_start();
+    u32 seq = 0;
+    for (u32 i = 0; i < 50 && seq < 2; ++i) {
+        Sleep(100);
+        sensors_channels(s_channels, CH_MAX, &seq);
+    }
+}
+
+static int list_sensors() {
+    sensors_warm_up();
+    u32 seq;
+    const u32 n = sensors_channels(s_channels, CH_MAX, &seq);
+    for (u32 i = 0; i < n; ++i) {
+        const SensorChannel* c = &s_channels[i];
+        char v[32] = "-";
+        if (c->valid) snprintf(v, sizeof(v), "%.*f %s", c->decimals, c->value, c->unit);
+        printf("%-22s %-48.48s %14s%s\n", c->id, c->name, v, c->flags & CHF_DETAIL ? "  (detail)" : "");
+    }
+    sensors_stop();
+    return 0;
+}
+
+static bool start_sensor_log(const wchar_t* path, u32 interval_ms, const char* patterns) {
+    const size_t len = wcslen(path);
+    const bool csv = len >= 4 && !_wcsicmp(path + len - 4, L".csv");
+    char err[160];
+    if (!sensors_log_start(path, csv ? SLOG_CSV : SLOG_TOON, interval_ms, patterns, err, sizeof(err))) {
+        fwprintf(stderr, L"Cannot log to %s: ", path);
+        fprintf(stderr, "%s\n", err);
+        return false;
+    }
+    return true;
+}
+
+static int finish_sensor_log() {
+    SensorLogStatus st;
+    sensors_log_status(&st);
+    sensors_log_stop();
+    SensorLogStatus done;
+    sensors_log_status(&done);
+    if (done.error[0]) { fprintf(stderr, "Sensor log: %s\n", done.error); return 1; }
+    printf("Wrote %s (%u rows x %u channels, %.0f s)\n", st.path, st.rows, st.columns, st.seconds);
+    printf("Slowest sample %.0f ms: %s\n", st.slowest_ms, st.slowest);
+    return 0;
+}
+
+// --log-sensors without a run: log for `seconds` (Ctrl+C stops early).
+static int log_sensors_only(const wchar_t* path, u32 interval_ms, u32 seconds, const char* patterns) {
+    sensors_warm_up();      // first row with every value present
+    if (!start_sensor_log(path, interval_ms, patterns)) { sensors_stop(); return 3; }
+    sensors_stop();         // the log holds its own reference
+    SetConsoleCtrlHandler(on_ctrl, TRUE);
+    const f64 t0 = timer_now();
+    while (!s_ctrl_c.load() && timer_now() - t0 < seconds) {
+        SensorLogStatus st;
+        sensors_log_status(&st);
+        printf("\rLogging %u channels every %u ms: %u rows, %.0f / %u s ", st.columns, st.interval_ms, st.rows, timer_now() - t0,
+               seconds);
+        fflush(stdout);
+        Sleep(200);
+    }
+    printf("\r%-79s\r", "");
+    return finish_sensor_log();
+}
+
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     sysinfo_init();
@@ -228,6 +311,10 @@ int wmain(int argc, wchar_t** argv) {
          hide_serial = false, adv_report = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
+    const wchar_t* sensor_log = nullptr;
+    char sensor_patterns[512] = {};
+    u32 log_interval = 1000, log_seconds = 60;
+    bool list_channels = false;
     BenchParams params;
     params.gpu_adapter = sysinfo_default_gpu();
 
@@ -248,6 +335,11 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
+        else if (!wcscmp(a, L"--log-sensors") && has_val) sensor_log = argv[++i];
+        else if (!wcscmp(a, L"--interval") && has_val) { log_interval = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--seconds") && has_val) { log_seconds = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--sensors") && has_val) { strncpy_s(sensor_patterns, val, _TRUNCATE); ++i; }
+        else if (!wcscmp(a, L"--list-sensors")) list_channels = true;
         else if (!wcscmp(a, L"--duration") && has_val) { params.duration_ms = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--threads") && has_val) { params.thread_count = (u32)atoi(val); ++i; }
         else if (!wcscmp(a, L"--gpu") && has_val) { params.gpu_adapter = (u32)atoi(val); ++i; }
@@ -279,6 +371,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     if (health) return print_health(hide_serial);
+    if (list_channels) return list_sensors();
+    if (sensor_log && !any_run) return log_sensors_only(sensor_log, log_interval, log_seconds, sensor_patterns);
 
     if (elevate && !g_sys.elevated) {
         if (relaunch_elevated(L"--pause")) return 0;
@@ -308,6 +402,7 @@ int wmain(int argc, wchar_t** argv) {
         printf("Baseline %s (%s), %u metrics; change in %% (+ = larger value)\n\n", g_baseline.file, g_baseline.timestamp,
                g_baseline.count);
     SetConsoleCtrlHandler(on_ctrl, TRUE);
+    if (sensor_log && !start_sensor_log(sensor_log, log_interval, sensor_patterns)) return 3;
     if (!runner_start(selected, &params)) { fprintf(stderr, "Nothing to run.\n"); return 3; }
 
     // Print each finished test once, in run order; live line in between.
@@ -326,6 +421,7 @@ int wmain(int argc, wchar_t** argv) {
         Sleep(100);
     }
     runner_wait();
+    if (sensor_log && finish_sensor_log() != 0) return 1;
 
     int exit_code = 0;
     for (u32 i = 0; i < g_run.total; ++i) {
