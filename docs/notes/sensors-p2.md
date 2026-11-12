@@ -129,7 +129,8 @@ ever parse `env` (today they skip it).
   `RAPL_Package0_Core0_CORE` … `Core7_CORE`. Readable without admin. `emi_open` ~33 ms; a read of all 9
   0.4–6 ms, once 112 ms (isolated). Package power ~7–9 W at desktop idle on battery, 30–43 W while other
   agents' builds ran; per-core 0.0–15 W.
-- Overlay: ex-style 0x080800A8 verified; renders over other windows, clicks pass through.
+- Overlay: ex-style 0x080800A8 verified; renders over other windows, clicks pass through. During
+  `gpu_vk.3d.scene` (GUI `--overlay --autorun`) it showed "FPS 6411" as the first line, gone after the test.
 
 ## Not done / follow-ups
 
