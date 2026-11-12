@@ -1,5 +1,6 @@
 // PawnIO client (see pawnio.h). Read-only use is up to the callers: this file only moves bytes.
 #include "core/pawnio.h"
+#include "core/pawnio_modules.h"
 #include <windows.h>
 #include <winioctl.h>
 #include <sddl.h>
@@ -43,32 +44,9 @@ struct Blob {
     void* heap;         // owned copy (file), freed by blob_free
 };
 
-static bool blob_from_resource(PawnModuleId id, Blob* b) {
-    wchar_t name[48];
-    swprintf(name, ARRAY_COUNT(name), L"PAWNIO_%hs", s_module_names[id]);
-    _wcsupr_s(name, ARRAY_COUNT(name));
-    HMODULE exe = GetModuleHandleW(nullptr);
-    HRSRC res = FindResourceW(exe, name, MAKEINTRESOURCEW(10));     // RT_RCDATA
-    if (!res) return false;
-    HGLOBAL g = LoadResource(exe, res);
-    b->data = g ? LockResource(g) : nullptr;
-    b->size = SizeofResource(exe, res);
-    b->heap = nullptr;
-    return b->data && b->size;
-}
-
-static bool blob_path(PawnModuleId id, wchar_t* path, u32 cap) {
-    const DWORD n = GetModuleFileNameW(nullptr, path, cap);
-    if (!n || n >= cap) return false;
-    wchar_t* slash = wcsrchr(path, L'\\');
-    if (!slash) return false;
-    const size_t left = cap - (size_t)(slash + 1 - path);
-    return swprintf(slash + 1, left, L"pawnio\\%hs.bin", s_module_names[id]) > 0;
-}
-
 static bool blob_from_file(PawnModuleId id, Blob* b) {
     wchar_t path[MAX_PATH];
-    if (!blob_path(id, path, MAX_PATH)) return false;
+    if (!pawnio_module_path(s_module_names[id], path, MAX_PATH)) return false;
     HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return false;
     LARGE_INTEGER sz = {};
@@ -85,19 +63,14 @@ static bool blob_from_file(PawnModuleId id, Blob* b) {
     return true;
 }
 
-static bool blob_get(PawnModuleId id, Blob* b) { return blob_from_resource(id, b) || blob_from_file(id, b); }
-
 static void blob_free(Blob* b) {
     if (b->heap) HeapFree(GetProcessHeap(), 0, b->heap);
     b->heap = nullptr;
 }
 
 bool pawnio_module_available(PawnModuleId id) {
-    if (id >= PM_COUNT) return false;
-    Blob b = {};
-    if (blob_from_resource(id, &b)) return true;
     wchar_t path[MAX_PATH];
-    return blob_path(id, path, MAX_PATH) && GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+    return id < PM_COUNT && pawnio_module_path(s_module_names[id], path, MAX_PATH);
 }
 
 // ---- device -----------------------------------------------------------------------------------------------
@@ -106,7 +79,7 @@ u32 pawnio_open(Pawn* p, PawnModuleId id) {
     pawnio_close(p);
     if (id >= PM_COUNT) return ERROR_INVALID_PARAMETER;
     Blob b = {};
-    if (!blob_get(id, &b)) return ERROR_FILE_NOT_FOUND;
+    if (!blob_from_file(id, &b)) return ERROR_FILE_NOT_FOUND;
     HANDLE h = CreateFileW(PIO_DEVICE, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {

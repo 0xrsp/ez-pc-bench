@@ -15,8 +15,9 @@
 #include "core/hwread.h"
 
 constexpr const char* ADV_PAWNIO_URL = "https://pawnio.eu";
-// The official installer, latest release. The GUI's "Download & install" button (Settings) fetches it; that click
-// is the app's only network access.
+// The official installer, latest release. The GUI's "Download & install" button (Settings) fetches it together
+// with the modules (core/pawnio_modules.h); that button, "Download modules" and the CLI's --pawnio-modules are the
+// app's only network access.
 constexpr const wchar_t* ADV_PAWNIO_SETUP_URL = L"https://github.com/namazso/PawnIO.Setup/releases/latest/download/PawnIO_setup.exe";
 constexpr u32 ADV_MAX_CCDS = 16;
 constexpr u32 ADV_MAX_CORES = 64;
@@ -27,7 +28,7 @@ enum AdvStatus : u8 {
     ADV_NOT_RUNNING,        // installed, but its device isn't there (driver not started, reboot pending)
     ADV_OFF,                // switched off in Settings (or --no-adv-sensors)
     ADV_NEEDS_ADMIN,        // the device only opens for administrators
-    ADV_NO_MODULES,         // driver there, but the signed module files aren't (see docs/notes/pawnio.md)
+    ADV_NO_MODULES,         // driver there, but a signed module file this CPU needs isn't (core/pawnio_modules.h)
     ADV_UNSUPPORTED,        // no module accepted this CPU
     ADV_ACTIVE,
 };

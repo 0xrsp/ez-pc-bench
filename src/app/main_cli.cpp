@@ -9,6 +9,7 @@
 #include "core/history.h"
 #include "core/integrity.h"
 #include "core/monitor.h"
+#include "core/pawnio_modules.h"
 #include "core/presets.h"
 #include "core/report.h"
 #include "core/results.h"
@@ -75,6 +76,8 @@ static void print_usage() {
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
         "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
+        "  --pawnio-modules       Download the signed PawnIO modules (github.com/namazso/PawnIO.Modules, LGPL-2.1)\n"
+        "                         into %%LOCALAPPDATA%%\\ez-pc-bench\\pawnio\\<version>\\ (needs internet)\n"
 
         "  --pause                Wait for Enter before exiting\n"
         "  --stress <tests> ...   Stability tester mode (options below)\n\n");
@@ -283,6 +286,16 @@ static int print_health(bool hide_serial) {
     return 0;
 }
 
+// --pawnio-modules: download the signed PawnIO modules into the per-user folder (an explicit network access).
+static int download_pawnio_modules() {
+    char url[192], msg[512];
+    pawnio_modules_url(url, sizeof(url));
+    printf("Downloading %s ...\n", url);
+    const bool ok = pawnio_modules_download(msg, sizeof(msg));
+    fprintf(ok ? stdout : stderr, "%s\n", msg);
+    return ok ? 0 : 1;
+}
+
 // --sysinfo: full system report on stdout, optionally saved as text + TOON.
 static int print_report(const wchar_t* save_base) {
     gpu_api_details_query_all();
@@ -407,6 +420,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--elevate")) elevate = true;
         else if (!wcscmp(a, L"--adv-report")) adv_report = true;
         else if (!wcscmp(a, L"--no-adv-sensors")) adv_set_enabled(false);
+        else if (!wcscmp(a, L"--pawnio-modules")) return download_pawnio_modules();
         else if (!wcscmp(a, L"--sysinfo")) return print_report(has_val && argv[i + 1][0] != L'-' ? argv[i + 1] : nullptr);
         else if (!wcscmp(a, L"--write-through")) params.disk_write_through = true;
         else if (!wcscmp(a, L"--seconds") && has_val) { log_seconds = (u32)atoi(val); ++i; }     // length of a sensor log
