@@ -463,6 +463,16 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             dl->AddPolyline(pts, (int)ARRAY_COUNT(pts), col, line);
             break;
         }
+        case ICON_SLIDERS: {    // three horizontal sliders with their knobs at different positions
+            const f32 knob[] = { 0.35f, -0.4f, 0.1f };
+            for (int k = 0; k < 3; ++k) {
+                const f32 y = c.y + (k - 1) * r * 0.62f, x = c.x + knob[k] * r;
+                dl->AddLine(ImVec2(c.x - r, y), ImVec2(c.x + r, y), col, line);
+                dl->AddCircleFilled(ImVec2(x, y), r * 0.24f, bg, 12);
+                dl->AddCircle(ImVec2(x, y), r * 0.24f, col, 12, line);
+            }
+            break;
+        }
     }
 }
 

@@ -1,9 +1,11 @@
-// Settings window: one row per setting (label | control) in titled groups; every row has a detailed
-// tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by settings.cpp.
+// Settings and Benchmark settings windows: one row per setting (label | control) in titled groups; every row
+// has a detailed tooltip. Edits go straight into the main window's BenchParams (ui_params) and are saved by
+// settings.cpp (one ini for both windows).
 #include "app/settings_ui.h"
 #include "app/adv_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
+#include "core/presets.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "disk/disk.h"
@@ -103,20 +105,7 @@ static void draw_disk_options(BenchParams* p) {
     int unit = o->unit;
     if (ImGui::Combo("##dunit", &unit, units, (int)ARRAY_COUNT(units))) o->unit = (u8)unit;
 
-    static const u32 intervals[] = { 0, 1, 3, 5, 10, 30, 60, 180, 300, 600 };
-    row("Interval between tests", "Pause before each disk test so the drive can cool down and finish background work "
-                                  "(CrystalDiskMark's Interval). Laptop SSDs throttle when hot; a pause makes later tests "
-                                  "comparable with earlier ones. 0 = none (default).");
     char label[32];
-    snprintf(label, sizeof(label), o->interval_ms ? "%u s" : "none", o->interval_ms / 1000);
-    if (ImGui::BeginCombo("##dint", label)) {
-        for (u32 i = 0; i < ARRAY_COUNT(intervals); ++i) {
-            snprintf(label, sizeof(label), intervals[i] ? "%u s" : "none", intervals[i]);
-            if (ImGui::Selectable(label, o->interval_ms == intervals[i] * 1000)) o->interval_ms = intervals[i] * 1000;
-        }
-        ImGui::EndCombo();
-    }
-
     row("Test in folder", "Run the disk suite in this folder instead of on the drive letters picked in the main window: a "
                           "network share (\\\\server\\share), a USB stick, a mounted VHD or a RAM disk. Metrics are then named "
                           "\"Folder: ...\". The raw-device tests use the drive letter of the folder's volume, if it has "
@@ -141,6 +130,24 @@ static void draw_disk_options(BenchParams* p) {
         for (u32 i = 0; i < ARRAY_COUNT(caps); ++i) {
             snprintf(label, sizeof(label), "%u GiB", caps[i]);
             if (ImGui::Selectable(label, o->sustained_gib == caps[i])) o->sustained_gib = caps[i];
+        }
+        ImGui::EndCombo();
+    }
+}
+
+// Pause before each disk test (DiskOptions::interval_ms); in the benchmark settings.
+static void draw_disk_interval(BenchParams* p) {
+    DiskOptions* o = &p->disk;
+    static const u32 intervals[] = { 0, 1, 3, 5, 10, 30, 60, 180, 300, 600 };
+    row("Interval between tests", "Pause before each disk test so the drive can cool down and finish background work "
+                                  "(CrystalDiskMark's Interval). Laptop SSDs throttle when hot; a pause makes later tests "
+                                  "comparable with earlier ones. 0 = none (default).");
+    char label[32];
+    snprintf(label, sizeof(label), o->interval_ms ? "%u s" : "none", o->interval_ms / 1000);
+    if (ImGui::BeginCombo("##dint", label)) {
+        for (u32 i = 0; i < ARRAY_COUNT(intervals); ++i) {
+            snprintf(label, sizeof(label), intervals[i] ? "%u s" : "none", intervals[i]);
+            if (ImGui::Selectable(label, o->interval_ms == intervals[i] * 1000)) o->interval_ms = intervals[i] * 1000;
         }
         ImGui::EndCombo();
     }
@@ -178,15 +185,30 @@ static void draw_disk_rows(BenchParams* p) {
     }
 }
 
-void settings_ui_draw() {
+// Full-window ImGui window of a settings tool window, with the wrapped intro line(s).
+static void begin_window(const char* id, const char* intro) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
-    ImGui::Begin("##settings", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::Begin(id, nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                  ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", intro);
+    ImGui::PopTextWrapPos();
+}
+
+static void locked_note(bool running) {
+    if (!running) return;
+    ImGui::Spacing();
+    ImGui::TextColored(g_pal.warn, "A run is in progress: the settings below are locked until it finishes.");
+}
+
+void settings_ui_draw() {
+    begin_window("##settings", "Hover a setting for details. Changes apply to the next run and are saved automatically. "
+                               "Phase duration, repeat, sustained mode and the disk passes are in Benchmark settings "
+                               "(next to Run).");
     BenchParams* p = ui_params();
     const bool running = runner_is_running();
-    ImGui::TextDisabled("Hover a setting for details. Changes apply to the next run and are saved automatically.");
 
     if (begin_group("Appearance")) {
         static const char* const modes[] = { "Follow Windows", "Light", "Dark" };
@@ -198,21 +220,10 @@ void settings_ui_draw() {
         end_group();
     }
 
-    if (running) {
-        ImGui::Spacing();
-        ImGui::TextColored(g_pal.warn, "A run is in progress: the settings below are locked until it finishes.");
-    }
+    locked_note(running);
     ImGui::BeginDisabled(running);
 
-    if (begin_group("Benchmark")) {
-        const char* help = "How long each measured phase runs, e.g. the single-thread and multi-thread halves of a CPU "
-                           "test or each disk pass. A short warm-up comes on top. Longer phases average out boost-clock "
-                           "and temperature swings but make a full run take longer. 3000 ms is the default and what the "
-                           "reference runs use, so keep it when comparing against them.";
-        row("Duration per phase", help);
-        int duration = (int)p->duration_ms;
-        if (ImGui::SliderInt("##duration", &duration, 500, 20000, "%d ms")) p->duration_ms = (u32)duration;
-
+    if (begin_group("CPU and memory")) {
         char threads_help[400];
         snprintf(threads_help, sizeof(threads_help),
                  "Threads used by the multi-threaded CPU and memory tests. 0 uses every logical processor (%u on this "
@@ -222,24 +233,6 @@ void settings_ui_draw() {
         int threads = (int)p->thread_count;
         if (ImGui::SliderInt("##threads", &threads, 0, (int)g_sys.cpu.threads, threads ? "%d" : "all"))
             p->thread_count = (u32)threads;
-
-        const char* repeat_help = "Runs every test this many times in a row and reports the median, with the spread "
-                                  "(min, max, coefficient of variation) on hover. Values whose runs differ by more than "
-                                  "3 % are marked as noisy. 1 = a single run (default).";
-        row("Repeat each test", repeat_help);
-        int repeat = (int)p->repeat;
-        if (ImGui::SliderInt("##repeat", &repeat, 1, (int)MAX_REPEAT, repeat > 1 ? "%dx (median)" : "once"))
-            p->repeat = (u32)repeat;
-
-        const char* sustain_help = "Sustained (thermal) mode, like Cinebench's minimum test duration: every selected test "
-                                   "loops for this many minutes (at least two passes) and reports the median, plus the "
-                                   "first and last pass, min, max and the drop from the first to the last pass. The Charts "
-                                   "tab plots every pass, which shows boost decay, power limits and thermal throttling. "
-                                   "Overrides \"Repeat each test\". Off by default.";
-        row("Sustained mode", sustain_help);
-        int sustain_min = (int)((p->sustain_s + 59) / 60);
-        if (ImGui::SliderInt("##sustain", &sustain_min, 0, 60, sustain_min ? "%d min per test" : "off"))
-            p->sustain_s = (u32)sustain_min * 60;
         end_group();
     }
 
@@ -272,28 +265,6 @@ void settings_ui_draw() {
     }
 
     if (begin_group("Disk")) {
-        const char* file_help = "Size of the temporary test file created on each tested drive. Larger files reach past the "
-                                "SSD's DRAM and SLC caches and show sustained speed; small files finish sooner but may only "
-                                "measure the cache. The file is deleted when the test ends, even after a crash. Default 1 GiB.";
-        row("Test file size", file_help);
-        static const u32 sizes_mib[] = { 64, 256, 512, 1024, 2048, 4096, 8192 };
-        char size_label[16];
-        snprintf(size_label, sizeof(size_label), "%llu MiB", p->disk_file_bytes / MiB);
-        if (ImGui::BeginCombo("##file", size_label)) {
-            for (u32 i = 0; i < ARRAY_COUNT(sizes_mib); ++i) {
-                snprintf(size_label, sizeof(size_label), "%u MiB", sizes_mib[i]);
-                if (ImGui::Selectable(size_label, p->disk_file_bytes == sizes_mib[i] * MiB)) p->disk_file_bytes = sizes_mib[i] * MiB;
-            }
-            ImGui::EndCombo();
-        }
-
-        const char* passes_help = "Each disk test runs this many read passes and write passes and reports the best one, like "
-                                  "CrystalDiskMark. More passes give steadier numbers but write more to the SSD: a full "
-                                  "default run writes roughly 27 GB per pass. Default 3.";
-        row("Passes", passes_help);
-        int passes = (int)p->disk_passes;
-        if (ImGui::SliderInt("##passes", &passes, 1, 9)) p->disk_passes = (u32)passes;
-
         const char* wt_help = "Opens the test file with write-through (FUA): every write must reach the drive's permanent "
                               "storage before it counts, bypassing its volatile write cache. Shows real persistent write "
                               "speed; most drives are much slower this way. Off by default, like most benchmarks.";
@@ -318,25 +289,109 @@ void settings_ui_draw() {
     ImGui::Spacing();
     if (theme_button("Reset to defaults")) {
         const BenchParams d;            // keeps the GPU and disk(s) picked in the main window
-        p->duration_ms = d.duration_ms;
         p->thread_count = d.thread_count;
         p->gpu_width = d.gpu_width;
         p->gpu_height = d.gpu_height;
         p->gpu_onscreen = d.gpu_onscreen;
         p->gpu_fullscreen = d.gpu_fullscreen;
-        p->disk_file_bytes = d.disk_file_bytes;
-        p->disk_passes = d.disk_passes;
         p->disk_write_through = d.disk_write_through;
-        p->repeat = d.repeat;
-        p->sustain_s = d.sustain_s;
-        // Disk options; the folder target and the custom rows stay (they are definitions, not tuning).
+        // Disk options; the folder target and the custom rows stay (they are definitions, not tuning), and the
+        // interval belongs to the benchmark settings.
         const DiskOptions keep = p->disk;
         p->disk = d.disk;
         wcscpy_s(p->disk.folder, keep.folder);
         memcpy(p->disk.custom, keep.custom, sizeof(keep.custom));
+        p->disk.interval_ms = keep.interval_ms;
     }
-    theme_help("Restores the benchmark, GPU and disk settings above to their defaults. The theme and the GPU / disks "
-               "picked in the main window stay as they are.");
+    theme_help("Restores the CPU, GPU and disk settings above to their defaults. The theme, advanced sensors, the "
+               "benchmark settings and the GPU / disks picked in the main window stay as they are.");
+    ImGui::EndDisabled();
+    ImGui::End();
+}
+
+// Benchmark settings: exactly what presets set (preset_apply, core/presets.cpp) plus the disk interval.
+void bench_settings_ui_draw() {
+    begin_window("##bench_settings", "Hover a setting for details. Changes apply to the next run and are saved "
+                                     "automatically.");
+    BenchParams* p = ui_params();
+    const bool running = runner_is_running();
+    const RunPreset* cur = preset_match(p, ui_selection());
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::Text("Presets change these values: picking one in the main window's Preset box sets them, and changing "
+                "one here turns the preset into \"Custom\". Current preset: %s.", cur ? cur->name : "Custom");
+    ImGui::PopTextWrapPos();
+    locked_note(running);
+    ImGui::BeginDisabled(running);
+
+    if (begin_group("Run")) {
+        const char* help = "How long each measured phase runs, e.g. the single-thread and multi-thread halves of a CPU "
+                           "test or each disk pass. A short warm-up comes on top. Longer phases average out boost-clock "
+                           "and temperature swings but make a full run take longer. 3000 ms is the default and what the "
+                           "reference runs use, so keep it when comparing against them.";
+        row("Duration per phase", help);
+        int duration = (int)p->duration_ms;
+        if (ImGui::SliderInt("##duration", &duration, 500, 20000, "%d ms")) p->duration_ms = (u32)duration;
+
+        const char* repeat_help = "Runs every test this many times in a row and reports the median, with the spread "
+                                  "(min, max, coefficient of variation) on hover. Values whose runs differ by more than "
+                                  "3 % are marked as noisy. 1 = a single run (default).";
+        row("Repeat each test", repeat_help);
+        int repeat = (int)p->repeat;
+        if (ImGui::SliderInt("##repeat", &repeat, 1, (int)MAX_REPEAT, repeat > 1 ? "%dx (median)" : "once"))
+            p->repeat = (u32)repeat;
+
+        const char* sustain_help = "Sustained (thermal) mode, like Cinebench's minimum test duration: every selected test "
+                                   "loops for this many minutes (at least two passes) and reports the median, plus the "
+                                   "first and last pass, min, max and the drop from the first to the last pass. The Charts "
+                                   "tab plots every pass, which shows boost decay, power limits and thermal throttling. "
+                                   "Overrides \"Repeat each test\". Off by default.";
+        row("Sustained mode", sustain_help);
+        int sustain_min = (int)((p->sustain_s + 59) / 60);
+        if (ImGui::SliderInt("##sustain", &sustain_min, 0, 60, sustain_min ? "%d min per test" : "off"))
+            p->sustain_s = (u32)sustain_min * 60;
+        end_group();
+    }
+
+    if (begin_group("Disk")) {
+        const char* file_help = "Size of the temporary test file created on each tested drive. Larger files reach past the "
+                                "SSD's DRAM and SLC caches and show sustained speed; small files finish sooner but may only "
+                                "measure the cache. The file is deleted when the test ends, even after a crash. Default 1 GiB.";
+        row("Test file size", file_help);
+        static const u32 sizes_mib[] = { 64, 256, 512, 1024, 2048, 4096, 8192 };
+        char size_label[16];
+        snprintf(size_label, sizeof(size_label), "%llu MiB", p->disk_file_bytes / MiB);
+        if (ImGui::BeginCombo("##file", size_label)) {
+            for (u32 i = 0; i < ARRAY_COUNT(sizes_mib); ++i) {
+                snprintf(size_label, sizeof(size_label), "%u MiB", sizes_mib[i]);
+                if (ImGui::Selectable(size_label, p->disk_file_bytes == sizes_mib[i] * MiB)) p->disk_file_bytes = sizes_mib[i] * MiB;
+            }
+            ImGui::EndCombo();
+        }
+
+        const char* passes_help = "Each disk test runs this many read passes and write passes and reports the best one, like "
+                                  "CrystalDiskMark. More passes give steadier numbers but write more to the SSD: a full "
+                                  "default run writes roughly 27 GB per pass. Default 3.";
+        row("Passes", passes_help);
+        int passes = (int)p->disk_passes;
+        if (ImGui::SliderInt("##passes", &passes, 1, 9)) p->disk_passes = (u32)passes;
+        draw_disk_interval(p);
+        end_group();
+    }
+
+    ImGui::Spacing();
+    ImGui::Spacing();
+    if (theme_button("Reset to defaults")) {
+        const BenchParams d;
+        p->duration_ms = d.duration_ms;
+        p->repeat = d.repeat;
+        p->sustain_s = d.sustain_s;
+        p->disk_file_bytes = d.disk_file_bytes;
+        p->disk_passes = d.disk_passes;
+        p->disk.interval_ms = d.disk.interval_ms;
+    }
+    theme_help("Restores the run and disk settings above to their defaults (the Standard preset's values). The test "
+               "selection and the settings in the Settings window stay as they are.");
     ImGui::EndDisabled();
     ImGui::End();
 }

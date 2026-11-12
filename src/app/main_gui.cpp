@@ -60,13 +60,14 @@ struct ToolDesc {
 };
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
-    { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
+    { L"EzPcBench - Settings", 680, 720, settings_ui_draw, nullptr, nullptr, false },
     { L"EzPcBench - Sensors", 1000, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
     { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
     { L"EzPcBench - Frame capture", 1100, 800, frames_ui_draw, frames_ui_on_open, frames_ui_on_close, false },
     { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
     { L"EzPcBench - System details", 1180, 800, system_ui_draw, system_ui_on_open, nullptr, false },
     { L"EzPcBench - Stability", 1400, 900, stability_ui_draw, stability_ui_on_open, nullptr, false },
+    { L"EzPcBench - Benchmark settings", 680, 580, bench_settings_ui_draw, nullptr, nullptr, false },
 };
 
 struct ToolWin {
@@ -477,7 +478,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
             static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health",
-                                                                          L"frames", L"history", L"system", L"stability" };
+                                                                          L"frames", L"history", L"system", L"stability",
+                                                                          L"bench" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)

@@ -249,7 +249,8 @@ static const ToolButton s_tool_buttons[] = {
                                              "metric across runs (driver / BIOS / Windows update regressions)." },
     { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "
                                                "check their results for errors, with WHEA monitoring and temperature limits." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: theme, threads, GPU resolution and present mode, disk options, "
+                                         "advanced sensors. The run settings presets change are next to Run." },
 };
 
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
@@ -547,6 +548,11 @@ static void draw_toolbar() {
     ImGui::BeginDisabled(!running);
     if (theme_button("Cancel")) runner_cancel();
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_icon_button("##bench_settings", ICON_SLIDERS, nullptr, ImGui::GetFrameHeight(),
+                          "Benchmark settings: duration per phase, repeat, sustained mode, disk test file size, passes "
+                          "and interval. Presets change these."))
+        ui_request_tool(TOOL_BENCH);
 
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
