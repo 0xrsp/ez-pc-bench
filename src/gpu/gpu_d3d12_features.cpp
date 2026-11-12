@@ -760,7 +760,7 @@ static void test_mesh(D3d* d, const BenchParams* p, BenchLive* live, BenchResult
             res_add(out, "Mesh shader speedup", "%", feat_gain_pct(classic_pass.avg_ms, mesh_pass.avg_ms));
             res_add(out, "Vertex pipeline p99 frame time", "ms", classic_pass.p99_ms);
             res_add(out, "Mesh shader p99 frame time", "ms", mesh_pass.p99_ms);
-            res_add(out, "Vertex pipeline triangles", "Mtri/s", FM_TRIS_PER_FRAME / classic_pass.avg_ms / 1e3);
+            res_add(out, "Vertex pipeline triangles submitted", "Mtri/s", FM_TRIS_PER_FRAME / classic_pass.avg_ms / 1e3);
         }
     }
     d3d_wait_idle(d);
@@ -1071,75 +1071,80 @@ struct Async {
     ID3D12GraphicsCommandList* list;    // compute queue list
     u64 fence[FIF];                     // compute queue value per frame slot
     u32 set_alu;
-    u32 iters;                          // cs_fp32 iterations (calibrated)
+    f64 iters;                          // cs_fp32 iterations, balanced during the serial warm-up
+    f64 gfx_ms, comp_ms;                // measured serial frames: summed GPU time of each part
+    u32 timed;
     const Target* t;
     bool async;
 };
 
-static void async_graphics(D3d* d, const Target* t) {
+static void async_graphics(D3d* d, const Target* t, u32 frame) {
     ID3D12GraphicsCommandList* list = d->list;
     begin_render(d, t);
-    const u32 cols = t->w / 4, rows = t->h / 4;
-    const GpuParams pc = { { cols, rows, 0, 0 }, { 2.0f / cols, 2.0f / rows, 4.0f / t->w, 4.0f / t->h } };
-    list->SetPipelineState(d->pipe[DP_TRIANGLES]);
+    GpuParams pc = {};
+    pc.u[0] = frame;
+    list->SetPipelineState(d->pipe[DP_FILL]);
     d3d_bind_graphics(d, list, 0, &pc);
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    list->DrawInstanced(GR_TRI_COUNT * 3, 1, 0, 0);
+    list->DrawInstanced(3, FA_FILL_LAYERS, 0, 0);
 }
 
-static void async_compute(D3d* d, Async* a, ID3D12GraphicsCommandList* list, u32 iters) {
-    const GpuParams pc = { { iters, 3, 5, 7 }, { 1.0f, 1.25f, 1.5f, 1.75f } };
+static void async_compute(D3d* d, Async* a, ID3D12GraphicsCommandList* list) {
+    const GpuParams pc = { { (u32)a->iters, 3, 5, 7 }, { 1.0f, 1.25f, 1.5f, 1.75f } };
     list->SetPipelineState(d->pipe[DP_FP32]);
     d3d_bind_compute(d, list, a->set_alu, &pc);
     list->Dispatch(GC_ALU_GROUPS, 1, 1);
 }
 
-static void async_record(D3d* d, void* ctx, u32, u32 slot, f32) {
+static void async_record(D3d* d, void* ctx, u32 frame, u32 slot, f32) {
     Async* a = (Async*)ctx;
-    async_graphics(d, a->t);
-    if (!a->async) {
-        async_compute(d, a, d->list, a->iters);     // same queue, after the draw
+    if (!a->async) {        // serial: graphics, full barrier, compute (timestamps balance the two parts)
+        timestamp(d, slot, 0);
+        async_graphics(d, a->t, frame);
+        d3d_sync_barrier(d, D3D12_BARRIER_SYNC_ALL, D3D12_BARRIER_ACCESS_COMMON);
+        timestamp(d, slot, 1);
+        async_compute(d, a, d->list);
+        timestamp(d, slot, 2);
+        resolve_timestamps(d, slot, 3);
         return;
     }
+    async_graphics(d, a->t, frame);
     a->alloc[slot]->Reset();
     a->list->Reset(a->alloc[slot], nullptr);
     a->list->SetDescriptorHeaps(1, &d->view_heap);
     a->list->SetComputeRootSignature(d->root);
-    async_compute(d, a, a->list, a->iters);
+    async_compute(d, a, a->list);
     a->list->Close();
     ID3D12CommandList* lists[] = { a->list };
     a->compute.queue->ExecuteCommandLists(1, lists);
     a->fence[slot] = d3d_signal(&a->compute);
 }
 
-static void async_retire(D3d*, void* ctx, u32 slot, bool) {
+// Async: the frame also waits for its compute work. Serial: during warm-up, scale the compute iterations
+// until compute takes as long as graphics; measured frames sum the GPU time of both parts.
+static void async_retire(D3d* d, void* ctx, u32 slot, bool measured) {
     Async* a = (Async*)ctx;
-    d3d_wait(&a->compute, a->fence[slot]);
-}
-
-// GPU time (ms) of the graphics frame (iters == 0) or of one compute dispatch: median of a few runs.
-static f64 async_gpu_ms(D3d* d, Async* a, u32 iters) {
-    f64 ms[9];
-    for (u32 i = 0; i < 9; ++i) {
-        d3d_begin(d, 0);
-        timestamp(d, 0, 0);
-        if (iters) async_compute(d, a, d->list, iters);
-        else async_graphics(d, a->t);
-        timestamp(d, 0, 1);
-        resolve_timestamps(d, 0, 2);
-        d3d_wait(&d->direct, d3d_submit(d));
-        ms[i] = ts_ms(d, 0, 0, 1);
+    if (a->async) {
+        d3d_wait(&a->compute, a->fence[slot]);
+        return;
     }
-    for (u32 i = 1; i < 9; ++i)
-        for (u32 j = i; j > 0 && ms[j] < ms[j - 1]; --j) { const f64 x = ms[j]; ms[j] = ms[j - 1]; ms[j - 1] = x; }
-    return ms[4];
+    const f64 g = ts_ms(d, slot, 0, 1), c = ts_ms(d, slot, 1, 2);
+    if (measured) {
+        a->gfx_ms += g;
+        a->comp_ms += c;
+        a->timed++;
+    } else if (g > 0.0 && c > 0.0) {
+        const f64 iters = 0.5 * (a->iters + a->iters * g / c);
+        a->iters = iters < 4.0 ? 4.0 : iters > 65536.0 ? 65536.0 : iters;
+    }
 }
 
 static void test_async(D3d* d, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {
-    live_phase(live, "Calibrating", "");
+    live_phase(live, "Setup", "");
     Target t = {};
     Async a = {};
     a.t = &t;
+    a.iters = FA_START_ITERS;
     D3D12_COMMAND_QUEUE_DESC qd = {};
     qd.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
     bool ok = SUCCEEDED(d->device->CreateCommandQueue(&qd, IID_PPV_ARGS(&a.compute.queue))) &&
@@ -1155,14 +1160,8 @@ static void test_async(D3d* d, const BenchParams* p, BenchLive* live, BenchResul
     } else {
         a.set_alu = d3d_set_alloc(d);
         d3d_set_buffer_uav(d, a.set_alu, 0, d->sink, (u64)GC_ALU_GROUPS * 256 * 4);
-        // Balance: compute alone takes as long as the graphics frame alone.
-        async_gpu_ms(d, &a, 0);
-        const f64 gfx_ms = async_gpu_ms(d, &a, 0), cal_ms = async_gpu_ms(d, &a, FA_CAL_ITERS);
-        f64 iters = cal_ms > 0.0 ? FA_CAL_ITERS * gfx_ms / cal_ms : FA_CAL_ITERS;
-        a.iters = iters < 4.0 ? 4 : iters > 65536.0 ? 65536 : (u32)iters;
-        const f64 comp_ms = async_gpu_ms(d, &a, a.iters);
-
         Pass ps = make_pass("Serial (one queue)", p, 0, 2, async_record, &a);
+        ps.retire = async_retire;
         ok = run_pass(d, &t, &ps, live, cancel);
         const FeatPass serial = feat_pass_end();
         a.async = true;
@@ -1170,13 +1169,13 @@ static void test_async(D3d* d, const BenchParams* p, BenchLive* live, BenchResul
         ps.retire = async_retire;
         ok = ok && run_pass(d, &t, &ps, live, cancel);
         const FeatPass async = feat_pass_end();
-        if (ok && serial.frames && async.frames) {
+        if (ok && serial.frames && async.frames && a.timed) {
             res_begin(out, RESULT_VALUES);
             res_add(out, "Serial frame time", "ms", serial.avg_ms);
             res_add(out, "Async frame time", "ms", async.avg_ms);
             res_add(out, "Overlap gain", "%", feat_gain_pct(serial.avg_ms, async.avg_ms));
-            res_add(out, "Graphics alone (GPU)", "ms", gfx_ms);
-            res_add(out, "Compute alone (GPU)", "ms", comp_ms);
+            res_add(out, "Graphics part (GPU)", "ms", a.gfx_ms / a.timed);
+            res_add(out, "Compute part (GPU)", "ms", a.comp_ms / a.timed);
         }
     }
     d3d_wait_idle(d);

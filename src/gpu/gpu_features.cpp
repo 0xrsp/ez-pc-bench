@@ -91,9 +91,9 @@ f64 feat_vrs_rate_image(u8* rates, u32 w, u32 h, u32 tile) {
     u64 reduced = 0;
     for (u32 y = 0; y < th; ++y)
         for (u32 x = 0; x < tw; ++x) {
-            const f32 dx = ((x + 0.5f) * tile - w * 0.5f) / (h * 0.5f), dy = ((y + 0.5f) * tile - h * 0.5f) / (h * 0.5f);
+            const f32 dx = ((x + 0.5f) * tile - w * 0.5f) / (w * 0.5f), dy = ((y + 0.5f) * tile - h * 0.5f) / (h * 0.5f);
             const f32 dist = sqrtf(dx * dx + dy * dy);
-            const u8 r = dist < 0.45f ? FV_RATE_1X1 : dist < 0.85f ? FV_RATE_2X2 : FV_RATE_4X4;
+            const u8 r = dist < 0.6f ? FV_RATE_1X1 : dist < 1.0f ? FV_RATE_2X2 : FV_RATE_4X4;
             rates[y * tw + x] = r;
             if (r != FV_RATE_1X1) {
                 const u32 pw = std::min(tile, w - x * tile), ph = std::min(tile, h - y * tile);

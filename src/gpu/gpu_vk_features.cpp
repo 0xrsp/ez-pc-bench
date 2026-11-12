@@ -962,7 +962,7 @@ static void test_mesh(VkCtx* v, const BenchParams* p, BenchLive* live, BenchResu
             res_add(out, "Mesh shader speedup", "%", feat_gain_pct(classic_pass.avg_ms, mesh_pass.avg_ms));
             res_add(out, "Vertex pipeline p99 frame time", "ms", classic_pass.p99_ms);
             res_add(out, "Mesh shader p99 frame time", "ms", mesh_pass.p99_ms);
-            res_add(out, "Vertex pipeline triangles", "Mtri/s", FM_TRIS_PER_FRAME / classic_pass.avg_ms / 1e3);
+            res_add(out, "Vertex pipeline triangles submitted", "Mtri/s", FM_TRIS_PER_FRAME / classic_pass.avg_ms / 1e3);
         }
     }
     if (error) res_fail(out, "GPU error (device lost or timeout)");
@@ -1164,79 +1164,86 @@ struct Async {
     bool submitted[FIF];
     VkQueryPool ts;
     VkDescriptorSet set;                // u0 = sink
-    u32 iters;
+    f64 iters;                          // cs_fp32 iterations, balanced during the serial warm-up
+    f64 gfx_ms, comp_ms;                // measured serial frames: summed GPU time of each part
+    u32 timed;
     const Target* t;
     bool async;
 };
 
-static void async_graphics(VkCtx* v, const Target* t, VkCommandBuffer cb) {
+static void async_graphics(VkCtx* v, const Target* t, VkCommandBuffer cb, u32 frame) {
     begin_render(t, cb, nullptr);
-    const u32 cols = t->w / 4, rows = t->h / 4;
-    const GpuParams pc = { { cols, rows, 0, 0 }, { 2.0f / cols, 2.0f / rows, 4.0f / t->w, 4.0f / t->h } };
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, v->pipes[VP_TRIANGLES]);
-    vkCmdPushConstants(cb, v->pipe_layout[VP_TRIANGLES], VK_PC_STAGES, 0, sizeof(pc), &pc);
-    vkCmdDraw(cb, GR_TRI_COUNT * 3, 1, 0, 0);
+    GpuParams pc = {};
+    pc.u[0] = frame;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, v->pipes[VP_FILL]);
+    vkCmdPushConstants(cb, v->pipe_layout[VP_FILL], VK_PC_STAGES, 0, sizeof(pc), &pc);
+    vkCmdDraw(cb, 3, FA_FILL_LAYERS, 0, 0);
     vkCmdEndRendering(cb);
 }
 
-static void async_compute(VkCtx* v, Async* a, VkCommandBuffer cb, u32 iters) {
+static void async_compute(VkCtx* v, Async* a, VkCommandBuffer cb) {
     // Consecutive dispatches write the same sink buffer.
     memory_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-    const GpuParams pc = { { iters, 3, 5, 7 }, { 1.0f, 1.25f, 1.5f, 1.75f } };
+    const GpuParams pc = { { (u32)a->iters, 3, 5, 7 }, { 1.0f, 1.25f, 1.5f, 1.75f } };
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipes[VP_FP32]);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, v->pipe_layout[VP_FP32], 0, 1, &a->set, 0, nullptr);
     vkCmdPushConstants(cb, v->pipe_layout[VP_FP32], VK_PC_STAGES, 0, sizeof(pc), &pc);
     vkCmdDispatch(cb, GC_ALU_GROUPS, 1, 1);
 }
 
-static void async_record(VkCtx* v, void* ctx, VkCommandBuffer cb, u32, u32 slot, f32) {
+static void async_record(VkCtx* v, void* ctx, VkCommandBuffer cb, u32 frame, u32 slot, f32) {
     Async* a = (Async*)ctx;
-    async_graphics(v, a->t, cb);
-    if (!a->async) {
-        async_compute(v, a, cb, a->iters);         // same queue, after the draw
+    if (!a->async) {        // serial: graphics, full barrier, compute (timestamps balance the two parts)
+        vkCmdResetQueryPool(cb, a->ts, slot * TS_PER_SLOT, 3);
+        timestamp(v, a->ts, cb, slot, 0);
+        async_graphics(v, a->t, cb, frame);
+        memory_barrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                       VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        timestamp(v, a->ts, cb, slot, 1);
+        async_compute(v, a, cb);
+        timestamp(v, a->ts, cb, slot, 2);
         return;
     }
+    async_graphics(v, a->t, cb, frame);
     VkCommandBuffer cc = a->cmd[slot];
     cmd_begin(cc);
-    async_compute(v, a, cc, a->iters);
+    async_compute(v, a, cc);
     vkEndCommandBuffer(cc);
     a->submitted[slot] = submit(v, v->comp_queue, cc, a->fence[slot]);
 }
 
-static bool async_retire(VkCtx* v, void* ctx, u32 slot, bool) {
+// Async: the frame also waits for its compute work. Serial: during warm-up, scale the compute iterations
+// until compute takes as long as graphics; measured frames sum the GPU time of both parts.
+static bool async_retire(VkCtx* v, void* ctx, u32 slot, bool measured) {
     Async* a = (Async*)ctx;
-    if (!a->submitted[slot]) return true;
-    a->submitted[slot] = false;
-    return fence_wait(v, a->fence[slot]);
-}
-
-// GPU time (ms) of the graphics frame (iters == 0) or of one compute dispatch: median of 9 runs. < 0 on error.
-static f64 async_gpu_ms(VkCtx* v, Async* a, u32 iters) {
-    f64 ms[9];
-    for (u32 i = 0; i < 9; ++i) {
-        VkCommandBuffer cb = once_begin(v);
-        vkCmdResetQueryPool(cb, a->ts, 0, 2);
-        timestamp(v, a->ts, cb, 0, 0);
-        if (iters) async_compute(v, a, cb, iters);
-        else async_graphics(v, a->t, cb);
-        timestamp(v, a->ts, cb, 0, 1);
-        f64 t[2];
-        if (!once_submit(v) || !read_timestamps(v, a->ts, 0, 2, t)) return -1.0;
-        ms[i] = t[1];
+    if (a->async) {
+        if (!a->submitted[slot]) return true;
+        a->submitted[slot] = false;
+        return fence_wait(v, a->fence[slot]);
     }
-    for (u32 i = 1; i < 9; ++i)
-        for (u32 j = i; j > 0 && ms[j] < ms[j - 1]; --j) { const f64 x = ms[j]; ms[j] = ms[j - 1]; ms[j - 1] = x; }
-    return ms[4];
+    f64 ms[3];
+    if (!read_timestamps(v, a->ts, slot, 3, ms)) return false;
+    const f64 g = ms[1], c = ms[2] - ms[1];
+    if (measured) {
+        a->gfx_ms += g;
+        a->comp_ms += c;
+        a->timed++;
+    } else if (g > 0.0 && c > 0.0) {
+        const f64 iters = 0.5 * (a->iters + a->iters * g / c);
+        a->iters = iters < 4.0 ? 4.0 : iters > 65536.0 ? 65536.0 : iters;
+    }
+    return true;
 }
 
 static void test_async(VkCtx* v, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {
     if (v->comp_family == ~0u) { res_skip(out, "no compute-only queue family"); return; }
-    live_phase(live, "Calibrating", "");
+    live_phase(live, "Setup", "");
     VkScratch s = {};
     Target t = {};
     Async a = {};
     a.t = &t;
+    a.iters = FA_START_ITERS;
     VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
     pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     pi.queueFamilyIndex = v->comp_family;
@@ -1258,31 +1265,22 @@ static void test_async(VkCtx* v, const BenchParams* p, BenchLive* live, BenchRes
         res_fail(out, "async compute setup failed");
     } else {
         desc_buffer(v, a.set, 0, sink);
-        // Balance: compute alone takes as long as the graphics frame alone.
-        async_gpu_ms(v, &a, 0);
-        const f64 gfx_ms = async_gpu_ms(v, &a, 0), cal_ms = async_gpu_ms(v, &a, FA_CAL_ITERS);
-        const f64 iters = cal_ms > 0.0 ? FA_CAL_ITERS * gfx_ms / cal_ms : FA_CAL_ITERS;
-        a.iters = iters < 4.0 ? 4 : iters > 65536.0 ? 65536 : (u32)iters;
-        const f64 comp_ms = async_gpu_ms(v, &a, a.iters);
-        if (gfx_ms < 0.0 || cal_ms < 0.0 || comp_ms < 0.0) {
-            error = true;
-        } else {
-            Pass ps = make_pass("Serial (one queue)", p, 0, 2, async_record, &a);
-            ok = run_pass(v, &t, &ps, live, cancel, &error);
-            const FeatPass serial = feat_pass_end();
-            a.async = true;
-            ps = make_pass("Async (two queues)", p, 1, 2, async_record, &a);
-            ps.retire = async_retire;
-            ok = ok && run_pass(v, &t, &ps, live, cancel, &error);
-            const FeatPass async = feat_pass_end();
-            if (ok && serial.frames && async.frames) {
-                res_begin(out, RESULT_VALUES);
-                res_add(out, "Serial frame time", "ms", serial.avg_ms);
-                res_add(out, "Async frame time", "ms", async.avg_ms);
-                res_add(out, "Overlap gain", "%", feat_gain_pct(serial.avg_ms, async.avg_ms));
-                res_add(out, "Graphics alone (GPU)", "ms", gfx_ms);
-                res_add(out, "Compute alone (GPU)", "ms", comp_ms);
-            }
+        Pass ps = make_pass("Serial (one queue)", p, 0, 2, async_record, &a);
+        ps.retire = async_retire;
+        ok = run_pass(v, &t, &ps, live, cancel, &error);
+        const FeatPass serial = feat_pass_end();
+        a.async = true;
+        ps = make_pass("Async (two queues)", p, 1, 2, async_record, &a);
+        ps.retire = async_retire;
+        ok = ok && run_pass(v, &t, &ps, live, cancel, &error);
+        const FeatPass async = feat_pass_end();
+        if (ok && serial.frames && async.frames && a.timed) {
+            res_begin(out, RESULT_VALUES);
+            res_add(out, "Serial frame time", "ms", serial.avg_ms);
+            res_add(out, "Async frame time", "ms", async.avg_ms);
+            res_add(out, "Overlap gain", "%", feat_gain_pct(serial.avg_ms, async.avg_ms));
+            res_add(out, "Graphics part (GPU)", "ms", a.gfx_ms / a.timed);
+            res_add(out, "Compute part (GPU)", "ms", a.comp_ms / a.timed);
         }
     }
     if (error) res_fail(out, "GPU error (device lost or timeout)");

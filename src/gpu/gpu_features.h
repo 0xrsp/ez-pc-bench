@@ -41,7 +41,7 @@ void feat_sphere_mesh(f32* xyz, u32* idx);          // FR_SPHERE_VERTS * 3 float
 void feat_rt_instances(FeatInstance* inst, f32 time, u64 terrain_blas, u64 sphere_blas);   // FR_INSTANCES
 
 // ---- mesh shaders (mesh.hlsl) ------------------------------------------------------------------------
-constexpr u32 FM_OBJECTS = 1024;
+constexpr u32 FM_OBJECTS = 4096;
 constexpr u32 FM_MESHLETS = 16 * 8;             // per object (FM_PATCH_U x FM_PATCH_V in mesh.hlsl)
 constexpr u32 FM_MESHLET_VERTS = 81, FM_MESHLET_TRIS = 128;
 constexpr u32 FM_INDICES = FM_MESHLETS * FM_MESHLET_TRIS * 3;       // per object (classic index buffer, u16)
@@ -51,7 +51,7 @@ void feat_mesh_indices(u16* idx);                   // FM_INDICES
 
 // ---- tessellation (tess.hlsl) ----------------------------------------------------------------------
 constexpr u32 FT_GRID = 48;                         // patches per side
-constexpr f32 FT_FACTOR = 32.0f;                    // edge and inside factors (integer partitioning)
+constexpr f32 FT_FACTOR = 64.0f;                    // edge and inside factors (integer partitioning, D3D max)
 constexpr f32 FT_PATCH_SIZE = 5.0f;
 constexpr f64 FT_TRIS_PER_FRAME = 2.0 * FT_FACTOR * FT_FACTOR * FT_GRID * FT_GRID;
 
@@ -72,11 +72,13 @@ u64 feat_sfb_texture_bytes();
 void feat_sfb_texture(u32* texels);
 
 // ---- async compute ------------------------------------------------------------------------------------
-// Graphics = the triangle-throughput frame (vs_triangles + ps_color, GR_TRI_COUNT tiny triangles: raster
-// bound). Compute = cs_fp32 over GC_ALU_GROUPS groups (ALU bound) with its iteration count calibrated so it
-// takes as long as the graphics frame alone. Serial: both on the graphics queue. Async: compute on a
-// compute queue. Overlap gain = serial frame time / async frame time - 1.
-constexpr u32 FA_CAL_ITERS = 64;                    // calibration iteration count
+// Graphics = FA_FILL_LAYERS full-screen layers of the pixel-fill shader (vs_fullscreen + ps_fill: ROP /
+// bandwidth bound, shader ALUs mostly idle). Compute = cs_fp32 over GC_ALU_GROUPS groups (ALU bound, no memory
+// traffic). Serial pass: graphics, a full barrier, compute, all on the graphics queue; GPU timestamps around
+// both parts scale the compute iterations during warm-up until both take equally long. Async pass: compute
+// on a compute queue. Overlap gain = serial frame time / async frame time - 1.
+constexpr u32 FA_FILL_LAYERS = 64;
+constexpr f64 FA_START_ITERS = 64.0;                // cs_fp32 iterations before balancing
 
 // ---- pass statistics ---------------------------------------------------------------------------------------
 struct FeatPass {
