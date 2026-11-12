@@ -1,5 +1,6 @@
 // D3D12 3D / 2D tests: offscreen frames, frame timing and the in-window preview. Contract: gpu_common.h.
 #include "gpu/gpu_d3d12_internal.h"
+#include "gpu/gpu_present.h"
 #include "core/mem_util.h"
 #include "core/results.h"
 #include "core/timer.h"
@@ -264,6 +265,17 @@ void d3d_raster_test(D3d* d, GpuTestId test, const BenchParams* p, BenchLive* li
         res_fail(out, "out of GPU memory");
         return;
     }
+    D3dPresent* sc = nullptr;       // on-screen mode (gpu_present.h)
+    u32 present_status = 0;
+    if (p->gpu_onscreen) {
+        char err[128];
+        if (!(sc = d3d_present_open(d, p, gpu_test_name(test), err, sizeof(err)))) {
+            d3d_wait_idle(d);
+            raster_release(&r);
+            res_fail(out, "%s", err);
+            return;
+        }
+    }
 
     // Frame N waits for frame N - FIF, then records and submits; frame time = submit-to-submit (QPC).
     const f64 warmup = gpu_warmup_seconds(p), duration = p->duration_ms / 1000.0;
@@ -288,7 +300,9 @@ void d3d_raster_test(D3d* d, GpuTestId test, const BenchParams* p, BenchLive* li
             r.pending[slot] = true;
             next_preview = timer_now() + GPU_PREVIEW_INTERVAL;
         }
+        if (sc) d3d_present_record(sc, d->list, r.shown, r.shown_state);
         fence[slot] = d3d_submit(d);
+        if (sc && (present_status = d3d_present_present(sc, measuring)) != 0) break;
 
         const f64 now = timer_now();
         if (measuring) gpu_frames_push((f32)((now - t_prev) * 1000.0));
@@ -306,12 +320,17 @@ void d3d_raster_test(D3d* d, GpuTestId test, const BenchParams* p, BenchLive* li
             measuring = true;
             t_measure = now;
             live_phase(live, "Measuring", "fps");
+            if (sc) d3d_present_begin_measure(sc);
         } else if (measuring && now - t_measure >= duration) {
             break;
         }
     }
     d3d_wait_idle(d);
+    d3d_present_close(sc);
     gpu_preview_clear();
     raster_release(&r);
+    if (present_status == 1) { res_fail(out, "stopped: the benchmark window was closed"); return; }
+    if (present_status == 2) { res_fail(out, "present failed (device removed?)"); return; }
     report(out, test, &r);
+    if (sc) present_log_report(out);
 }

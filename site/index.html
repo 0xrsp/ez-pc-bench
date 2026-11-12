@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EzPcBench</title>
-<meta name="description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers, no scores.">
+<meta name="description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers first, plus a derived score with a published formula.">
 <meta property="og:title" content="EzPcBench">
-<meta property="og:description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers, no scores.">
+<meta property="og:description" content="A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D 12) and disks. Raw numbers first, plus a derived score with a published formula.">
 <meta property="og:image" content="img/main.png">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -118,6 +118,8 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
     <nav>
       <a class="opt" href="#measures">What it measures</a>
       <a class="opt" href="#compare">Compare</a>
+      <a class="opt" href="#tools">Tools</a>
+      <a href="results.html">Results</a>
       <a href="#download">Download</a>
       <a href="https://github.com/0xrsp/ez-pc-bench">GitHub</a>
     </nav>
@@ -128,58 +130,59 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
   <div class="wrap hero">
     <h1>Benchmark your PC.<br>Get real numbers.</h1>
     <p class="lead">A small native Windows benchmark for CPU, memory, GPU (Vulkan and Direct3D&nbsp;12) and disks.
-      It reports raw throughput &mdash; GFLOPS, GB/s, ns, IOPS, frame times &mdash; never made-up scores.</p>
+      It reports raw throughput &mdash; GFLOPS, GB/s, ns, IOPS, frame times &mdash; plus a derived overall score with a published, versioned formula.</p>
     <div class="buttons">
       <a class="btn primary" href="https://github.com/0xrsp/ez-pc-bench/releases/latest/download/ez-pc-bench.exe">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
         Download for Windows</a>
       <a class="btn tonal" href="https://github.com/0xrsp/ez-pc-bench/releases/latest/download/ez-pc-bench-cli.exe">Command-line version</a>
     </div>
-    <div class="meta">Single ~2&nbsp;MB exe, no installer &middot; Windows 10/11 x64 &middot; free and open source (MIT)</div>
-    <div class="shot"><img src="img/main.png" width="1600" height="834"
+    <div class="meta">Single ~3&nbsp;MB exe, no installer, updates itself &middot; Windows 10/11 x64 &middot; free and open source (MIT)</div>
+    <div class="shot"><img src="img/main.png" width="1600" height="1027"
          alt="EzPcBench main window: test tree with suites and groups, a GPU test running with a live 3D preview, and the results table"></div>
   </div>
 
   <section id="measures">
     <div class="wrap">
       <h2>What it measures</h2>
-      <p class="sub">55 tests across four suites, each reporting its numbers in explicit units. CPU and memory
-        tests run single-threaded and on every thread; kernels are hand-written and their output self-checked.</p>
+      <p class="sub">130+ tests across four suites, each reporting its numbers in explicit units. CPU and memory
+        tests run single-threaded and on every thread; kernels are hand-written and their output self-checked.
+        Clocks, temperatures, power and hardware errors are recorded during every test.</p>
       <div class="grid">
         <div class="card">
           <h3><span class="dot"></span>CPU</h3>
           <ul>
             <li>Integer and FP32 / FP64 FMA throughput (scalar, AVX2, AVX-512)</li>
-            <li>SGEMM, SHA-256, AES-128 (VAES)</li>
-            <li>Sort and prime sieve workloads</li>
-            <li>Core-to-core latency matrix, thread scaling</li>
+            <li>SGEMM, SHA-256, AES, sort, prime sieve</li>
+            <li>Real-world kernels: compression, JPEG / PNG, JSON, FFT, n-body, &pi;</li>
+            <li>Core-to-core latency, thread scaling, per-core pass</li>
           </ul>
         </div>
         <div class="card">
           <h3><span class="dot"></span>Memory</h3>
           <ul>
-            <li>DRAM read, write, copy, triad bandwidth</li>
-            <li>Normal and non-temporal stores</li>
-            <li>Latency from 4&nbsp;KiB to 1&nbsp;GiB</li>
-            <li>Cache bandwidth sweeps, L1 to DRAM</li>
+            <li>Read, write, copy, triad bandwidth</li>
+            <li>L1 / L2 / L3 / DRAM grid</li>
+            <li>Latency from 4&nbsp;KiB to 1&nbsp;GiB, and under load</li>
+            <li>Thread scaling and cache bandwidth sweeps</li>
           </ul>
         </div>
         <div class="card">
           <h3><span class="dot"></span>GPU &middot; Vulkan + D3D12</h3>
           <ul>
-            <li>Compute: FP32, FP16, INT32, VRAM, shared memory, PCIe</li>
-            <li>3D: triangles, fill rate, draw calls, a lit scene</li>
-            <li>2D: sprites, blit, clear</li>
+            <li>Compute: FP32 / FP16 / FP64, int8, matrix, VRAM, PCIe, cache latency</li>
+            <li>3D: triangles, fill rate, textures, draw calls, a lit scene</li>
+            <li>Ray tracing, mesh shaders, tessellation, VRS, async compute</li>
             <li>Same shaders on both APIs, so they compare directly</li>
           </ul>
         </div>
         <div class="card">
           <h3><span class="dot"></span>Disk</h3>
           <ul>
-            <li>CrystalDiskMark-style SEQ1M and RND4K</li>
-            <li>Several queue depths, read and write</li>
-            <li>MB/s, IOPS and latency</li>
-            <li>One or more drives per run</li>
+            <li>CrystalDiskMark-style SEQ1M and RND4K at several queue depths</li>
+            <li>MB/s, IOPS and latency percentiles up to p99.99</li>
+            <li>Sweeps, small files, file copies, sustained writes (SLC cache)</li>
+            <li>Any drive or folder, one or more per run</li>
           </ul>
         </div>
       </div>
@@ -196,11 +199,27 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
           <li><b>Every number:</b> raw values with the % change, green when better, red when worse.</li>
           <li><b>System info</b> for each run, with differences from the reference highlighted.</li>
           <li><b>Library</b> of reference runs on other PCs, compressed into the exe.</li>
-          <li><b>Copy table</b> straight into a spreadsheet.</li>
+          <li><b>Overall score</b> from a published, versioned formula, always with its breakdown.</li>
+          <li><b>Copy table</b>, <b>Copy PNG</b> or an HTML report to share.</li>
         </ul>
       </div>
-      <div class="shot" style="margin-top:32px"><img src="img/compare.png" width="1700" height="918" loading="lazy"
+      <div class="shot" style="margin-top:32px"><img src="img/compare.png" width="1700" height="974" loading="lazy"
            alt="Compare window: two runs side by side with an overall summary, per-suite change and system information"></div>
+    </div>
+  </section>
+
+  <section id="tools">
+    <div class="wrap">
+      <h2>Tools around the benchmark</h2>
+      <p class="sub">Each opens in its own window from the main one, and most also run from the command line.</p>
+      <div class="grid">
+        <div class="card"><h3>Sensors</h3><p>A Task Manager-style overview: clocks, load, power, temperatures, VRAM and battery, with a CSV log and an on-screen overlay.</p></div>
+        <div class="card"><h3>Disk health</h3><p>SMART attributes with vendor names, Good / Caution / Bad, NVMe details, self-tests and USB enclosures.</p></div>
+        <div class="card"><h3>Stability tester</h3><p>Self-checking CPU, cache, memory, VRAM and GPU loads with error counts, WHEA and temperature limits.</p></div>
+        <div class="card"><h3>System details</h3><p>CPU, RAM modules, board, GPUs, displays, PCI tree and the Windows settings that skew results.</p></div>
+      </div>
+      <div class="shot" style="margin-top:32px"><img src="img/sensors.png" width="1600" height="1302" loading="lazy"
+           alt="Sensors window: device list with mini graphs and the CPU page with utilization, clock, package power and temperature graphs"></div>
     </div>
   </section>
 
@@ -209,10 +228,12 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
       <h2>Built to stay out of the way</h2>
       <p class="sub">Small, native and quick, so the benchmark measures your hardware instead of itself.</p>
       <div class="grid">
-        <div class="card"><h3>Live progress</h3><p>Watch each test's current rate, a sparkline and a live preview of the GPU render while it runs.</p></div>
+        <div class="card"><h3>Live progress</h3><p>Watch each test's current rate, a live graph and a preview of the GPU render while it runs.</p></div>
         <div class="card"><h3>Native and light</h3><p>C++ with Dear ImGui. The UI redraws at a throttled rate during runs and the exe has no runtime to install.</p></div>
         <div class="card"><h3>Readable results</h3><p>Runs save as compact <a href="https://github.com/toon-format/toon">TOON</a> text files you can open in any editor and diff.</p></div>
         <div class="card"><h3>Command line too</h3><p>The same tests headless, with saved output and comparison against an earlier run, for scripts and repeat checks.</p></div>
+        <div class="card"><h3>Your colors</h3><p>Light and Dark (or follow Windows), plus Solarized, Monokai, Dracula, Nord, Gruvbox, One Dark, Catppuccin and GitHub Light.</p></div>
+        <div class="card"><h3>Stays current</h3><p>The app checks GitHub for a new release at start and updates itself in one click, verified by hash.</p></div>
       </div>
     </div>
   </section>
@@ -227,7 +248,7 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
           <h3>Requirements</h3>
           <ul class="req">
             <li>Windows 10 or 11, x64</li>
-            <li>A CPU with AVX2</li>
+            <li>Any x86-64-v2 CPU (SSE4.2 + POPCNT); AVX2 / AVX-512 only for the tests that use them</li>
             <li>A GPU driver with Vulkan support (D3D12 and Vulkan 1.3 for the GPU tests)</li>
             <li>For stable numbers: AC power and the <i>Best performance</i> power mode</li>
           </ul>

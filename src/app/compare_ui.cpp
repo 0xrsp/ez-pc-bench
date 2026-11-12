@@ -2,10 +2,14 @@
 // cell shows the raw value and its change vs the reference run (green = better, red = worse, > 1%).
 #include "app/compare_ui.h"
 #include "app/library.h"
+#include "app/score_ui.h"
+#include "app/snapshot.h"
 #include "app/theme.h"
 #include "app/ui.h"
 #include "core/baseline.h"
 #include "core/compare.h"
+#include "core/integrity.h"
+#include "core/report.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "imgui.h"
@@ -24,6 +28,8 @@ struct CompareUi {
     bool show_change = true;
     bool show_system = true;
     bool show_summary = true;
+    bool show_score = true;
+    bool about;                 // "About the score" requested
     bool library_request;       // "Library..." clicked: open the popup this frame
     bool lib_selected[256];
     i32 set_open = -1;          // "Expand all" (1) / "Collapse all" (0) for the next table frame
@@ -176,6 +182,7 @@ static void header_cell(u32 c) {
         ImGui::TextUnformatted(run->label);
         ImGui::PopFont();
         for (u32 i = 0; i < CI_COUNT; ++i) ImGui::Text("%s: %s", g_cmp_info_names[i], run->info[i]);
+        if (run->integrity >= 0) ImGui::Text("Integrity: %s", integrity_name((IntegrityState)run->integrity));
         ImGui::TextDisabled("Click: use as reference  \xC2\xB7  Right-click: more");
         ImGui::EndTooltip();
     }
@@ -247,11 +254,10 @@ static bool group_row(const char* title) {
     ImGui::TableSetColumnIndex(0);
     ImGui::PushFont(g_fonts.medium, 0.0f);
     if (s_cu.set_open >= 0) ImGui::SetNextItemOpen(s_cu.set_open != 0);
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.06f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.10f));
+    theme_header_push(false);
     const bool open = ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAllColumns |
                                                    ImGuiTreeNodeFlags_NoTreePushOnOpen);
-    ImGui::PopStyleColor(2);
+    theme_header_pop();
     ImGui::PopFont();
     return open;
 }
@@ -363,6 +369,47 @@ static void draw_summary(u32 runs, const char* const* suites, u32 suite_count) {
     }
 }
 
+// Score rows (score.h): Overall and the components per run, flags on hover. Computed from each run's raw results.
+static void draw_score(u32 runs) {
+    bool any = false;
+    for (u32 c = 0; c < runs; ++c) any |= g_cmp.runs[c].score.any;
+    if (!any) return;
+    char title[64];
+    snprintf(title, sizeof(title), "Score v%u (%s)", g_score.version, g_score.status);
+    const bool open = group_row(title);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Derived from each run's raw results: reference machine = 1000, higher is faster.\n"
+                          "Hover a value for its breakdown; \"About the score\" has the formula and weights.");
+    if (!open) return;
+    char t[32];
+    for (u32 k = 0; k < SCORE_ITEM_COUNT; ++k) {
+        summary_label(score_item_name(k), k == 0 ? "How fast the PC is overall: a weighted mix of the five components." : nullptr, k == 0);
+        for (u32 c = 0; c < runs; ++c) {
+            const ScoreResult* s = &g_cmp.runs[c].score;
+            ImGui::TableSetColumnIndex((int)(2 + c));
+            const f64 v = score_item(s, k);
+            if (!isfinite(v)) { dash_cell(); continue; }
+            snprintf(t, sizeof(t), "%.0f", v);
+            if (k == 0) ImGui::PushFont(g_fonts.medium, theme_font_size(1.2f));
+            else theme_push_numbers();
+            const bool flagged = (s->flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
+            ImGui::TextColored(flagged ? g_pal.warn : g_pal.on_surface, "%s", t);
+            ImGui::PopFont();
+            if (ImGui::IsItemHovered()) score_ui_tooltip(s, g_cmp.runs[c].label);
+        }
+    }
+}
+
+static void copy_png() { snapshot_request(TOOL_COMPARE, nullptr); }
+
+static void export_html() {
+    wchar_t path[MAX_PATH];
+    snapshot_export_path("report", L"html", path);
+    char path8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, path8, sizeof(path8), nullptr, nullptr);
+    status(report_write_html(path) ? "Saved %s" : "Failed to write %s", path8);
+}
+
 static void draw_table() {
     const u32 runs = g_cmp.run_count, cols = 2 + runs;
     const f32 fs = ImGui::GetFontSize();
@@ -408,6 +455,7 @@ static void draw_table() {
     const char* suites[CMP_MAX_TESTS];
     const u32 suite_count = suite_list(suites);
     if (s_cu.show_summary && runs > 1) draw_summary(runs, suites, suite_count);
+    if (s_cu.show_score) draw_score(runs);
 
     if (s_cu.show_system && group_row("System")) {
         const CmpRun* ref = &g_cmp.runs[g_cmp.reference];
@@ -494,7 +542,7 @@ static void draw_library() {
         ImGui::TableSetupColumn("RAM", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableSetupColumn("Power", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthStretch, 1.3f);
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         for (u32 i = 0; i < n && i < ARRAY_COUNT(s_cu.lib_selected); ++i) {
             const LibraryRun* r = library_run(i);
             if (!s_cu.lib_filter.PassFilter(r->name) && !s_cu.lib_filter.PassFilter(r->info.info[CI_CPU]) &&
@@ -580,11 +628,23 @@ void compare_ui_draw() {
     if (theme_button("Copy table")) copy_table();
     ImGui::SameLine();
     if (theme_button("Clear")) { compare_clear(); s_cu.status[0] = 0; }
+    ImGui::SameLine();
+    if (theme_button("Copy PNG")) copy_png();
+    theme_help("Copies a screenshot of this window to the clipboard as a PNG, ready to paste into a chat, forum post or "
+               "document (for sharing, like a CrystalDiskMark screenshot).");
+    ImGui::SameLine();
+    if (theme_button("Save HTML")) export_html();
+    theme_help("Self-contained HTML report of these runs (score, system, every raw value) in the results folder.");
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_button("About the score")) s_cu.about = true;
+    char snap[300];
+    if (snapshot_take_status(TOOL_COMPARE, snap, sizeof(snap))) status("%s", snap);
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%u / %u runs%s%s", g_cmp.run_count, CMP_MAX_RUNS, s_cu.status[0] ? "  |  " : "", s_cu.status);
     draw_library();
+    score_ui_about(&s_cu.about);
 
     if (g_cmp.run_count == 0) {
         ImGui::Spacing();
@@ -613,6 +673,8 @@ void compare_ui_draw() {
     theme_checkbox("Show change", &s_cu.show_change);
     ImGui::SameLine();
     theme_checkbox("Summary", &s_cu.show_summary);
+    ImGui::SameLine();
+    theme_checkbox("Score", &s_cu.show_score);
     ImGui::SameLine();
     theme_checkbox("System info", &s_cu.show_system);
     ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);

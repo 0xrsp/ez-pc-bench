@@ -18,6 +18,25 @@ u64 k_int_alu(u64 iters) {
     return iters * 12;
 }
 
+// One dependent chain of 16 single-cycle adds per iteration (the loop counter runs alongside): returns
+// the chain length, i.e. core clock cycles. Only meaningful with the SMT sibling idle.
+u64 k_add_chain(u64 iters) {
+    u64 n = iters;
+    __asm__ volatile(
+        "xor %%eax, %%eax\n\t"
+        "1:\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t" "add $1, %%rax\n\t"
+        "dec %0\n\t"
+        "jnz 1b\n\t"
+        : "+r"(n)
+        :
+        : "rax", "cc");
+    return iters * 16;
+}
+
 u64 k_int_mul(u64 iters) {
     u64 n = iters;
     __asm__ volatile(
@@ -56,21 +75,21 @@ u64 k_int_mul(u64 iters) {
 #define ZMM_CLOBBERS "zmm0", "zmm1", "zmm2", "zmm3", "zmm4", "zmm5", "zmm6", "zmm7", "zmm8", "zmm9", \
                      "zmm10", "zmm11", "zmm12", "zmm13", "cc"
 
-u64 k_fma_ss(u64 iters) {
+TARGET_FMA u64 k_fma_ss(u64 iters) {
     u64 n = iters;
     __asm__ volatile(ZERO14(xmm) "1:\n\t" FMA12("vfmadd231ss", "xmm") "dec %0\n\tjnz 1b\n\t"
                      : "+r"(n) : : XMM_CLOBBERS);
     return iters * 12 * 2;
 }
 
-u64 k_fma_ps256(u64 iters) {
+TARGET_AVX2 u64 k_fma_ps256(u64 iters) {
     u64 n = iters;
     __asm__ volatile(ZERO14(ymm) "1:\n\t" FMA12("vfmadd231ps", "ymm") "dec %0\n\tjnz 1b\n\tvzeroupper\n\t"
                      : "+r"(n) : : XMM_CLOBBERS);
     return iters * 12 * 8 * 2;
 }
 
-u64 k_fma_pd256(u64 iters) {
+TARGET_AVX2 u64 k_fma_pd256(u64 iters) {
     u64 n = iters;
     __asm__ volatile(ZERO14(ymm) "1:\n\t" FMA12("vfmadd231pd", "ymm") "dec %0\n\tjnz 1b\n\tvzeroupper\n\t"
                      : "+r"(n) : : XMM_CLOBBERS);

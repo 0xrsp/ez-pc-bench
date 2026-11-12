@@ -26,8 +26,6 @@
 #include "vs_sprite_spv.h"
 #include "ps_sprite_spv.h"
 
-static VkCtx s_vk;
-
 // ---- pipeline table ------------------------------------------------------------------------------
 
 enum PipeKind : u8 { PK_COMPUTE, PK_OPAQUE, PK_DEPTH, PK_BLEND };
@@ -106,15 +104,16 @@ static bool create_instance(VkCtx* v, char* error, u32 error_size) {
 
     VkInstanceCreateInfo ci = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     ci.pApplicationInfo = &app;
+    const char* exts[4];
+    ci.enabledExtensionCount = vkp_instance_extensions(v, exts);     // surface, for the on-screen mode
+    ci.ppEnabledExtensionNames = exts;
     bool debug = false;
 #ifndef NDEBUG
     const char* layer = "VK_LAYER_KHRONOS_validation";
-    const char* ext = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (has_layer(layer)) {
         ci.enabledLayerCount = 1;
         ci.ppEnabledLayerNames = &layer;
-        ci.enabledExtensionCount = 1;
-        ci.ppEnabledExtensionNames = &ext;
+        exts[ci.enabledExtensionCount++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
         debug = true;
     } else {
         fputs("[vulkan] validation layer not available\n", stderr);
@@ -191,16 +190,23 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     for (u32 i = 0; i < nq; ++i)
         if ((qf[i].queueFlags & VK_QUEUE_TRANSFER_BIT) && !(qf[i].queueFlags & gc) && v->xfer_family == ~0u) v->xfer_family = i;
     if (v->xfer_family == ~0u) v->xfer_family = v->gfx_family;
+    v->comp_family = ~0u;      // async compute test: a compute queue outside the graphics family
+    for (u32 i = 0; i < nq; ++i)
+        if ((qf[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && v->comp_family == ~0u) v->comp_family = i;
     const u32 bits = qf[v->gfx_family].timestampValidBits;
     v->ts_mask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
 
     const f32 prio = 1.0f;
-    VkDeviceQueueCreateInfo qci[2] = {};
-    for (u32 i = 0; i < 2; ++i) {
-        qci[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        qci[i].queueFamilyIndex = i == 0 ? v->gfx_family : v->xfer_family;
-        qci[i].queueCount = 1;
-        qci[i].pQueuePriorities = &prio;
+    VkDeviceQueueCreateInfo qci[3] = {};
+    const u32 families[3] = { v->gfx_family, v->xfer_family, v->comp_family };
+    u32 nqci = 0;
+    for (u32 i = 0; i < 3; ++i) {
+        if (families[i] == ~0u || (i == 1 && families[1] == families[0])) continue;
+        qci[nqci].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        qci[nqci].queueFamilyIndex = families[i];
+        qci[nqci].queueCount = 1;
+        qci[nqci].pQueuePriorities = &prio;
+        ++nqci;
     }
 
     VkPhysicalDeviceVulkan13Features e13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
@@ -210,14 +216,31 @@ static bool create_device(VkCtx* v, char* error, u32 error_size) {
     e12.shaderFloat16 = v->fp16;
     VkPhysicalDeviceFeatures2 ef = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &e12 };
     ef.features.shaderInt16 = v->fp16;
+    VkFeatureChain fc = {};
+    vk_features_prepare(v, &fc, &e12, &ef.features);
+    e13.pNext = fc.next;
+
+    const char* dev_exts[8];
+    u32 dev_ext_count = 0;
+    e13.pNext = vkp_device_extensions(v, dev_exts, &dev_ext_count, e13.pNext);   // swapchain etc. (on-screen mode)
 
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &ef };
-    ci.queueCreateInfoCount = v->xfer_family != v->gfx_family ? 2 : 1;
+    ci.queueCreateInfoCount = nqci;
     ci.pQueueCreateInfos = qci;
+    // Device extensions: feature tests (ray query, mesh, VRS) + on-screen mode (swapchain, present id / wait);
+    // vk_ext_enable_features then appends the extra tests' ones (cooperative matrix) and their feature structs.
+    const char* exts[24];
+    u32 ext_count = 0;
+    for (u32 i = 0; i < fc.ext_count; ++i) exts[ext_count++] = fc.exts[i];
+    for (u32 i = 0; i < dev_ext_count; ++i) exts[ext_count++] = dev_exts[i];
+    ci.enabledExtensionCount = ext_count;
+    ci.ppEnabledExtensionNames = exts;
+    vk_ext_enable_features(v, &ci);
     VkResult r = vkCreateDevice(v->phys, &ci, nullptr, &v->dev);
     if (r != VK_SUCCESS) return fail(error, error_size, "vkCreateDevice", r);
     vkGetDeviceQueue(v->dev, v->gfx_family, 0, &v->gfx_queue);
     vkGetDeviceQueue(v->dev, v->xfer_family, 0, &v->xfer_queue);
+    if (v->comp_family != ~0u) vkGetDeviceQueue(v->dev, v->comp_family, 0, &v->comp_queue);
     vkGetPhysicalDeviceMemoryProperties(v->phys, &v->mem_props);
     v->cmd_push_constants = (PFN_vkCmdPushConstants)vkGetDeviceProcAddr(v->dev, "vkCmdPushConstants");
     v->cmd_draw = (PFN_vkCmdDraw)vkGetDeviceProcAddr(v->dev, "vkCmdDraw");
@@ -444,7 +467,7 @@ void gpu_vk_shutdown(void* state) {
         if (destroy) destroy(v->instance, v->messenger, nullptr);
     }
     if (v->instance) vkDestroyInstance(v->instance, nullptr);
-    *v = {};
+    free(v);    // heap-allocated: the suite may hold one context per adapter (gpu_multi.cpp)
 }
 
 bool gpu_vk_init(const BenchParams* p, void** state, char* error, u32 error_size) {
@@ -454,8 +477,11 @@ bool gpu_vk_init(const BenchParams* p, void** state, char* error, u32 error_size
         snprintf(error, error_size, "no GPU adapter found");
         return false;
     }
-    VkCtx* v = &s_vk;
-    *v = {};
+    VkCtx* v = (VkCtx*)calloc(1, sizeof(VkCtx));
+    if (!v) {
+        snprintf(error, error_size, "out of memory");
+        return false;
+    }
     bool ok = create_instance(v, error, error_size) && pick_device(v, gi, error, error_size) &&
               create_device(v, error, error_size);
     if (ok && !create_layouts(v)) ok = fail(error, error_size, "descriptor / pipeline layout creation", VK_ERROR_UNKNOWN);

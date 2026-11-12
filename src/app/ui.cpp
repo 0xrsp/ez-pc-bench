@@ -1,13 +1,24 @@
 // Main window UI: warnings, suite tree, settings, live panel, results.
 #include "app/ui.h"
+#include "app/score_ui.h"
+#include "app/mem_charts.h"
+#include "app/graph.h"
 #include "app/settings.h"
 #include "app/theme.h"
+#include "app/updater.h"
 #include "core/elevation.h"
+#include "core/history.h"
+#include "core/monitor.h"
+#include "core/presets.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include "core/timer.h"
+#include "stability/stability.h"
+#include "disk/disk.h"
 #include "imgui.h"
+#include "imgui_internal.h"     // OpenPopupEx / ImHashStr (dev: --open-gpu-combo)
 #include <windows.h>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -24,12 +35,23 @@ struct UiState {
     f64 last_power_refresh;
     bool quit;
     bool dev;           // --dev: show the smoke-test suite (runner / UI self-tests)
+    f64 history_end;    // end time of the last run saved to results\history
 };
 static UiState s_ui;
 
 static bool suite_visible(u32 suite) { return suite != SUITE_SMOKE || s_ui.dev; }
+// Tests this CPU can't run count as unselected, but their saved choice is kept (the ini may come from another PC,
+// or a --cpu-baseline session), so selection changes never write to them.
+static bool is_selected(u32 i) { return s_ui.selected[i] && !bench_unsupported(i); }
 
 void ui_set_dev(bool dev) { s_ui.dev = dev; }
+
+static int s_tab;       // output panel: 0 Results, 1 Charts, 2 Score, 3 Ranking
+void ui_set_tab(const char* name) {
+    static const char* const names[] = { "results", "charts", "score", "ranking" };
+    for (int i = 0; i < (int)ARRAY_COUNT(names); ++i)
+        if (!strcmp(name, names[i])) s_tab = i;
+}
 
 #define COL_DIM  g_pal.on_surface_variant
 #define COL_OK   g_pal.ok
@@ -51,6 +73,10 @@ void ui_set_duration(u32 ms) {
     if (ms >= 100) s_ui.params.duration_ms = ms;
 }
 
+void ui_set_sustain(u32 seconds) { s_ui.params.sustain_s = seconds < MAX_SUSTAIN_S ? seconds : MAX_SUSTAIN_S; }
+
+void ui_show_charts() { s_tab = 1; }
+
 void ui_select_only(const char* ids) {
     for (u32 i = 0; i < g_bench_count; ++i) {
         const char* id = g_benches[i].cli_id;
@@ -65,11 +91,66 @@ void ui_select_only(const char* ids) {
     }
 }
 
+// Tests flagged BENCH_CONFIRM (they write a lot or run for hours) only start after a confirmation dialog.
+static struct {
+    bool open_request;
+    bool confirmed;
+} s_confirm;
+
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
+    if (stab_is_running()) {     // never two heavy loads at once
+        snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "A stability test is running; stop it first.");
+        return;
+    }
     bool run[MAX_BENCHES];      // hidden suites never run, whatever the saved selection says
-    for (u32 i = 0; i < g_bench_count; ++i) run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
+    bool heavy = false;
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        run[i] = is_selected(i) && suite_visible(g_benches[i].suite);
+        heavy |= run[i] && (g_benches[i].flags & BENCH_CONFIRM);
+    }
+    if (heavy && !s_confirm.confirmed) {
+        s_confirm.open_request = true;
+        return;
+    }
+    s_confirm.confirmed = false;
     runner_start(run, &s_ui.params);
+}
+
+static void draw_confirm_dialog() {
+    if (s_confirm.open_request) {
+        s_confirm.open_request = false;
+        ImGui::OpenPopup("Run heavy tests?");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 36.0f, 0.0f));
+    if (!ImGui::BeginPopupModal("Run heavy tests?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted("The selection includes tests that write a lot of data or run for a long time:");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        if (!is_selected(i) || !(g_benches[i].flags & BENCH_CONFIRM) || !suite_visible(g_benches[i].suite)) continue;
+        char note[256];
+        disk_confirm_note(&s_ui.params, i, note, sizeof(note));
+        ImGui::Spacing();
+        ImGui::PushFont(g_fonts.medium, 0.0f);
+        ImGui::Text("%s / %s", g_suites[g_benches[i].suite].name, g_benches[i].name);
+        ImGui::PopFont();
+        ImGui::TextDisabled("%s", note);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    const bool run = theme_button_primary("Run");
+    ImGui::SameLine();
+    const bool cancel = theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (run) {
+        ImGui::CloseCurrentPopup();
+        s_confirm.confirmed = true;
+        ui_start_run();
+    } else if (cancel) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void ui_apply_style(f32 scale) { theme_apply_style(scale); }
@@ -94,7 +175,14 @@ static void result_summary(u32 id, char* buf, u32 size) {
     buf[0] = 0;
     if (r->count == 0) return;
     const Metric* m = res_metrics(r);
-    if (r->kind == RESULT_VALUES) {
+    if (r->kind == RESULT_VALUES && g_benches[id].suite == SUITE_DISK) {
+        const u8 unit = s_ui.params.disk.unit;
+        const Metric* pick = &m[disk_unit_pick(unit, r)];
+        const char* shown;
+        char v[32];
+        format_value(v, sizeof(v), disk_unit_value(unit, pick->unit, pick->value, &shown));
+        snprintf(buf, size, "%s %s", v, shown);
+    } else if (r->kind == RESULT_VALUES) {
         char v[32], fps[32];
         format_value(v, sizeof(v), m[0].value);
         format_frame_fps(fps, sizeof(fps), m[0].name, m[0].unit, m[0].value);
@@ -124,6 +212,9 @@ static void draw_warnings() {
                  power_mode_name(s->power.mode), s->power.scheme_name);
         lines[n++] = power;
     }
+    static char win[2][192];
+    const u32 nw = winstate_warnings(&s->win, win, 2);
+    for (u32 i = 0; i < nw; ++i) lines[n++] = win[i];
     bool disk_selected = false;
     for (u32 i = 0; i < g_bench_count; ++i) disk_selected |= g_benches[i].suite == SUITE_DISK && s_ui.selected[i];
     static char drive[26][2][192];
@@ -150,19 +241,47 @@ static void sys_line(const char* label, const char* fmt, ...) {
 // Tool window buttons, to the right of the "System" header (outside it), same height as the header.
 struct ToolButton { ToolWindow tool; ThemeIcon icon; const char* label; const char* tip; };
 static const ToolButton s_tool_buttons[] = {
-    { TOOL_TEMPS, ICON_THERMOMETER, "Temperatures", "Live CPU, GPU and drive temperatures in their own window." },
+    { TOOL_TEMPS, ICON_THERMOMETER, "Sensors", "Live CPU clock and load per core, GPU clocks / load / VRAM / PCIe "
+                                               "link, and CPU, GPU and drive temperatures in their own window." },
+    { TOOL_SYSTEM, ICON_CHIP, "Details", "System details: CPU codename, microcode, caches and core map, chipset, "
+                                          "GPU details, displays, PCI and USB devices, network and audio. Copy or "
+                                          "save the full report." },
     { TOOL_HEALTH, ICON_DRIVE, "Disk health", "Drive health: life used, spare blocks, data written, errors and "
                                               "power-on time from each drive's SMART / NVMe health log." },
-    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: phase duration, threads, GPU resolution, disk test file and passes, theme." },
+    { TOOL_HISTORY, ICON_HISTORY, "History", "Every finished run is saved to results\\history. Trend of the score or any "
+                                             "metric across runs (driver / BIOS / Windows update regressions)." },
+    { TOOL_STABILITY, ICON_PULSE, "Stability", "Stability tester: CPU, cache, memory, VRAM, GPU and disk tests that "
+                                               "check their results for errors, with WHEA monitoring and temperature limits." },
+    { TOOL_SETTINGS, ICON_GEAR, nullptr, "Settings: theme, threads, GPU present mode, disk options. The run settings "
+                                         "and the GPU render resolution are next to Run." },
 };
+
+// Update button (app/updater.h) at the right end of the tool row, only while there is an update.
+static bool s_update_open;
+
+static const char* update_label() {
+    switch (updater_state()) {
+        case UPD_AVAILABLE: return "Update available";
+        case UPD_DOWNLOADING: return "Updating...";
+        case UPD_READY: return "Restarting...";
+        case UPD_FAILED: return "Update failed";
+        default: return nullptr;
+    }
+}
 
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
 static bool system_header_row() {
     const f32 h = ImGui::GetFrameHeight(), gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
-    const f32 lead = ImGui::GetFontSize() * 2.0f;           // space between the header and the first button
+    // Space before the first button: a framed CollapsingHeader reaches WindowPadding.x / 2 past its column, so the
+    // visible gap to the header is ItemSpacing.x.
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const f32 lead = (f32)(i32)(st.WindowPadding.x * 0.5f) + st.ItemSpacing.x;
+    const char* update = update_label();
     f32 buttons_w = lead;
     for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i)
         buttons_w += theme_icon_button_width(s_tool_buttons[i].label, h) + (i ? gap : 0.0f);
+    if (update) buttons_w += gap + theme_icon_button_width(update, h);
+    buttons_w += 2.0f;      // the column clips at its edge: room for the last button's 1 px outline
     bool open = false;
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
     if (ImGui::BeginTable("##system_row", 2)) {
@@ -171,7 +290,9 @@ static bool system_header_row() {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::PushFont(g_fonts.medium, 0.0f);
+        theme_header_push(true);
         open = ImGui::CollapsingHeader("System");
+        theme_header_pop();
         ImGui::PopFont();
         ImGui::TableNextColumn();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + lead);
@@ -182,6 +303,12 @@ static bool system_header_row() {
             if (theme_icon_button("##tool", b->icon, b->label, h, b->tip)) ui_request_tool(b->tool);
             ImGui::PopID();
         }
+        if (update) {
+            ImGui::SameLine(0.0f, gap);
+            if (theme_icon_button("##update", ICON_DOWNLOAD, update, h, "A newer ez-pc-bench.exe is published on GitHub.",
+                                  true))
+                s_update_open = true;
+        }
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
@@ -191,9 +318,11 @@ static bool system_header_row() {
 static void draw_sysinfo() {
     const SysInfo* s = &g_sys;
     if (!system_header_row()) return;
-    ImGui::Indent(ImGui::GetStyle().FramePadding.x);
+    theme_group_begin("##sysinfo");     // untitled box: the header above names it
     const CpuInfo* c = &s->cpu;
-    sys_line("CPU", "%s  (%u cores / %u threads)", c->brand, c->cores, c->threads);
+    sys_line("CPU", "%s  (%u cores / %u threads)%s%s%s%s", c->brand, c->cores, c->threads,
+             g_cpux.codename[0] ? "  \xC2\xB7  " : "", g_cpux.codename, g_cpux.codename[0] && g_cpux.microarch[0] ? ", " : "",
+             g_cpux.codename[0] ? g_cpux.microarch : "");
     sys_line("", "L1D %u KiB, L2 %u KiB per core, L3 %u KiB  \xC2\xB7  %s%s%s%s%s", c->l1d_kib, c->l2_kib, c->l3_kib,
              c->avx2 ? "AVX2 " : "", c->fma ? "FMA " : "", c->avx512f ? "AVX-512 " : "", c->sha ? "SHA " : "",
              c->vaes ? "VAES" : "");
@@ -203,18 +332,82 @@ static void draw_sysinfo() {
         sys_line("", "%s: %llu GiB %s @ %u MT/s (rated %u)  %s %s", m->locator, m->size_bytes / GiB, m->type,
                  m->configured_mts, m->speed_mts, m->manufacturer, m->part);
     }
-    for (u32 i = 0; i < s->gpu_count; ++i)
-        sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)", i, s->gpus[i].name, s->gpus[i].dedicated_vram / MiB);
+    for (u32 i = 0; i < s->gpu_count; ++i) {
+        const GpuInfo* g = &s->gpus[i];
+        sys_line(i ? "" : "GPU", "%u: %s  (%llu MiB VRAM)  \xC2\xB7  driver %s%s", i, g->name, g->dedicated_vram / MiB,
+                 g->driver[0] ? g->driver : "?", g->hags < 0 ? "" : g->hags ? ", HW scheduling on" : ", HW scheduling off");
+    }
     for (u32 i = 0; i < s->drive_count; ++i) {
         char d[192];
         drive_describe(&s->drives[i], d, sizeof(d));
         sys_line(i ? "" : "Disk", "%c:  %s", s->drives[i].letter, d);
     }
+    const BoardInfo* bd = &s->board;
+    if (bd->sys_product[0] || bd->board_product[0])
+        sys_line("Board", "%s %s  \xC2\xB7  %s %s  \xC2\xB7  BIOS %s (%s)", bd->sys_vendor, bd->sys_product, bd->board_vendor,
+                 bd->board_product, bd->bios_version, bd->bios_date);
     sys_line("OS", "%s, %s", s->os, s->elevated ? "administrator" : "standard user");
+    char win[192];
+    winstate_describe(&s->win, win, sizeof(win));
+    sys_line("", "%s", win);
     sys_line("Power", "%s%s, plan \"%s\", mode \"%s\"", s->power.on_ac ? "AC" : "battery",
              s->power.has_battery ? "" : " (no battery)", s->power.scheme_name, power_mode_name(s->power.mode));
-    ImGui::Unindent(ImGui::GetStyle().FramePadding.x);
+    theme_group_end();
+}
+
+// Release notes and the install button. The new exe replaces this one; the app then shuts down normally
+// (settings saved) and main_gui starts it. Never while a benchmark or stability test runs.
+static void draw_update_dialog() {
+    const UpdateState st = updater_state();
+    const bool busy = runner_is_running() || stab_is_running();
+    if (st == UPD_READY && !busy) s_ui.quit = true;
+    if (s_update_open) {
+        s_update_open = false;
+        ImGui::OpenPopup("Update");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 36.0f, 0.0f));
+    if (!ImGui::BeginPopupModal("Update", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    const UpdateInfo* u = updater_info();
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    ImGui::TextUnformatted(u->name[0] ? u->name : u->tag);
+    ImGui::PopFont();
+    ImGui::TextDisabled("%s  \xC2\xB7  published %.10s  \xC2\xB7  %.1f MiB", u->tag, u->published, u->size / (f64)MiB);
+    if (u->notes[0]) {
+        ImGui::Spacing();
+        ImGui::BeginChild("##notes", ImVec2(0.0f, ImGui::GetFontSize() * 10.0f), ImGuiChildFlags_Borders);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(u->notes);
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    }
     ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Downloads the new ez-pc-bench.exe, checks it against the SHA-256 GitHub publishes for it, "
+                        "replaces this exe and restarts. Settings and results stay.");
+    if (st == UPD_DOWNLOADING) {
+        theme_progress(updater_progress(), ImGui::GetFontSize() * 0.35f);
+        ImGui::TextDisabled("Downloading... %.0f%%", updater_progress() * 100.0f);
+    } else if (st == UPD_READY && busy) {
+        ImGui::TextColored(COL_WARN, "Installed. Restarts when the running test finishes.");
+    } else if (st == UPD_FAILED) {
+        ImGui::TextColored(COL_WARN, "%s", updater_error());
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::BeginDisabled(busy || (st != UPD_AVAILABLE && st != UPD_FAILED));
+    if (theme_button_primary(st == UPD_FAILED ? "Retry" : "Update and restart")) updater_install();
+    ImGui::EndDisabled();
+    if (busy) theme_help("Finish or cancel the running test first.");
+    ImGui::SameLine();
+    if (theme_button("Release page") && !strncmp(u->html_url, "https://github.com/", 19))
+        ShellExecuteA(nullptr, "open", u->html_url, nullptr, nullptr, SW_SHOWNORMAL);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(st == UPD_DOWNLOADING);
+    if (theme_button("Later") || (st != UPD_DOWNLOADING && ImGui::IsKeyPressed(ImGuiKey_Escape))) ImGui::CloseCurrentPopup();
+    ImGui::EndDisabled();
+    ImGui::EndPopup();
 }
 
 // ---- toolbar --------------------------------------------------------------------
@@ -239,9 +432,16 @@ static void default_run_name(char* out, u32 size) {
     struct tm t;
     localtime_s(&t, &now);
     const BenchParams* p = &g_run.params;
-    char cpu[48], gpu[48];
+    char cpu[48], gpu[100] = "";
     cpu_short_name(g_sys.cpu.brand, cpu, sizeof(cpu));
-    gpu_short_name(p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "", gpu, sizeof(gpu));
+    const u32 gpus = p->gpu_adapters ? p->gpu_adapters : 1u << p->gpu_adapter;    // several: "a+b"
+    for (u32 i = 0; i < g_sys.gpu_count; ++i)
+        if ((gpus >> i) & 1) {
+            char s[48];
+            gpu_short_name(g_sys.gpus[i].name, s, sizeof(s));
+            const size_t len = strlen(gpu);
+            snprintf(gpu + len, sizeof(gpu) - len, "%s%s", len ? "+" : "", s);
+        }
     snprintf(out, size, "ezbench_%04d%02d%02d_%02d%02d%02d_%s_%s", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
              t.tm_min, t.tm_sec, cpu, gpu);
 }
@@ -311,25 +511,110 @@ u32 ui_take_tool_requests() {
 }
 
 BenchParams* ui_params() { return &s_ui.params; }
+bool* ui_selection() { return s_ui.selected; }
+
+static u32 s_open_gpu_combo;     // dev (--open-gpu-combo): frame counter until the GPU combo opens itself
+
+void ui_open_gpu_combo() { s_open_gpu_combo = 1; }
+
+// Adapter name without the vendor words and trademark marks, for the several-GPUs combo preview:
+// "NVIDIA GeForce RTX 5060 Laptop GPU" -> "RTX 5060 Laptop GPU", "AMD Radeon(TM) 760M Graphics" -> "Radeon 760M Graphics".
+static void gpu_display_name(const char* name, char* out, u32 size) {
+    static const char* const skip[] = { "NVIDIA ", "GeForce ", "AMD ", "Intel(R) ", "Intel " };
+    for (bool again = true; again;) {
+        again = false;
+        for (u32 i = 0; i < ARRAY_COUNT(skip); ++i)
+            if (!strncmp(name, skip[i], strlen(skip[i]))) { name += strlen(skip[i]); again = true; }
+    }
+    u32 n = 0;
+    for (const char* c = name; *c && n + 1 < size;) {
+        if (!strncmp(c, "(TM)", 4)) { c += 4; continue; }
+        if (!strncmp(c, "(R)", 3)) { c += 3; continue; }
+        out[n++] = *c++;
+    }
+    out[n] = 0;
+}
 
 // What to test on: GPU for both GPU suites (one adapter per run) and the disk(s) for the disk suite.
+// Preset combo: shows the preset the current selection + settings match, "Custom" otherwise.
+static void draw_preset() {
+    const RunPreset* cur = preset_match(&s_ui.params, s_ui.selected);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Preset");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Sustained").x + ImGui::GetFrameHeight() * 2.0f);
+    if (ImGui::BeginCombo("##preset", cur ? cur->name : "Custom")) {
+        for (u32 i = 0; i < g_preset_count; ++i) {
+            if (ImGui::Selectable(g_presets[i].name, cur == &g_presets[i])) preset_apply(&g_presets[i], &s_ui.params, s_ui.selected);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_presets[i].desc);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##preset"))
+        ImGui::SetTooltip("%s", cur ? cur->desc : "Your own selection and settings. Pick a preset to replace both.");
+    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+}
+
 static void draw_targets() {
     BenchParams* p = &s_ui.params;
     ImGui::BeginDisabled(runner_is_running());
+    draw_preset();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("GPU");
     ImGui::SameLine();
     if (g_sys.gpu_count > 0) {
+        // Multi-select: the GPU suites run on every ticked adapter (BenchParams::gpu_adapters); at least one stays.
         if (p->gpu_adapter >= g_sys.gpu_count) p->gpu_adapter = 0;
-        ImGui::SetNextItemWidth(ImGui::CalcTextSize(g_sys.gpus[p->gpu_adapter].name).x + ImGui::GetFrameHeight() * 2.0f);
-        if (ImGui::BeginCombo("##gpu", g_sys.gpus[p->gpu_adapter].name)) {
+        const u32 valid = g_sys.gpu_count >= 32 ? ~0u : (1u << g_sys.gpu_count) - 1;
+        u32 mask = (p->gpu_adapters & valid) ? (p->gpu_adapters & valid) : 1u << p->gpu_adapter;
+        // Preview: the full name of one adapter, "2 GPUs: RTX 5060 Laptop GPU, Radeon 760M Graphics" for several.
+        char preview[256];
+        const u32 ticked = (u32)__builtin_popcount(mask);
+        if (ticked > 1) {
+            int len = snprintf(preview, sizeof(preview), "%u GPUs: ", ticked);
+            for (u32 i = 0, n = 0; i < g_sys.gpu_count && len < (int)sizeof(preview); ++i)
+                if ((mask >> i) & 1) {
+                    char s[128];
+                    gpu_display_name(g_sys.gpus[i].name, s, sizeof(s));
+                    len += snprintf(preview + len, sizeof(preview) - len, "%s%s", n++ ? ", " : "", s);
+                }
+        } else {
+            snprintf(preview, sizeof(preview), "%s", g_sys.gpus[p->gpu_adapter].name);
+        }
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview).x + ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f);
+        if (s_open_gpu_combo && ++s_open_gpu_combo == 4) {     // dev (--open-gpu-combo): opened on the 3rd frame
+            ImGui::OpenPopupEx(ImHashStr("##ComboPopup", 0, ImGui::GetID("##gpu")));
+            s_open_gpu_combo = 0;
+        }
+        // Compact popup: tight vertical padding; rows as tall as plain combo items.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetStyle().WindowPadding.x, ImGui::GetStyle().FramePadding.y));
+        const bool open = ImGui::BeginCombo("##gpu", preview);
+        ImGui::PopStyleVar();
+        if (open) {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            const f32 box = theme_checkbox_height();
+            f32 name_w = 0.0f;
             for (u32 i = 0; i < g_sys.gpu_count; ++i) {
-                char label[192];
-                snprintf(label, sizeof(label), "%s  (%llu MiB)", g_sys.gpus[i].name, g_sys.gpus[i].dedicated_vram / MiB);
-                if (ImGui::Selectable(label, i == p->gpu_adapter)) p->gpu_adapter = i;
+                const f32 w = ImGui::CalcTextSize(g_sys.gpus[i].name).x;
+                name_w = w > name_w ? w : name_w;
             }
+            const f32 vram_x = ImGui::GetCursorPosX() + box + st.ItemInnerSpacing.x + name_w + ImGui::GetFontSize() * 1.5f;
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(st.ItemSpacing.x, ImGui::GetTextLineHeightWithSpacing() - box));
+            for (u32 i = 0; i < g_sys.gpu_count; ++i) {
+                ImGui::PushID((int)i);
+                bool on = (mask >> i) & 1;
+                if (theme_checkbox(g_sys.gpus[i].name, &on) && (mask ^ (1u << i))) mask ^= 1u << i;
+                ImGui::SameLine(vram_x);
+                ImGui::TextDisabled("%.1f GiB VRAM", g_sys.gpus[i].dedicated_vram / (f64)GiB);
+                ImGui::PopID();
+            }
+            ImGui::PopStyleVar();
             ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("GPU suites run on every ticked adapter; with several, each result is prefixed with the adapter.");
+        p->gpu_adapter = (u32)__builtin_ctz(mask);
+        p->gpu_adapters = (mask & (mask - 1)) ? mask : 0;
     } else {
         ImGui::TextDisabled("none found");
     }
@@ -354,13 +639,18 @@ static void draw_targets() {
             ImGui::SetTooltip("%s", desc);
         }
     }
+    if (p->disk.folder[0]) {
+        ImGui::SameLine();
+        ImGui::TextColored(COL_WARN, "folder");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The disk suite tests in the folder set in Settings > Disk, not on these drives.");
+    }
     ImGui::EndDisabled();
 }
 
 static void draw_toolbar() {
     const bool running = runner_is_running();
     u32 selected = 0;
-    for (u32 i = 0; i < g_bench_count; ++i) selected += s_ui.selected[i] && suite_visible(g_benches[i].suite);
+    for (u32 i = 0; i < g_bench_count; ++i) selected += is_selected(i) && suite_visible(g_benches[i].suite);
 
     ImGui::BeginDisabled(running || selected == 0);
     if (theme_button_primary("Run")) ui_start_run();
@@ -369,11 +659,17 @@ static void draw_toolbar() {
     ImGui::BeginDisabled(!running);
     if (theme_button("Cancel")) runner_cancel();
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (theme_icon_button("##bench_settings", ICON_SLIDERS, nullptr, ImGui::GetFrameHeight(),
+                          "Benchmark settings: duration per phase, repeat, sustained mode, GPU render resolution, disk "
+                          "test file size, passes and interval. Presets change the run and disk values."))
+        ui_request_tool(TOOL_BENCH);
 
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
     if (theme_button("All"))
-        for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = suite_visible(g_benches[i].suite);
+        for (u32 i = 0; i < g_bench_count; ++i)
+            if (!bench_unsupported(i)) s_ui.selected[i] = suite_visible(g_benches[i].suite);
     ImGui::SameLine();
     if (theme_button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
     ImGui::EndDisabled();
@@ -417,10 +713,17 @@ static void draw_test_row(u32 id, bool running) {
     const BenchStatus st = status_of(id);
     ImGui::PushID((int)id);
     // Selection is frozen during a run, but the tree stays at full contrast (clicks are ignored).
-    bool sel = s_ui.selected[id];
-    if (theme_checkbox(b->name, &sel) && !running) s_ui.selected[id] = sel;
+    // Tests this CPU can't run (missing instructions) are greyed out and never selectable.
+    const char* unsupported = bench_unsupported(id);
+    bool sel = is_selected(id);
+    ImGui::BeginDisabled(unsupported != nullptr);
+    if (theme_checkbox(b->name, &sel) && !running && !unsupported) s_ui.selected[id] = sel;
+    ImGui::EndDisabled();
     const f32 row_h = ImGui::GetItemRectSize().y, row_top = ImGui::GetItemRectMin().y;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", b->cli_id);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (unsupported) ImGui::SetTooltip("%s\n%s", unsupported, b->cli_id);
+        else ImGui::SetTooltip("%s", b->cli_id);
+    }
 
     ImGui::SameLine(s_status_x);
     if (st == ST_RUNNING) {
@@ -445,6 +748,9 @@ static void draw_test_row(u32 id, bool running) {
     } else if (st != ST_NOT_RUN) {
         ImGui::TextColored(status_color(st), "%s", status_name(st));
         if ((st == ST_FAILED || st == ST_SKIPPED) && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_results[id].error);
+    } else if (unsupported) {
+        ImGui::TextDisabled("not supported by this CPU");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", unsupported);
     } else {
         ImGui::TextUnformatted("");     // end the line started by SameLine
     }
@@ -459,8 +765,8 @@ static void draw_tree() {
         u32 total = 0, sel = 0, in_run = 0, done = 0;
         for (u32 i = 0; i < g_bench_count; ++i) {
             if (g_benches[i].suite != s) continue;
-            ++total;
-            sel += s_ui.selected[i];
+            total += !bench_unsupported(i);
+            sel += is_selected(i);
             BenchStatus st = status_of(i);
             in_run += st != ST_NOT_RUN;
             done += st != ST_NOT_RUN && st != ST_PENDING && st != ST_RUNNING;
@@ -469,9 +775,11 @@ static void draw_tree() {
 
         ImGui::PushID((int)s);
         ImGui::PushFont(g_fonts.medium, 0.0f);
+        theme_header_push(true);
         const bool open = ImGui::TreeNodeEx("##suite", (sel ? ImGuiTreeNodeFlags_DefaultOpen : 0) | ImGuiTreeNodeFlags_Framed |
                                                            ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
                                             "%s", g_suites[s].name);
+        theme_header_pop();
         ImGui::PopFont();
         const f32 header_h = ImGui::GetItemRectSize().y;
         ImGui::SameLine(s_status_x);
@@ -480,7 +788,7 @@ static void draw_tree() {
         bool all = sel == total;
         if (theme_checkbox("##all", &all, sel > 0 && sel < total) && !running)     // dash when partly selected
             for (u32 i = 0; i < g_bench_count; ++i)
-                if (g_benches[i].suite == s) s_ui.selected[i] = all;
+                if (g_benches[i].suite == s && !bench_unsupported(i)) s_ui.selected[i] = all;
         ImGui::SameLine();
         if (running && in_run) ImGui::TextDisabled("%u/%u done", done, in_run);
         else ImGui::TextDisabled("%u/%u selected", sel, total);
@@ -494,21 +802,27 @@ static void draw_tree() {
                     if (group_open) ImGui::TreePop();
                     group = g_benches[i].group;
                     // Group checkbox in the status column, like the suite's: dash when partly selected.
-                    u32 gtotal = 0, gsel = 0;
+                    u32 gtotal = 0, gsupported = 0, gsel = 0;
                     for (u32 k = i; k < g_bench_count && g_benches[k].suite == s && !strcmp(g_benches[k].group, group); ++k) {
                         ++gtotal;
-                        gsel += s_ui.selected[k];
+                        gsupported += !bench_unsupported(k);
+                        gsel += is_selected(k);
                     }
                     ImGui::AlignTextToFramePadding();
+                    theme_header_push(false);
                     group_open = ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth |
                                                               ImGuiTreeNodeFlags_AllowOverlap);
+                    theme_header_pop();
                     const f32 row_h = ImGui::GetItemRectSize().y;
                     ImGui::SameLine(s_status_x);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row_h - theme_checkbox_height()) * 0.5f);
-                    bool gall = gsel == gtotal;
+                    bool gall = gsupported && gsel == gsupported;
                     ImGui::PushID(group);
-                    if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gtotal) && !running)
-                        for (u32 k = i; k < i + gtotal; ++k) s_ui.selected[k] = gall;
+                    ImGui::BeginDisabled(gsupported == 0);      // the whole group needs instructions this CPU lacks
+                    if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gsupported) && !running)
+                        for (u32 k = i; k < i + gtotal; ++k)
+                            if (!bench_unsupported(k)) s_ui.selected[k] = gall;
+                    ImGui::EndDisabled();
                     ImGui::PopID();
                 }
                 if (group_open) draw_test_row(i, running);
@@ -531,6 +845,12 @@ static PreviewState s_preview;
 
 void ui_set_preview(void* texture, u32 w, u32 h) { s_preview = { texture, w, h }; }
 
+// Graph color of a test's values: by unit; disk throughput (GB/s, MB/s, IOPS) in the disk color.
+static GraphKind chart_kind(u32 suite, const char* unit) {
+    const GraphKind k = graph_kind_for_unit(unit);
+    return suite == SUITE_DISK && (k == GK_MEMORY || k == GK_RATE || k == GK_OTHER) ? GK_DISK : k;
+}
+
 static void draw_live() {
     const i32 cur = g_run.current.load(std::memory_order_relaxed);
     if (!runner_is_running() || cur < 0) {
@@ -541,7 +861,7 @@ static void draw_live() {
     const BenchDesc* b = &g_benches[cur];
 
     // With a preview: stats on the left, the rendered frame on the right (full panel height, aspect kept).
-    const bool preview = s_preview.texture && s_preview.w && (b->flags & BENCH_PREVIEW);
+    const bool preview = g_gpu_preview && s_preview.texture && s_preview.w && (b->flags & BENCH_PREVIEW);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     f32 img_w = 0.0f, img_h = 0.0f;
     if (preview) {
@@ -575,7 +895,14 @@ static void draw_live() {
 
     const f32 p = g_live.progress.load();
     theme_progress(p, ImGui::GetFontSize() * 0.35f);
-    ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%", g_live.phase.load(), p * 100.0f);
+    if (g_run.reps > 1)
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%  \xC2\xB7  run %u of %u", g_live.phase.load(), p * 100.0f,
+                            g_run.rep.load() + 1, g_run.reps);
+    else if (g_run.sustain_s)
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%  \xC2\xB7  sustained pass %u, %.0f of %u s", g_live.phase.load(),
+                            p * 100.0f, g_run.rep.load() + 1, timer_now() - g_run.test_start.load(), g_run.sustain_s);
+    else
+        ImGui::TextDisabled("%s  \xC2\xB7  %.0f%%", g_live.phase.load(), p * 100.0f);
 
     // Sparkline: last LIVE_HISTORY samples, oldest first.
     static f32 hist[LIVE_HISTORY];
@@ -586,10 +913,17 @@ static void draw_live() {
         hist[i] = g_live.history[(count - n + i) % LIVE_HISTORY].load(std::memory_order_relaxed);
         if (hist[i] > max_v) max_v = hist[i];
     }
-    if (n > 0) {
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-        ImGui::PlotLines("##hist", hist, (int)n, 0, nullptr, 0.0f, max_v * 1.1f, ImVec2(-FLT_MIN, -FLT_MIN));
-        ImGui::PopStyleColor();
+    if (n > 0 && max_v >= 0.0f) {
+        Graph g;
+        g.unit = g_live.unit.load();
+        g.kind = chart_kind(b->suite, g.unit);
+        g.flags = GF_ZERO;
+        g.window = n < 64 ? 64 : n;     // scrolls in from the right, then spans the whole history
+        GraphLine line;
+        line.y = hist;
+        line.n = n;
+        const f32 h = ImGui::GetContentRegionAvail().y;
+        graph_time("##hist", &g, &line, 1, ImVec2(0.0f, h > ImGui::GetFontSize() * 3.0f ? h : ImGui::GetFontSize() * 3.0f));
     }
 
     if (preview) {
@@ -617,6 +951,39 @@ static void text_right(const char* s) {
     ImGui::TextUnformatted(s);
 }
 
+// Test name cell of the results table, with the conditions it ran under (clocks, load, temperatures) as a
+// dimmed second line and any warning (battery, clock drop, hot) in the warning color.
+static void test_name_cell(u32 id) {
+    const BenchDesc* b = &g_benches[id];
+    ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+    const TestEnv* e = &g_env[id];
+    if (!env_valid(e)) return;
+    char brief[96], env[256], warn[160];
+    env_brief(e, env_is_gpu_test(id), brief, sizeof(brief));
+    env_describe(e, env_is_gpu_test(id), env, sizeof(env));
+    env_warnings(e, warn, sizeof(warn));
+    ImGui::PushFont(nullptr, theme_font_size(0.85f));
+    ImGui::BeginGroup();
+    if (brief[0]) ImGui::TextDisabled("%s", brief);
+    if (warn[0]) ImGui::TextColored(COL_WARN, "%s", warn);
+    ImGui::EndGroup();
+    ImGui::PopFont();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("While the test ran: %s\n(%u samples; clocks are averages while busy, temperatures the maximum)",
+                          env, e->samples);
+}
+
+// Hover text for a value that is the median of repeated runs.
+static void spread_tooltip(const MetricSpread* sp, const char* unit) {
+    if (sp->runs < 2 || !ImGui::IsItemHovered()) return;
+    char lo[32], hi[32];
+    format_value(lo, sizeof(lo), sp->min);
+    format_value(hi, sizeof(hi), sp->max);
+    ImGui::SetTooltip("Median of %u runs: min %s, max %s %s, spread (CV) %.1f%%%s", sp->runs, lo, hi, unit, sp->cv,
+                      sp->cv >= NOISY_CV_PCT ? "\nNoisy: the runs differ by more than 3 %. Close other apps, check "
+                                               "power and temperature, or use longer phases." : "");
+}
+
 static void draw_results() {
     // Material data table: horizontal dividers only, quiet header.
     const int cols = 4;
@@ -631,6 +998,7 @@ static void draw_results() {
     // Header row by hand so the number columns can be right-aligned over their numbers.
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
     ImGui::PushFont(g_fonts.medium, 0.0f);
+    theme_header_push(false);       // headers can't be clicked: no hover fill
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
     for (int c = 0; c < cols; ++c) {
         ImGui::TableSetColumnIndex(c);
@@ -638,6 +1006,7 @@ static void draw_results() {
         if (c == 2) align_right(ImGui::CalcTextSize(name).x);
         ImGui::TableHeader(name);
     }
+    theme_header_pop();
     ImGui::PopFont();
     ImGui::PopStyleColor();
 
@@ -665,7 +1034,7 @@ static void draw_results() {
             format_value(vavg, sizeof(vavg), avg);
             format_value(vmax, sizeof(vmax), hi);
             ImGui::TableNextRow();
-            ImGui::TableNextColumn(); ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+            ImGui::TableNextColumn(); test_name_cell(i);
             ImGui::TableNextColumn(); ImGui::Text("%s min / avg / max (%ux%u)", m[0].name, r->rows, r->cols);
             ImGui::TableNextColumn();
             snprintf(triple, sizeof(triple), "%s / %s / %s", vmin, vavg, vmax);
@@ -678,7 +1047,7 @@ static void draw_results() {
         for (u32 k = 0; k < r->count; ++k) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            if (k == 0) ImGui::Text("%s / %s", g_suites[b->suite].name, b->name);
+            if (k == 0) test_name_cell(i);
             ImGui::TableNextColumn();
             if (r->kind == RESULT_SERIES) {
                 format_x(x, sizeof(x), m[k].x, r->x_unit);
@@ -688,7 +1057,9 @@ static void draw_results() {
             }
             ImGui::TextUnformatted(label);
             ImGui::TableNextColumn();
-            format_value(v, sizeof(v), m[k].value);
+            const char* unit = m[k].unit;
+            format_value(v, sizeof(v), b->suite == SUITE_DISK ? disk_unit_value(s_ui.params.disk.unit, m[k].unit, m[k].value, &unit)
+                                                              : m[k].value);
             char fps[32];
             theme_push_numbers();
             if (format_frame_fps(fps, sizeof(fps), m[k].name, m[k].unit, m[k].value)) {
@@ -697,12 +1068,16 @@ static void draw_results() {
                 ImGui::TextUnformatted(v);
                 ImGui::SameLine(0.0f, 0.0f);
                 ImGui::TextDisabled("%s", fps);
+            } else if (res_spread(r)[k].runs >= 2 && res_spread(r)[k].cv >= NOISY_CV_PCT) {
+                align_right(ImGui::CalcTextSize(v).x);
+                ImGui::TextColored(COL_WARN, "%s", v);
             } else {
                 text_right(v);
             }
             ImGui::PopFont();
+            spread_tooltip(&res_spread(r)[k], m[k].unit);
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", m[k].unit);
+            ImGui::TextDisabled("%s", unit);
         }
     }
     ImGui::EndTable();
@@ -710,34 +1085,100 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
-static void draw_series(const BenchResult* r) {
-    static f32 ys[1024];
+// A series can hold several named lines (e.g. "Read" and "Write" per thread count, interleaved or not, or
+// "C: Read" / "C: Write" per drive). Lines with the same unit share one graph (up to 6); names with a single
+// point are summary values and are shown as text.
+static void draw_series_lines(const BenchResult* r, u32 suite, const char* const* names, u32 count);
+
+static void draw_series(const BenchResult* r, u32 suite) {
     const Metric* m = res_metrics(r);
-    const u32 n = r->count < 1024 ? r->count : 1024;
-    f32 hi = 0.0f;
-    for (u32 k = 0; k < n; ++k) {
-        ys[k] = (f32)m[k].value;
-        if (ys[k] > hi) hi = ys[k];
+    const char* names[32];
+    u32 points[32] = {}, first[32] = {}, count = 0;
+    for (u32 k = 0; k < r->count; ++k) {
+        u32 i = 0;
+        while (i < count && strcmp(names[i], m[k].name) != 0) ++i;
+        if (i == count) {
+            if (count == ARRAY_COUNT(names)) continue;
+            names[count] = m[k].name;
+            first[count++] = k;
+        }
+        ++points[i];
     }
-    char first[32], last[32];
-    format_x(first, sizeof(first), m[0].x, r->x_unit);
-    format_x(last, sizeof(last), m[n - 1].x, r->x_unit);
-    char overlay[96];
-    snprintf(overlay, sizeof(overlay), "%s [%s] vs %s (%s .. %s)", m[0].name, m[0].unit, r->x_name ? r->x_name : "x",
-             first, last);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-    ImGui::PlotLines("##series", ys, (int)n, 0, overlay, 0.0f, hi * 1.15f, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 8.0f));
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) {
-        // Map mouse x to a point index (PlotLines spaces points evenly).
-        const f32 t = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x) / ImGui::GetItemRectSize().x;
-        u32 k = (u32)(t * (n - 1) + 0.5f);
-        if (k >= n) k = n - 1;
-        char x[32], v[32];
-        format_x(x, sizeof(x), m[k].x, r->x_unit);
-        format_value(v, sizeof(v), m[k].value);
-        ImGui::SetTooltip("%s: %s %s", x, v, m[k].unit);
+    bool done[32] = {};
+    for (u32 i = 0; i < count; ++i) {
+        if (done[i]) continue;
+        if (points[i] == 1 && count > 1) {
+            char v[32];
+            format_value(v, sizeof(v), m[first[i]].value);
+            ImGui::TextDisabled("%s: %s %s", names[i], v, m[first[i]].unit);
+            continue;
+        }
+        // This name and the later multi-point names with the same unit.
+        const char* group[6];
+        u32 n = 0;
+        for (u32 j = i; j < count && n < ARRAY_COUNT(group); ++j) {
+            if (done[j] || (points[j] == 1 && count > 1) || strcmp(m[first[j]].unit, m[first[i]].unit) != 0) continue;
+            group[n++] = names[j];
+            done[j] = true;
+        }
+        ImGui::PushID((int)i);
+        draw_series_lines(r, suite, group, count > 1 ? n : 0);
+        ImGui::PopID();
     }
+}
+
+// Lines `names` (count 0: every metric is one line) against the series' x; log x for geometric x steps
+// (block sizes, queue depths).
+static void draw_series_lines(const BenchResult* r, u32 suite, const char* const* names, u32 count) {
+    static f32 xs[1024], ys[1024];
+    const Metric* all = res_metrics(r);
+    GraphLine lines[6];
+    u32 used = 0, line_count = 0;
+    const Metric* m0 = nullptr;
+    for (u32 l = 0; l < (count ? count : 1); ++l) {
+        GraphLine* ln = &lines[line_count];
+        ln->x = xs + used;
+        ln->y = ys + used;
+        ln->name = count > 1 ? names[l] : nullptr;
+        ln->n = 0;
+        for (u32 k = 0; k < r->count && used < ARRAY_COUNT(xs); ++k) {
+            if (count && strcmp(all[k].name, names[l]) != 0) continue;
+            if (!m0) m0 = &all[k];
+            xs[used] = (f32)all[k].x;
+            ys[used++] = (f32)all[k].value;
+            ++ln->n;
+        }
+        if (ln->n) ++line_count;
+    }
+    if (!line_count) return;
+    // Geometric x (most steps x1.4 or more, all positive): log scale.
+    u32 steps = 0, geo = 0;
+    bool positive = true;
+    for (u32 i = 0; i < lines[0].n; ++i) {
+        positive &= lines[0].x[i] > 0.0f;
+        if (i && lines[0].x[i - 1] > 0.0f) {
+            ++steps;
+            geo += lines[0].x[i] / lines[0].x[i - 1] >= 1.4f;
+        }
+    }
+    char first[32], last[32], title[200];
+    format_x(first, sizeof(first), lines[0].x[0], r->x_unit);
+    format_x(last, sizeof(last), lines[0].x[lines[0].n - 1], r->x_unit);
+    const bool logx = positive && steps >= 2 && geo * 10 >= steps * 7;
+    if (line_count > 1)     // the legend names the lines
+        snprintf(title, sizeof(title), "[%s] vs %s (%s .. %s%s)", m0->unit, r->x_name ? r->x_name : "x", first, last,
+                 logx ? ", log scale" : "");
+    else
+        snprintf(title, sizeof(title), "%s [%s] vs %s (%s .. %s%s)", m0->name, m0->unit, r->x_name ? r->x_name : "x",
+                 first, last, logx ? ", log scale" : "");
+    Graph g;
+    g.title = title;
+    g.unit = m0->unit;
+    g.kind = chart_kind(suite, m0->unit);
+    g.x_unit = r->x_unit;
+    g.flags = GF_ZERO | GF_POINTS | (logx ? GF_LOG_X : 0u);
+    graph_xy("##series", &g, lines, line_count, ImVec2(0.0f, ImGui::GetFontSize() * 10.0f));
+    ImGui::Spacing();
 }
 
 static void draw_matrix(const BenchResult* r) {
@@ -780,18 +1221,63 @@ static void draw_matrix(const BenchResult* r) {
     ImGui::PopFont();
 }
 
+// Sustained mode: one small plot per tracked metric, value per pass, with the first / last / drop summary.
+static void sustain_x(char* buf, u32 size, f64 x, const void* user) {
+    const SustainRecord* s = (const SustainRecord*)user;
+    const u32 i = (u32)x;
+    snprintf(buf, size, "Pass %u (ended at %.0f s)", i + 1, i < s->passes ? sustain_time(s, i) : 0.0f);
+}
+
+static void draw_sustain(u32 id) {
+    const SustainRecord* s = &g_sustain[id];
+    static f32 ys[MAX_SUSTAIN_PASSES];
+    ImGui::TextDisabled("Sustained: %u passes in %.0f s", s->passes, s->seconds);
+    for (u32 k = 0; k < s->tracked; ++k) {
+        const Metric* m = sustain_metric(id, k);
+        if (!strcmp(m->unit, "x")) continue;
+        SustainStats st;
+        sustain_stats(s, k, m->unit, &st);
+        for (u32 i = 0; i < s->passes; ++i) ys[i] = sustain_value(s, i, k);
+        char a[32], b[32], title[160];
+        format_value(a, sizeof(a), st.first);
+        format_value(b, sizeof(b), st.last);
+        snprintf(title, sizeof(title), "%s%s [%s] per pass: first %s, last %s, drop %.1f%%", m->name,
+                 s->averaged ? " (average)" : "", m->unit, a, b, st.drop_pct);
+        Graph g;
+        g.title = title;
+        g.unit = m->unit;
+        g.kind = chart_kind(g_benches[id].suite, m->unit);
+        g.flags = GF_POINTS;
+        g.fmt_x = sustain_x;
+        g.user = s;
+        GraphLine line;
+        line.y = ys;
+        line.n = s->passes;
+        ImGui::PushID((int)k);
+        graph_xy("##sustain", &g, &line, 1, ImVec2(0.0f, ImGui::GetFontSize() * 7.0f));
+        ImGui::PopID();
+    }
+}
+
 static void draw_charts() {
     bool any = false;
     for (u32 i = 0; i < g_bench_count; ++i) {
         if (status_of(i) != ST_DONE) continue;
         const BenchResult* r = &g_results[i];
-        if (r->count == 0 || r->kind == RESULT_VALUES) continue;
+        const bool sustained = g_sustain[i].passes >= 2;
+        const bool own_view = mem_chart_has_view(i);
+        if (r->count == 0 || (r->kind == RESULT_VALUES && !sustained && !own_view)) continue;
         any = true;
         const BenchDesc* b = &g_benches[i];
         ImGui::PushID((int)i);
-        if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
-            if (r->kind == RESULT_SERIES) draw_series(r);
-            else draw_matrix(r);
+        theme_header_push(false);
+        const bool chart_open = ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name);
+        theme_header_pop();
+        if (chart_open) {
+            if (own_view) mem_chart_draw(i, r);
+            else if (r->kind == RESULT_SERIES) draw_series(r, b->suite);
+            else if (r->kind == RESULT_MATRIX) draw_matrix(r);
+            if (sustained) draw_sustain(i);
             ImGui::TreePop();
         }
         ImGui::PopID();
@@ -817,6 +1303,8 @@ void ui_draw() {
     draw_targets();
     draw_toolbar();
     draw_save_dialog();
+    draw_confirm_dialog();
+    draw_update_dialog();
     ImGui::Spacing();
 
     // Invisible but draggable column divider: tables cache border colors in BeginTable, so push around it only.
@@ -841,12 +1329,20 @@ void ui_draw() {
         ImGui::Spacing();
         theme_begin_panel("output", ImVec2(0, 0), false);
         // Segmented tabs.
-        static int tab = 0;
+        int& tab = s_tab;
         if (theme_tab("Results", tab == 0)) tab = 0;
         ImGui::SameLine(0.0f, 4.0f);
         if (theme_tab("Charts", tab == 1)) tab = 1;
+        ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab("Score", tab == 2)) tab = 2;
+        ImGui::SameLine(0.0f, 4.0f);
+        if (theme_tab("Ranking", tab == 3)) tab = 3;
         if (tab == 0) {
             draw_results();
+        } else if (tab == 2) {
+            score_ui_draw();
+        } else if (tab == 3) {
+            ranking_ui_draw();
         } else {
             ImGui::BeginChild("charts", ImVec2(0, 0));
             draw_charts();
@@ -857,4 +1353,10 @@ void ui_draw() {
     }
     ImGui::End();
     if (!runner_is_running()) settings_tick(&s_ui.params, s_ui.selected);
+    // Automatic run history: every finished run goes to results\history (FUTURE.md section 11).
+    if (!runner_is_running() && g_run.total && g_run.end_time != s_ui.history_end) {
+        s_ui.history_end = g_run.end_time;
+        if (history_save(nullptr) && !s_ui.status_msg[0])
+            snprintf(s_ui.status_msg, sizeof(s_ui.status_msg), "Run saved to results\\history");
+    }
 }

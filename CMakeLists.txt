@@ -13,9 +13,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
-# Common flags for all our targets
+# Common flags for all our targets. Baseline x86-64-v2 (SSE4.2 + POPCNT, same floor as Windows 11 24H2):
+# AVX2 / AVX-512 code is compiled per function (TARGET_AVX2 in core/types.h) and gated at run time.
+# -mtune=generic keeps the old tuning: -march alone also tunes for x86-64-v2, which splits unaligned 256-bit
+# loads in the AVX2 functions into two halves (ray-box / ray-triangle -12 %).
 add_library(ezb_flags INTERFACE)
-target_compile_options(ezb_flags INTERFACE /EHs-c- /GR- /arch:AVX2 /utf-8 /Zc:__cplusplus)
+target_compile_options(ezb_flags INTERFACE /EHs-c- /GR- /clang:-march=x86-64-v2 /clang:-mtune=generic /utf-8 /Zc:__cplusplus)
 target_compile_definitions(ezb_flags INTERFACE
     _HAS_EXCEPTIONS=0 WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 
@@ -90,6 +93,63 @@ ezb_shader(raster.hlsl    vs_scene      vs_6_0)
 ezb_shader(raster.hlsl    ps_scene      ps_6_0)
 ezb_shader(raster.hlsl    vs_sprite     vs_6_0)
 ezb_shader(raster.hlsl    ps_sprite     ps_6_0)
+# Stability tester (src/stability/stab_gpu.cpp, D3D12 only; the SPIR-V output is unused)
+ezb_shader(../../stability/stab.hlsl cs_stab_fill         cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_check        cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_compute      cs_6_0)
+ezb_shader(../../stability/stab.hlsl vs_stab_full         vs_6_0)
+ezb_shader(../../stability/stab.hlsl ps_stab_render       ps_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_render_check cs_6_0)
+ezb_shader(../../stability/stab.hlsl cs_stab_power        cs_6_0)
+# Extra GPU tests (src/gpu/gpu_ext.h)
+ezb_shader(compute_ext.hlsl cs_fp64          cs_6_0)
+ezb_shader(compute_ext.hlsl cs_dp4a          cs_6_4)
+ezb_shader(compute_ext.hlsl cs_atomic_one    cs_6_0)
+ezb_shader(compute_ext.hlsl cs_atomic_unique cs_6_0)
+ezb_shader(compute_ext.hlsl cs_atomic_lds    cs_6_0)
+ezb_shader(memory.hlsl      cs_chase         cs_6_0)
+ezb_shader(memory.hlsl      cs_chase_init    cs_6_0)
+ezb_shader(memory.hlsl      cs_sweep         cs_6_0)
+ezb_shader(memory.hlsl      cs_mem_fill      cs_6_0)
+ezb_shader(texture.hlsl     cs_tex_sample    cs_6_0)
+ezb_shader(texture.hlsl     cs_tex_aniso     cs_6_0)
+ezb_shader(pso.hlsl         cs_pso           cs_6_0)
+ezb_shader(pso.hlsl         vs_pso           vs_6_0)
+ezb_shader(pso.hlsl         ps_pso           ps_6_0)
+# Vulkan-only GLSL (cooperative matrix): SPIR-V words as a C initializer list in <name>_spv.inc
+find_program(GLSLC glslc HINTS "$ENV{VULKAN_SDK}/Bin" NO_DEFAULT_PATH REQUIRED)
+function(ezb_glsl file name)
+    set(src ${SHADER_SRC}/${file})
+    set(inc ${SHADER_OUT}/${name}_spv.inc)
+    add_custom_command(OUTPUT ${inc}
+        COMMAND ${GLSLC} --target-env=vulkan1.3 -O -mfmt=c ${ARGN} -o ${inc} ${src}
+        DEPENDS ${src} VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${inc} PARENT_SCOPE)
+endfunction()
+ezb_glsl(coopmat.comp coopmat_f16)
+ezb_glsl(coopmat.comp coopmat_i8 -DINT8)
+# Feature tests (gpu_features.h). SM 6.5 entries: ray query, task / mesh shaders, sampler feedback.
+function(ezb_shader_dxil file entry profile)   # D3D12-only shaders (no SPIR-V equivalent)
+    set(src ${SHADER_SRC}/${file})
+    set(dxil ${SHADER_OUT}/${entry}_dxil.h)
+    add_custom_command(OUTPUT ${dxil}
+        COMMAND ${DXC_DXIL} -nologo -Wno-ignored-attributes -T ${profile} -E ${entry} -O3 -Fh ${dxil} -Vn g_${entry}_dxil ${src}
+        DEPENDS ${src} ${SHADER_SRC}/common.hlsli VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${dxil} PARENT_SCOPE)
+endfunction()
+ezb_shader(rt.hlsl        cs_rt_terrain cs_6_0)
+ezb_shader(rt.hlsl        cs_rt_trace   cs_6_5)
+ezb_shader(mesh.hlsl      vs_mesh       vs_6_0)
+ezb_shader(mesh.hlsl      ps_mesh       ps_6_0)
+ezb_shader(mesh.hlsl      as_mesh       as_6_5)
+ezb_shader(mesh.hlsl      ms_mesh       ms_6_5)
+ezb_shader(tess.hlsl      vs_tess       vs_6_0)
+ezb_shader(tess.hlsl      hs_tess       hs_6_0)
+ezb_shader(tess.hlsl      ds_tess       ds_6_0)
+ezb_shader(tess.hlsl      ps_tess       ps_6_0)
+ezb_shader(vrs.hlsl       ps_vrs        ps_6_0)
+ezb_shader_dxil(sfb.hlsl  ps_sfb_plain    ps_6_5)
+ezb_shader_dxil(sfb.hlsl  ps_sfb_feedback ps_6_5)
 add_custom_target(gpu_shaders DEPENDS ${SHADER_HEADERS})
 
 # Core: benchmarks, runner, sysinfo, results (shared by GUI and CLI)
@@ -102,9 +162,32 @@ add_library(ezbench_core STATIC
     src/core/compare.cpp
     src/core/toon.cpp
     src/core/sysinfo.cpp
+    src/core/sysinfo_win.cpp
+    src/core/sysinfo_cpu.cpp
+    src/core/sysinfo_devices.cpp
+    src/core/sysinfo_display.cpp
+    src/core/sysinfo_gpu.cpp
+    src/core/sysreport.cpp
     src/core/physdisk.cpp
     src/core/sensors.cpp
+    src/core/monitor.cpp
+    src/core/hwread.cpp
+    src/core/battery.cpp
+    src/core/emi.cpp
+    src/core/presets.cpp
+    src/core/runfile.cpp
+    src/core/score.cpp
+    src/core/integrity.cpp
+    src/core/json.cpp
+    src/core/history.cpp
+    src/core/report.cpp
     src/core/disk_health.cpp
+    src/core/ata.cpp
+    src/core/nvme_dev.cpp
+    src/core/scsi_pt.cpp
+    src/core/csmi.cpp
+    src/core/smart_attr.cpp
+    src/core/health_store.cpp
     src/core/perf.cpp
     src/core/elevation.cpp
     src/core/smoke_bench.cpp
@@ -113,26 +196,72 @@ add_library(ezbench_core STATIC
     src/core/throughput.cpp
     src/mem/mem_bench.cpp
     src/mem/mem_kernels.cpp
+    src/mem/mem_grid.cpp
+    src/mem/mem_load.cpp
     src/cpu/cpu_bench.cpp
     src/cpu/cpu_kernels.cpp
     src/cpu/cpu_crypto.cpp
     src/cpu/cpu_gemm.cpp
-    src/disk/disk_bench.cpp
+    src/cpu/cpu_topo.cpp
+    src/cpu/cpu_compress.cpp
+    src/cpu/cpu_image.cpp
+    src/cpu/cpu_parse.cpp
+    src/cpu/cpu_sci.cpp
+    src/cpu/cpu_hash.cpp
+    src/cpu/cpu_ai.cpp
+    src/cpu/cpu_pi.cpp
+    src/cpu/cpu_micro.cpp
+    src/disk/disk_suite.cpp
+    src/disk/disk_io.cpp
+    src/disk/disk_cdm.cpp
+    src/disk/disk_latency.cpp
+    src/disk/disk_nvme.cpp
+    src/disk/disk_sweep.cpp
+    src/disk/disk_sustained.cpp
+    src/disk/disk_recovery.cpp
+    src/disk/disk_files.cpp
+    src/disk/disk_raw.cpp
     src/gpu/gpu_common.cpp
     src/gpu/gpu_entry.cpp
     src/gpu/gpu_d3d12.cpp
     src/gpu/gpu_d3d12_compute.cpp
     src/gpu/gpu_d3d12_raster.cpp
     src/gpu/gpu_vk.cpp
-    src/gpu/gpu_vk_tests.cpp)
+    src/gpu/gpu_vk_tests.cpp
+    src/gpu/gpu_present.cpp
+    src/gpu/gpu_present_d3d12.cpp
+    src/gpu/gpu_present_vk.cpp
+    src/core/whea.cpp
+    src/stability/stability.cpp
+    src/stability/stab_cpu.cpp
+    src/stability/stab_mem.cpp
+    src/stability/stab_disk.cpp
+    src/stability/stab_gpu.cpp
+    src/gpu/gpu_multi.cpp
+    src/gpu/gpu_ext.cpp
+    src/gpu/gpu_vk_ext.cpp
+    src/gpu/gpu_vk_memory.cpp
+    src/gpu/gpu_vk_pso.cpp
+    src/gpu/gpu_vk_texture.cpp
+    src/gpu/gpu_d3d12_ext.cpp
+    src/gpu/gpu_d3d12_memory.cpp
+    src/gpu/gpu_d3d12_pso.cpp
+    src/gpu/gpu_d3d12_texture.cpp
+    src/gpu/gpu_features.cpp
+    src/gpu/gpu_d3d12_features.cpp
+    src/gpu/gpu_vk_features.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
-    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32)
+    d3d12 dxgi dxguid powrprof winmm advapi32 shell32 ole32 propsys synchronization pdh gdi32 ntdll tbs setupapi
+    cabinet windowscodecs bcrypt oleaut32 cfgmgr32 iphlpapi wevtapi)
 # Benchmark kernels: align loops to 64 B (one Zen 4 op-cache line) so results don't depend on where the
 # linker happens to place a hot loop. Unaligned, the prime sieve swung 1850 <-> 2800 Mnum/s between builds.
 set_source_files_properties(src/cpu/cpu_bench.cpp src/cpu/cpu_kernels.cpp src/cpu/cpu_crypto.cpp src/cpu/cpu_gemm.cpp
-    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
+    src/cpu/cpu_topo.cpp src/cpu/cpu_compress.cpp src/cpu/cpu_image.cpp src/cpu/cpu_parse.cpp src/cpu/cpu_sci.cpp
+    src/cpu/cpu_hash.cpp src/cpu/cpu_ai.cpp src/cpu/cpu_pi.cpp src/cpu/cpu_micro.cpp
+    src/mem/mem_bench.cpp src/mem/mem_kernels.cpp src/mem/mem_grid.cpp src/mem/mem_load.cpp
+    PROPERTIES COMPILE_OPTIONS "/clang:-falign-loops=64")
 
 # Run library: reference runs in library/*.toon.txt, packed + LZMS-compressed by a small host tool and
 # embedded in the GUI exe as RCDATA 103 (read by src/app/library.cpp).
@@ -158,19 +287,33 @@ add_executable(ez-pc-bench WIN32
     src/app/compare_ui.cpp
     src/app/settings_ui.cpp
     src/app/temps_ui.cpp
+    src/app/overlay.cpp
     src/app/health_ui.cpp
+    src/app/mem_charts.cpp
+    src/app/graph.cpp
+    src/app/system_ui.cpp
+    src/app/stability_ui.cpp
     src/app/library.cpp
+    src/app/score_ui.cpp
+    src/app/history_ui.cpp
+    src/app/snapshot.cpp
     src/app/settings.cpp
     src/app/theme.cpp
+    src/app/updater.cpp
     src/app/gui.rc
     ${CMAKE_BINARY_DIR}/library.rc)
 target_link_libraries(ez-pc-bench PRIVATE ezbench_core imgui ezb_flags ezb_warnings d3d11 dxgi dwmapi comdlg32 ole32
-    shell32 cabinet)
+    shell32 cabinet windowscodecs winhttp)
 target_link_options(ez-pc-bench PRIVATE /MANIFEST:NO)
+# Auto-update from GitHub releases (src/app/updater.h). Only release builds for publishing turn it on (the
+# `dist` preset); in dev builds the check never runs (a local build never matches the published exe).
+option(EZB_UPDATER "GUI checks GitHub for a newer ez-pc-bench.exe on startup" OFF)
+target_compile_definitions(ez-pc-bench PRIVATE EZB_UPDATER=$<BOOL:${EZB_UPDATER}>)
 
 # CLI
 add_executable(ez-pc-bench-cli
     src/app/main_cli.cpp
+    src/app/stability_cli.cpp
     src/app/app.rc)
 target_link_libraries(ez-pc-bench-cli PRIVATE ezbench_core ezb_flags ezb_warnings)
 target_link_options(ez-pc-bench-cli PRIVATE /MANIFEST:NO)

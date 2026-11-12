@@ -1,8 +1,13 @@
 #include "core/results.h"
 #include "core/baseline.h"
+#include "core/integrity.h"
+#include "core/monitor.h"
 #include "core/runner.h"
+#include "core/score.h"
 #include "core/sysinfo.h"
+#include "core/sysinfo_ext.h"
 #include "core/toon.h"
+#include "disk/disk.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,14 +15,20 @@
 #include <time.h>
 
 Metric g_metrics[MAX_METRICS];
+MetricSpread g_spread[MAX_METRICS];
 BenchResult g_results[MAX_BENCHES];
 std::atomic<u8> g_status[MAX_BENCHES];
 static u32 s_metric_count;
 
 void results_reset() {
+    memset(g_spread, 0, s_metric_count * sizeof(g_spread[0]));
     s_metric_count = 0;
     memset(g_results, 0, sizeof(g_results));
+    monitor_reset();
 }
+
+u32 res_mark() { return s_metric_count; }
+void res_rewind(u32 mark) { if (mark <= s_metric_count) s_metric_count = mark; }
 
 void res_begin(BenchResult* r, ResultKind kind) {
     r->first = s_metric_count;
@@ -126,7 +137,7 @@ static const char* kind_name(ResultKind k) {
     return k == RESULT_SERIES ? "series" : k == RESULT_MATRIX ? "matrix" : "values";
 }
 
-static void write_system(FILE* f) {
+void results_write_system(FILE* f) {
     const SysInfo* s = &g_sys;
     toon_key(f, 0, "system");
     toon_key(f, 1, "cpu");
@@ -160,15 +171,27 @@ static void write_system(FILE* f) {
         toon_row_end(&r);
     }
 
-    toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id");
+    toon_table(f, 1, "gpus", s->gpu_count, "name,dedicated_vram,vendor_id,device_id,driver,hags");
     for (u32 i = 0; i < s->gpu_count; ++i) {
+        const GpuInfo* g = &s->gpus[i];
         ToonRow r = toon_row(f, 2);
-        toon_cell_str(&r, s->gpus[i].name);
-        toon_cell_num(&r, (f64)s->gpus[i].dedicated_vram);
-        toon_cell_num(&r, s->gpus[i].vendor_id);
-        toon_cell_num(&r, s->gpus[i].device_id);
+        toon_cell_str(&r, g->name);
+        toon_cell_num(&r, (f64)g->dedicated_vram);
+        toon_cell_num(&r, g->vendor_id);
+        toon_cell_num(&r, g->device_id);
+        toon_cell_str(&r, g->driver);
+        toon_cell_str(&r, g->hags < 0 ? "unsupported" : g->hags ? "on" : "off");
         toon_row_end(&r);
     }
+
+    toon_key(f, 1, "board");
+    toon_str(f, 2, "system", s->board.sys_vendor);
+    toon_str(f, 2, "product", s->board.sys_product);
+    toon_str(f, 2, "board_vendor", s->board.board_vendor);
+    toon_str(f, 2, "board", s->board.board_product);
+    toon_str(f, 2, "bios_vendor", s->board.bios_vendor);
+    toon_str(f, 2, "bios_version", s->board.bios_version);
+    toon_str(f, 2, "bios_date", s->board.bios_date);
 
     toon_table(f, 1, "drives", s->drive_count,
                "letter,model,bus,fs,total_bytes,logical_sector,physical_sector,virtual_disk,dev_drive,bitlocker");
@@ -191,10 +214,16 @@ static void write_system(FILE* f) {
 
     toon_str(f, 1, "os", s->os);
     toon_bool(f, 1, "elevated", s->elevated);
+    toon_key(f, 1, "windows");
+    const i8 w[] = { s->win.hypervisor, s->win.vbs, s->win.hvci, s->win.secure_boot, s->win.game_mode };
+    const char* const wn[] = { "hypervisor", "vbs", "memory_integrity", "secure_boot", "game_mode" };
+    for (u32 i = 0; i < ARRAY_COUNT(w); ++i) toon_str(f, 2, wn[i], w[i] < 0 ? "unknown" : w[i] ? "on" : "off");
+    toon_str(f, 2, "tpm", s->win.tpm == 20 ? "2.0" : s->win.tpm == 12 ? "1.2" : "none");
     toon_key(f, 1, "power");
     toon_bool(f, 2, "on_ac", s->power.on_ac);
     toon_str(f, 2, "plan", s->power.scheme_name);
     toon_str(f, 2, "mode", power_mode_name(s->power.mode));
+    sysreport_write_results(f, 1);     // sysinfo_ext.h: CPU / board / GPU / display details
 }
 
 static void write_params(FILE* f, const BenchParams* p) {
@@ -202,8 +231,18 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "duration_ms", p->duration_ms);
     toon_num(f, 1, "thread_count", p->thread_count);
     toon_str(f, 1, "gpu", p->gpu_adapter < g_sys.gpu_count ? g_sys.gpus[p->gpu_adapter].name : "");
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {     // GPU suites ran on several adapters ("A + B")
+        char gpus[512] = "";
+        for (u32 i = 0; i < g_sys.gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                const size_t len = strlen(gpus);
+                snprintf(gpus + len, sizeof(gpus) - len, "%s%s", len ? " + " : "", g_sys.gpus[i].name);
+            }
+        toon_str(f, 1, "gpus", gpus);
+    }
     toon_num(f, 1, "gpu_width", p->gpu_width);
     toon_num(f, 1, "gpu_height", p->gpu_height);
+    toon_str(f, 1, "gpu_present", !p->gpu_onscreen ? "offscreen" : p->gpu_fullscreen ? "fullscreen" : "windowed");
     u32 drives = 0;
     for (u32 d = 0; d < 26; ++d) drives += (p->disk_drives >> d) & 1;
     fprintf(f, "  disk_drives[%u]: ", drives);
@@ -213,6 +252,119 @@ static void write_params(FILE* f, const BenchParams* p) {
     toon_num(f, 1, "disk_file_bytes", (f64)p->disk_file_bytes);
     toon_num(f, 1, "disk_passes", p->disk_passes);
     toon_bool(f, 1, "disk_write_through", p->disk_write_through);
+    toon_num(f, 1, "repeat", p->repeat);
+    toon_num(f, 1, "sustain_s", p->sustain_s);
+    disk_write_toon_params(f, p);
+}
+
+// Repeated runs: spread[N]{id,name,x,runs,min,max,cv} for every metric whose value is a median.
+static void write_spread(FILE* f) {
+    u32 n = 0;
+    for (u32 i = 0; i < g_bench_count; ++i)
+        if ((BenchStatus)g_status[i].load(std::memory_order_acquire) == ST_DONE && g_results[i].count &&
+            res_spread(&g_results[i])->runs >= 2)
+            n += g_results[i].count;
+    if (!n) return;
+    toon_table(f, 0, "spread", n, "id,name,x,runs,min,max,cv");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const BenchResult* r = &g_results[i];
+        if ((BenchStatus)g_status[i].load(std::memory_order_acquire) != ST_DONE || !r->count || res_spread(r)->runs < 2)
+            continue;
+        const Metric* m = res_metrics(r);
+        const MetricSpread* sp = res_spread(r);
+        for (u32 k = 0; k < r->count; ++k) {
+            ToonRow row = toon_row(f, 1);
+            toon_cell_str(&row, g_benches[i].cli_id);
+            toon_cell_str(&row, m[k].name);
+            toon_cell_num(&row, baseline_key_x(r, k));
+            toon_cell_num(&row, sp[k].runs);
+            toon_cell_num(&row, sp[k].min);
+            toon_cell_num(&row, sp[k].max);
+            toon_cell_num(&row, round(sp[k].cv * 100.0) / 100.0);
+            toon_row_end(&row);
+        }
+    }
+}
+
+// Sustained mode (runner.h): sustained[N]{id,name,unit,passes,seconds,first,last,min,max,median,drop_pct} per
+// tracked metric (name "<metric> (average)" for series / matrix results), then every pass:
+// sustain_passes[M]{id,name,pass,t,value} (t = seconds from the test's start to the end of that pass).
+static bool sustained(u32 i) {
+    return (BenchStatus)g_status[i].load(std::memory_order_acquire) == ST_DONE && g_sustain[i].passes >= 2;
+}
+
+static void write_sustain(FILE* f) {
+    u32 n = 0, rows = 0;
+    for (u32 i = 0; i < g_bench_count; ++i)
+        if (sustained(i)) { n += g_sustain[i].tracked; rows += g_sustain[i].tracked * g_sustain[i].passes; }
+    if (!n) return;
+    char name[160];
+    toon_table(f, 0, "sustained", n, "id,name,unit,passes,seconds,first,last,min,max,median,drop_pct");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const SustainRecord* s = &g_sustain[i];
+        if (!sustained(i)) continue;
+        for (u32 k = 0; k < s->tracked; ++k) {
+            const Metric* m = sustain_metric(i, k);
+            snprintf(name, sizeof(name), s->averaged ? "%s (average)" : "%s", m->name);
+            SustainStats st;
+            sustain_stats(s, k, m->unit, &st);
+            ToonRow row = toon_row(f, 1);
+            toon_cell_str(&row, g_benches[i].cli_id);
+            toon_cell_str(&row, name);
+            toon_cell_str(&row, m->unit);
+            toon_cell_num(&row, s->passes);
+            toon_cell_num(&row, round(s->seconds * 10.0) / 10.0);
+            const f64 v[] = { st.first, st.last, st.min, st.max, st.median };
+            for (u32 j = 0; j < ARRAY_COUNT(v); ++j) toon_cell_num(&row, v[j]);
+            toon_cell_num(&row, round(st.drop_pct * 100.0) / 100.0);
+            toon_row_end(&row);
+        }
+    }
+    toon_table(f, 0, "sustain_passes", rows, "id,name,pass,t,value");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const SustainRecord* s = &g_sustain[i];
+        if (!sustained(i)) continue;
+        for (u32 k = 0; k < s->tracked; ++k) {
+            const Metric* m = sustain_metric(i, k);
+            snprintf(name, sizeof(name), s->averaged ? "%s (average)" : "%s", m->name);
+            for (u32 pass = 0; pass < s->passes; ++pass) {
+                ToonRow row = toon_row(f, 1);
+                toon_cell_str(&row, g_benches[i].cli_id);
+                toon_cell_str(&row, name);
+                toon_cell_num(&row, pass + 1);
+                toon_cell_num(&row, round(sustain_time(s, pass) * 100.0) / 100.0);
+                toon_cell_num(&row, sustain_value(s, pass, k));
+                toon_row_end(&row);
+            }
+        }
+    }
+}
+
+// Conditions each test ran under (monitor.h): env[N]{id,samples,cpu_mhz,...,flags,bat_discharge_w}. NaN = not
+// reported. New columns go at the end.
+static void write_env(FILE* f) {
+    u32 n = 0;
+    for (u32 i = 0; i < g_bench_count; ++i) n += env_valid(&g_env[i]);
+    if (!n) return;
+    toon_table(f, 0, "env", n, "id,samples,cpu_mhz,cpu_mhz_max,cpu_util,gpu_mhz,gpu_mhz_max,gpu_mem_mhz,"
+                               "gpu_util,gpu_temp_max,gpu_power,cpu_drop,gpu_drop,flags,bat_discharge_w,cpu_pkg_w,whea");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        const TestEnv* e = &g_env[i];
+        if (!env_valid(e)) continue;
+        char flags[96];
+        env_flag_names(e->flags, flags, sizeof(flags));
+        ToonRow row = toon_row(f, 1);
+        toon_cell_str(&row, g_benches[i].cli_id);
+        toon_cell_num(&row, e->samples);
+        const f32 v[] = { e->cpu_mhz, e->cpu_mhz_max, e->cpu_util, e->gpu_mhz, e->gpu_mhz_max,
+                          e->gpu_mem_mhz, e->gpu_util, e->gpu_temp_max, e->gpu_power, e->cpu_drop, e->gpu_drop };
+        for (u32 k = 0; k < ARRAY_COUNT(v); ++k) toon_cell_num(&row, round(v[k] * 10.0) / 10.0);
+        toon_cell_str(&row, flags);
+        toon_cell_num(&row, round(e->bat_discharge_w * 10.0) / 10.0);
+        toon_cell_num(&row, round(e->cpu_pkg_w * 10.0) / 10.0);
+        toon_cell_num(&row, e->whea);
+        toon_row_end(&row);
+    }
 }
 
 bool results_write_toon(const wchar_t* path, const BenchParams* p) {
@@ -227,7 +379,7 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
     toon_str(f, 0, "app", "ez-pc-bench");
     toon_num(f, 0, "format", 1);
     toon_str(f, 0, "timestamp", stamp);
-    write_system(f);
+    results_write_system(f);
     write_params(f, p);
 
     u32 tests = 0, metrics = 0;
@@ -275,7 +427,13 @@ bool results_write_toon(const wchar_t* path, const BenchParams* p) {
             toon_row_end(&row);
         }
     }
+    write_spread(f);
+    write_sustain(f);
+    write_env(f);
+    ScoreResult score;      // derived values last, then the integrity hashes (integrity.h)
+    score_current(&score);
+    score_write_toon(f, &score);
     const bool ok = ferror(f) == 0;
     fclose(f);
-    return ok;
+    return ok && integrity_append(path);
 }

@@ -1,5 +1,6 @@
 #include "core/sysinfo.h"
 #include "core/elevation.h"
+#include "core/sysinfo_ext.h"
 #include <windows.h>
 #include <dxgi1_6.h>
 #include <powrprof.h>
@@ -27,6 +28,19 @@ static void trim(char* s) {
     if (start != s) memmove(s, start, strlen(start) + 1);
     size_t n = strlen(s);
     while (n && s[n - 1] == ' ') s[--n] = 0;
+}
+
+bool cpu_baseline_ok() {
+    int r[4];
+    __cpuid(r, 1);
+    const u32 ecx = (u32)r[2];
+    return ((ecx >> 20) & 1) && ((ecx >> 23) & 1);     // SSE4.2, POPCNT
+}
+
+void sysinfo_cap_to_baseline() {
+    CpuInfo* c = &g_sys.cpu;
+    c->avx = c->avx2 = c->fma = c->vaes = false;
+    c->avx512f = c->avx512vl = c->avx512bw = c->avx512dq = c->avx512vnni = c->avx512bf16 = false;
 }
 
 static void cpu_query(CpuInfo* c) {
@@ -62,6 +76,7 @@ static void cpu_query(CpuInfo* c) {
     const bool os_avx512 = (xcr0 & 0xE6) == 0xE6;
 
     c->sse42 = (ecx1 >> 20) & 1;
+    c->popcnt = (ecx1 >> 23) & 1;
     c->aes = (ecx1 >> 25) & 1;
     c->avx = os_avx && ((ecx1 >> 28) & 1);
     c->fma = os_avx && ((ecx1 >> 12) & 1);
@@ -77,6 +92,10 @@ static void cpu_query(CpuInfo* c) {
         c->avx512bw = os_avx512 && ((ebx >> 30) & 1);
         c->avx512vl = os_avx512 && ((ebx >> 31) & 1);
         c->avx512vnni = os_avx512 && ((ecx >> 11) & 1);
+        if (r[0] >= 1) {    // sub-leaves
+            __cpuidex(r, 7, 1);
+            c->avx512bf16 = c->avx512f && ((r[0] >> 5) & 1);
+        }
     }
 }
 
@@ -129,7 +148,28 @@ static const char* smbios_mem_type(u8 t) {
     }
 }
 
-static void ram_query(RamInfo* ram) {
+static void copy_smbios(char* dst, u32 size, const u8* p, u8 len, const u8* end, u8 index) {
+    snprintf(dst, size, "%s", smbios_string(p, len, end, index));
+    trim(dst);
+}
+
+// Types 0 (BIOS), 1 (system), 2 (baseboard).
+static void board_record(BoardInfo* b, const u8* p, u8 len, const u8* end) {
+    const u8 type = p[0];
+    if (type == 0 && len >= 0x09) {
+        copy_smbios(b->bios_vendor, sizeof(b->bios_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->bios_version, sizeof(b->bios_version), p, len, end, p[0x05]);
+        copy_smbios(b->bios_date, sizeof(b->bios_date), p, len, end, p[0x08]);
+    } else if (type == 1 && len >= 0x08) {
+        copy_smbios(b->sys_vendor, sizeof(b->sys_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->sys_product, sizeof(b->sys_product), p, len, end, p[0x05]);
+    } else if (type == 2 && len >= 0x08) {
+        copy_smbios(b->board_vendor, sizeof(b->board_vendor), p, len, end, p[0x04]);
+        copy_smbios(b->board_product, sizeof(b->board_product), p, len, end, p[0x05]);
+    }
+}
+
+static void smbios_query(RamInfo* ram, BoardInfo* board) {
     MEMORYSTATUSEX ms = { sizeof(ms) };
     if (GlobalMemoryStatusEx(&ms)) ram->total_bytes = ms.ullTotalPhys;
     ULONGLONG installed_kib = 0;
@@ -144,7 +184,7 @@ static void ram_query(RamInfo* ram) {
         const RawSmbios* raw = (const RawSmbios*)buf;
         const u8* p = raw->data;
         const u8* end = raw->data + raw->length;
-        while (p + 4 <= end && ram->module_count < ARRAY_COUNT(ram->modules)) {
+        while (p + 4 <= end) {
             const u8 type = p[0], len = p[1];
             if (len < 4) break;
             // Structure end: formatted area followed by a double-null-terminated string set.
@@ -152,7 +192,8 @@ static void ram_query(RamInfo* ram) {
             while (next + 1 < end && !(next[0] == 0 && next[1] == 0)) ++next;
             next += 2;
 
-            if (type == 17 && len >= 0x15) {
+            board_record(board, p, len, end);
+            if (type == 17 && len >= 0x15 && ram->module_count < ARRAY_COUNT(ram->modules)) {
                 u16 size_field = *(const u16*)(p + 0x0C);
                 u64 bytes = 0;
                 if (size_field == 0x7FFF && len >= 0x20) bytes = (u64)*(const u32*)(p + 0x1C) * MiB;
@@ -519,8 +560,11 @@ void sysinfo_init() {
     memset(&g_sys, 0, sizeof(g_sys));
     cpu_query(&g_sys.cpu);
     cpu_topology(&g_sys.cpu);
-    ram_query(&g_sys.ram);
+    cpu_details_query(&g_cpux);
+    smbios_query(&g_sys.ram, &g_sys.board);
     gpu_query(&g_sys);
+    gpu_details_query(&g_sys);
+    winstate_query(&g_sys.win);
     drives_query(&g_sys);
     LoadLibraryW(L"powrprof.dll");
     sysinfo_refresh_power();

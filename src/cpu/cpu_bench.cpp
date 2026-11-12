@@ -14,7 +14,27 @@
 
 // ---- suite ------------------------------------------------------------------------------
 
+CpuExt g_cpu_ext;
+
+static void cpu_ext_init() {
+    int r[4];
+    __cpuid(r, 0);
+    const int max_leaf = r[0];
+    __cpuid(r, 1);
+    g_cpu_ext.pclmul = (r[2] >> 1) & 1;
+    if (max_leaf < 7) return;
+    __cpuidex(r, 7, 0);
+    const u32 sub_leaves = (u32)r[0];
+    g_cpu_ext.vpclmulqdq = g_sys.cpu.avx2 && ((r[2] >> 10) & 1);
+    g_cpu_ext.gfni = (r[2] >> 8) & 1;
+    if (sub_leaves < 1) return;
+    __cpuidex(r, 7, 1);
+    g_cpu_ext.avx_vnni = g_sys.cpu.avx2 && ((r[0] >> 4) & 1);
+    g_cpu_ext.avx512_bf16 = g_sys.cpu.avx512f && ((r[0] >> 5) & 1);
+}
+
 bool cpu_init(const BenchParams*, void** state, char*, u32) {
+    cpu_ext_init();
     topo_init();
     pool_init();
     *state = nullptr;
@@ -238,7 +258,7 @@ struct SieveJob {
     std::atomic<u64> count;
 };
 
-static void sieve_range(u32 index, u32 count, void* user) {
+FORCE_INLINE static void sieve_range_body(u32 index, u32 count, void* user) {
     SieveJob* j = (SieveJob*)user;
     const u64 total = SIEVE_N / 2;
     // Segment-aligned split of [0, total).
@@ -272,6 +292,14 @@ static void sieve_range(u32 index, u32 count, void* user) {
         found += zeros;
     }
     j->count.fetch_add(found, std::memory_order_relaxed);
+}
+
+// AVX2 + baseline copies (the zero count vectorizes: ~3 % of the result).
+TARGET_AVX2 static void sieve_range_avx2(u32 index, u32 count, void* user) { sieve_range_body(index, count, user); }
+static void sieve_range_base(u32 index, u32 count, void* user) { sieve_range_body(index, count, user); }
+static void sieve_range(u32 index, u32 count, void* user) {
+    if (g_sys.cpu.avx2) sieve_range_avx2(index, count, user);
+    else sieve_range_base(index, count, user);
 }
 
 void cpu_sieve(void*, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {

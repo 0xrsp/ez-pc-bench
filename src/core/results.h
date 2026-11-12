@@ -1,6 +1,7 @@
 #pragma once
 // Metric arena, per-bench result/status arrays, text + JSON export.
 #include "core/bench.h"
+#include <stdio.h>
 
 constexpr u32 MAX_METRICS = 64 * 1024;
 
@@ -9,6 +10,20 @@ extern BenchResult g_results[MAX_BENCHES];
 extern std::atomic<u8> g_status[MAX_BENCHES];  // BenchStatus; DONE is stored with release order after the result
 
 void results_reset();   // only while no run is active
+
+// Spread over repeated runs (BenchParams::repeat >= 2), parallel to g_metrics: the metric's value is the
+// median, these are min / max and the coefficient of variation (stddev / mean, %). runs = 0 for single runs.
+struct MetricSpread {
+    f32 min, max, cv;
+    u32 runs;
+};
+extern MetricSpread g_spread[MAX_METRICS];
+constexpr f32 NOISY_CV_PCT = 3.0f;      // spread above this is flagged as noisy
+inline const MetricSpread* res_spread(const BenchResult* r) { return &g_spread[r->first]; }
+
+// Arena position, for the runner's repeats: run again, read the values, rewind.
+u32 res_mark();
+void res_rewind(u32 mark);
 
 // Called by benchmark functions to fill their result.
 void res_begin(BenchResult* r, ResultKind kind);
@@ -33,3 +48,5 @@ bool format_frame_fps(char* buf, u32 size, const char* name, const char* unit, f
 
 // Results file in TOON (see toon.h for the subset, results.cpp for the layout). Saved as *.toon.txt.
 bool results_write_toon(const wchar_t* path, const BenchParams* p);
+// The `system:` block alone (also written by the stability report).
+void results_write_system(FILE* f);

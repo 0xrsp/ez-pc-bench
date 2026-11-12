@@ -1,0 +1,68 @@
+name: Submit a result
+description: Share an EzPcBench results file (*.toon.txt) for the run library and the results page.
+title: "[Result] <CPU> + <GPU>"
+labels: ["result submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing a run. Accepted results go into `library/`: they show up on the
+        [results page](https://0xrsp.github.io/ez-pc-bench/results.html), in the app's Ranking view and in the
+        compare window's Library. Raw numbers stay the real result; the score is recomputed from them.
+
+        **Before running:** plug in the charger, set Windows to *Best performance*, close other apps
+        (games, browsers with video, launchers), and run as administrator. Use the **Score** preset (or
+        Standard) without changing settings.
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: Laptop / desktop model, or the main parts if it's a custom build.
+      placeholder: "e.g. ASUS TUF A16 (2025), or Ryzen 7 9700X + RTX 4070 + Samsung 990 Pro"
+    validations:
+      required: true
+  - type: dropdown
+    id: preset
+    attributes:
+      label: Preset
+      options:
+        - Score
+        - Standard
+        - Extended
+        - Custom selection
+    validations:
+      required: true
+  - type: checkboxes
+    id: conditions
+    attributes:
+      label: Conditions
+      description: The file records power and Windows state too; this is a quick check.
+      options:
+        - label: On AC power
+        - label: Windows power mode "Best performance"
+        - label: Default settings (3 s phases, all threads, 1920x1080, 1 GiB disk file)
+        - label: Run as administrator
+  - type: textarea
+    id: file
+    attributes:
+      label: Results file
+      description: |
+        Drag the `.toon.txt` file from the app's `results` folder into this box (GitHub attaches it), or paste
+        its full text. Don't edit it: the file carries a hash that shows edits.
+      placeholder: Drop ezbench_..._.toon.txt here
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything unusual (BIOS settings, undervolt, overclock, cooling pad, background services you can't stop).
+    validations:
+      required: false
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Publishing
+      options:
+        - label: I agree that this results file (system info incl. CPU, GPU, RAM, drive models and Windows version) is published in the repository under its MIT license.
+          required: true

@@ -34,9 +34,18 @@ typedef std::atomic<bool> CancelFlag;
     X(fp32,      GT_FP32,         "Compute", "compute", "FP32 throughput",             0)               \
     X(fp16,      GT_FP16,         "Compute", "compute", "FP16 throughput (packed)",    0)               \
     X(int32,     GT_INT32,        "Compute", "compute", "INT32 throughput",            0)               \
+    X(fp64,      GT_FP64,         "Compute", "compute", "FP64 throughput",             0)               \
+    X(dp4a,      GT_DP4A,         "Compute", "compute", "INT8 dot product (dp4a)",     0)               \
+    X(matrix,    GT_MATRIX,       "Compute", "compute", "Matrix multiply (FP16 / INT8)", 0)             \
+    X(atomics,   GT_ATOMICS,      "Compute", "compute", "Atomics",                     0)               \
     X(vram,      GT_VRAM_BW,      "Compute", "compute", "VRAM bandwidth",              0)               \
     X(lds,       GT_LDS_BW,       "Compute", "compute", "Shared memory (LDS) bandwidth", 0)             \
     X(transfer,  GT_TRANSFER,     "Compute", "compute", "Host <-> GPU transfer",       0)               \
+    X(latency,   GT_MEM_LATENCY,  "Memory",  "mem",     "Memory latency (pointer chase)", 0)            \
+    X(sweep,     GT_MEM_SWEEP,    "Memory",  "mem",     "Read bandwidth sweep",        0)               \
+    X(pso,       GT_PSO,          "Pipelines", "pso",   "Pipeline creation (cold / cached)", 0)         \
+    X(formats,   GT_TEX_FORMATS,  "Texture", "tex",     "Sampling rate per format",    0)               \
+    X(aniso,     GT_TEX_ANISO,    "Texture", "tex",     "Anisotropic filtering",       0)               \
     X(triangles, GT_TRIANGLES,    "3D",      "3d",      "Triangle throughput",         BENCH_PREVIEW)   \
     X(fill,      GT_PIXEL_FILL,   "3D",      "3d",      "Pixel fill rate",             BENCH_PREVIEW)   \
     X(texfill,   GT_TEXTURE_FILL, "3D",      "3d",      "Texture fill rate",           BENCH_PREVIEW)   \
@@ -44,7 +53,14 @@ typedef std::atomic<bool> CancelFlag;
     X(scene,     GT_SCENE,        "3D",      "3d",      "Lit scene",                   BENCH_PREVIEW)   \
     X(sprites,   GT_SPRITES,      "2D",      "2d",      "Sprite batch",                BENCH_PREVIEW)   \
     X(blit,      GT_BLIT,         "2D",      "2d",      "Blit / copy",                 BENCH_PREVIEW)   \
-    X(clear,     GT_CLEAR,        "2D",      "2d",      "Clear",                       BENCH_PREVIEW)
+    X(clear,     GT_CLEAR,        "2D",      "2d",      "Clear",                       BENCH_PREVIEW)   \
+    /* Feature tests: gpu_features.h */                                                                 \
+    X(raytracing,       GT_RAYTRACING,       "Features", "features", "Ray tracing (inline ray query)",  BENCH_PREVIEW) \
+    X(mesh_shader,      GT_MESH_SHADER,      "Features", "features", "Mesh shaders vs vertex pipeline", BENCH_PREVIEW) \
+    X(tessellation,     GT_TESSELLATION,     "Features", "features", "Tessellation",                    BENCH_PREVIEW) \
+    X(vrs,              GT_VRS,              "Features", "features", "Variable-rate shading",           BENCH_PREVIEW) \
+    X(sampler_feedback, GT_SAMPLER_FEEDBACK, "Features", "features", "Sampler feedback",                BENCH_PREVIEW) \
+    X(async_compute,    GT_ASYNC_COMPUTE,    "Features", "features", "Async compute overlap",           BENCH_PREVIEW)
 
 enum GpuTestId : u8 {
 #define X(id, e, g, gid, name, flags) e,
@@ -119,6 +135,17 @@ void gpu_report_compute(BenchResult* out, const char* unit, f64 unit_div, f64 wo
                         const f64* dispatch_ms, u32 n);
 // Average rate of n timed dispatches doing `work` each (work units per second).
 f64 gpu_rate(f64 work, const f64* dispatch_ms, u32 n);
+
+// ---- Suites (gpu_multi.cpp) --------------------------------------------------------------------------
+// The registry's GPU suites: one backend device per adapter in gpu_adapter_mask(); every test runs on each
+// adapter in turn. With several adapters, metric names get the adapter's short name as prefix
+// ("rtx5060-laptop: Throughput"), like the disk suite's "C: Read"; with one they pass through unchanged.
+u32 gpu_adapter_mask(const BenchParams* p);           // BenchParams::gpu_adapters, or just gpu_adapter
+bool gpu_vk_suite_init(const BenchParams* p, void** state, char* error, u32 error_size);
+bool gpu_d3d12_suite_init(const BenchParams* p, void** state, char* error, u32 error_size);
+void gpu_suite_shutdown(void* state);
+void gpu_suite_run(void* state, GpuTestId test, const BenchParams* p, BenchLive* live, BenchResult* out,
+                   const CancelFlag* cancel);
 
 // ---- Backends (one implementation file each) -------------------------------------------------------
 

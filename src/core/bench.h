@@ -25,18 +25,39 @@ struct BenchResult {
     char error[128];                // reason when FAILED / SKIPPED
 };
 
+// Disk suite options beyond the CrystalDiskMark basics (src/disk/, docs/notes/disk-bench.md).
+enum DiskMode : u8 { DISK_MODE_RW, DISK_MODE_READ, DISK_MODE_WRITE, DISK_MODE_RW_MIX };
+enum DiskUnit : u8 { DISK_UNIT_MBS, DISK_UNIT_GBS, DISK_UNIT_IOPS, DISK_UNIT_US };   // GUI display only
+struct DiskOptions {
+    u8 mode = DISK_MODE_RW;         // which passes the CrystalDiskMark rows run
+    u8 mix_read_pct = 70;           // DISK_MODE_RW_MIX: reads in the mixed pass
+    u8 unit = DISK_UNIT_MBS;
+    bool buffered = false;          // through the OS file cache (e.g. network shares)
+    u32 interval_ms = 0;            // pause before each disk test after the first (CrystalDiskMark "Interval")
+    u32 sustained_gib = 64;         // cap of the sustained-write test (also at most 80 % of the free space)
+    wchar_t folder[260] = {};       // test in this folder instead of on the drive letters ("" = drives)
+};
+
 struct BenchParams {
     u32 duration_ms = 3000;         // per measured phase
     u32 thread_count = 0;           // 0 = all logical processors
     u32 gpu_adapter = 0;            // index into SysInfo::gpus
+    u32 gpu_adapters = 0;           // bit n = SysInfo::gpus[n]: the GPU suites run on each; 0 = gpu_adapter only
     u32 gpu_width = 1920, gpu_height = 1080;
-    bool gpu_fullscreen = true;
+    bool gpu_fullscreen = true;     // on-screen mode: borderless fullscreen, else a gpu_width x gpu_height window
+    bool gpu_onscreen = false;      // 3D / 2D tests present to a window (gpu/gpu_present.h); default offscreen
     u32 disk_drives = 1u << ('C' - 'A');    // bit n = drive letter 'A' + n; the disk suite runs on each
 
     u64 disk_file_bytes = 1 * 1024ull * 1024 * 1024;
     u32 disk_passes = 3;            // best of N (CrystalDiskMark uses 5; 3 is as stable here with ~40% less wear)
     bool disk_write_through = false;
+    u32 repeat = 1;                 // each test runs this many times in a row; results are the median (runner.cpp)
+    u32 sustain_s = 0;              // sustained mode: each test loops for this long (>= 2 passes), median + per-pass
+                                    // series; 0 = off. Overrides `repeat` (runner.cpp)
+    DiskOptions disk;
 };
+constexpr u32 MAX_REPEAT = 10;
+constexpr u32 MAX_SUSTAIN_S = 60 * 60;
 
 // Live state of the running test. Single writer (worker), single reader (UI / CLI).
 constexpr u32 LIVE_HISTORY = 256;
@@ -73,7 +94,13 @@ struct SuiteDesc {
 enum BenchFlags : u32 {
     BENCH_DEFAULT_OFF = 1u << 0,    // not selected by default in the GUI
     BENCH_PREVIEW     = 1u << 1,    // publishes a rendered preview (GPU 3D / 2D) shown in the live panel
+    BENCH_CONFIRM     = 1u << 4,    // writes a lot or runs very long: the GUI asks first, the CLI needs --yes,
+                                    // presets never select it
 };
+
+// CPU extensions a test's kernels need beyond the build baseline (SSE4.2 + POPCNT, CMakeLists.txt). On a CPU
+// without them the GUI won't select the test and the runner skips it.
+enum BenchIsa : u8 { ISA_BASE, ISA_FMA, ISA_AVX2, ISA_AVX512, ISA_AVX512_BF16, ISA_SHA, ISA_AES };
 
 struct BenchDesc {
     SuiteId suite;
@@ -82,9 +109,13 @@ struct BenchDesc {
     const char* cli_id;     // full id, e.g. "cpu.fma.avx2"
     BenchFn fn;
     u32 flags;
+    BenchIsa isa;           // ISA_BASE when omitted
 };
 
 extern const SuiteDesc g_suites[SUITE_COUNT];
 extern const BenchDesc g_benches[];
 extern const u32 g_bench_count;
 constexpr u32 MAX_BENCHES = 256;
+
+// Null if this CPU can run the test, else why not (static string). Needs sysinfo_init().
+const char* bench_unsupported(u32 id);

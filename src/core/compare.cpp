@@ -1,6 +1,7 @@
 // Comparison set: loads result files (and the current run) into one aligned table, see compare.h.
 #include "core/compare.h"
 #include "core/baseline.h"
+#include "core/integrity.h"
 #include "core/results.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
@@ -294,6 +295,11 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
                 if (*p >= 'A' && *p <= 'Z') s_file.disk_mask |= 1u << (*p - 'A');
         }
         else if (!strcmp(path, "app")) s_file.have_app = !strcmp(v, "ez-pc-bench");
+        // Only benchmark results compare; anything else (e.g. a stability report) doesn't.
+        else if (!strcmp(path, "kind") && strcmp(v, "benchmark") != 0) {
+            snprintf(err, err_size, "a %s report, not benchmark results", v);
+            return false;
+        }
         else if (!strcmp(path, "timestamp")) copy_str(s_file.timestamp, sizeof(s_file.timestamp), v);
         else if (!strcmp(path, "system.cpu.brand")) copy_str(s_file.cpu, sizeof(s_file.cpu), v);
         else if (!strcmp(path, "system.ram.installed_bytes")) s_file.ram_installed = atof(v);
@@ -303,6 +309,7 @@ static bool parse_file(ToonReader* r, u32 run, char* err, u32 err_size) {
         else if (!strcmp(path, "system.power.on_ac")) s_file.on_ac = !strcmp(v, "true");
         else if (!strcmp(path, "system.power.mode")) copy_str(s_file.mode, sizeof(s_file.mode), v);
         else if (!strcmp(path, "params.gpu")) copy_str(s_file.gpu, sizeof(s_file.gpu), v);
+        else if (!strcmp(path, "params.gpus")) copy_str(s_file.gpu, sizeof(s_file.gpu), v);    // several adapters, after gpu
         else if (!strcmp(path, "params.duration_ms")) s_file.duration_ms = atof(v);
     }
     if (!s_file.have_app) { snprintf(err, err_size, "not an EzPcBench results file"); return false; }
@@ -358,6 +365,8 @@ bool compare_add_buffer(const char* label, const char* data, u32 size, char* err
     CmpRun* c = &g_cmp.runs[run];
     copy_str(c->label, sizeof(c->label), label);
     fill_info(c);
+    score_from_text(data, size, &c->score);
+    c->integrity = integrity_check(data, size);
     return true;
 }
 
@@ -383,6 +392,8 @@ bool compare_peek(const char* data, u32 size, CmpRun* out, char* err, u32 err_si
     memset(&s_file, 0, sizeof(s_file));
     if (!parse_file(&r, UINT32_MAX, err, err_size)) return false;
     fill_info(out);
+    score_from_text(data, size, &out->score);
+    out->integrity = integrity_check(data, size);
     return true;
 }
 
@@ -434,6 +445,14 @@ bool compare_add_current(char* err, u32 err_size) {
     format_ram(c->info[CI_RAM], sizeof(c->info[0]), (f64)s->ram.installed_bytes, (f64)s->ram.total_bytes, m0 ? m0->type : "",
                m0 ? m0->configured_mts : 0);
     copy_str(c->info[CI_GPU], sizeof(c->info[0]), p->gpu_adapter < s->gpu_count ? s->gpus[p->gpu_adapter].name : "");
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {     // several adapters: "A + B" like params.gpus
+        c->info[CI_GPU][0] = 0;
+        for (u32 i = 0; i < s->gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                const size_t len = strlen(c->info[CI_GPU]);
+                snprintf(c->info[CI_GPU] + len, sizeof(c->info[0]) - len, "%s%s", len ? " + " : "", s->gpus[i].name);
+            }
+    }
     char models[26][64] = {};
     for (u32 i = 0; i < s->drive_count; ++i)
         if (s->drives[i].letter >= 'A' && s->drives[i].letter <= 'Z')
@@ -443,5 +462,7 @@ bool compare_add_current(char* err, u32 err_size) {
     format_power(c->info[CI_POWER], sizeof(c->info[0]), s->power.on_ac, power_mode_name(s->power.mode));
     copy_str(c->info[CI_ADMIN], sizeof(c->info[0]), s->elevated ? "yes" : "no");
     snprintf(c->info[CI_DURATION], sizeof(c->info[0]), "%g s", p->duration_ms / 1000.0);
+    score_current(&c->score);
+    c->integrity = INTEGRITY_NONE;
     return true;
 }

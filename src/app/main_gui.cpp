@@ -4,14 +4,21 @@
 #include "app/settings.h"
 #include "app/settings_ui.h"
 #include "app/health_ui.h"
+#include "app/overlay.h"
+#include "app/history_ui.h"
+#include "app/snapshot.h"
+#include "app/stability_ui.h"
 #include "app/temps_ui.h"
+#include "app/system_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
+#include "app/updater.h"
 #include "core/elevation.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
 #include "gpu/gpu_common.h"
+#include "stability/stability.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -52,9 +59,13 @@ struct ToolDesc {
 };
 static const ToolDesc s_tool_desc[TOOL_COUNT] = {
     { L"EzPcBench - Compare", 1360, 820, compare_ui_draw, compare_ui_on_open, nullptr, true },
-    { L"EzPcBench - Settings", 640, 600, settings_ui_draw, nullptr, nullptr, false },
-    { L"EzPcBench - Temperatures", 900, 640, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
-    { L"EzPcBench - Disk health", 980, 720, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - Settings", 680, 720, settings_ui_draw, nullptr, nullptr, false },
+    { L"EzPcBench - Sensors", 1100, 820, temps_ui_draw, temps_ui_on_open, temps_ui_on_close, false },
+    { L"EzPcBench - Disk health", 1080, 880, health_ui_draw, health_ui_on_open, nullptr, false },
+    { L"EzPcBench - History", 1200, 800, history_ui_draw, history_ui_on_open, history_ui_on_close, false },
+    { L"EzPcBench - System details", 1180, 800, system_ui_draw, system_ui_on_open, nullptr, false },
+    { L"EzPcBench - Stability", 1400, 900, stability_ui_draw, stability_ui_on_open, nullptr, false },
+    { L"EzPcBench - Benchmark settings", 680, 580, bench_settings_ui_draw, nullptr, nullptr, false },
 };
 
 struct ToolWin {
@@ -183,17 +194,22 @@ static LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+static COLORREF to_colorref(const f32 c[3]) {
+    return RGB((int)(c[0] * 255 + 0.5f), (int)(c[1] * 255 + 0.5f), (int)(c[2] * 255 + 0.5f));
+}
 static COLORREF bg_colorref() {
     f32 c[3];
     theme_bg_rgb(c);
-    return RGB((int)(c[0] * 255 + 0.5f), (int)(c[1] * 255 + 0.5f), (int)(c[2] * 255 + 0.5f));
+    return to_colorref(c);
 }
 
 // Title bar matching the app background and mode (Windows 11; silently ignored elsewhere).
 static void style_title_bar(HWND hwnd) {
     const BOOL dark = theme_is_dark();
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
-    const COLORREF caption = bg_colorref(), text = dark ? RGB(0xE2, 0xE2, 0xE9) : RGB(0x19, 0x1C, 0x20);
+    f32 fg[3];
+    theme_text_rgb(fg);
+    const COLORREF caption = bg_colorref(), text = to_colorref(fg);
     DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(caption));
     DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &text, sizeof(text));
 }
@@ -379,28 +395,44 @@ static void tool_frame(u32 id, bool vsync) {
     s_gfx.ctx->OMSetRenderTargets(1, &t->rtv, nullptr);
     s_gfx.ctx->ClearRenderTargetView(t->rtv, clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    snapshot_capture(id, s_gfx.device, s_gfx.ctx, t->swapchain);
     t->occluded = t->swapchain->Present(vsync ? 1 : 0, 0) == DXGI_STATUS_OCCLUDED;
     g_fonts = s_main_fonts;
     ImGui::SetCurrentContext(s_main_ctx);
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
+    if (!cpu_baseline_ok()) {
+        MessageBoxA(nullptr, CPU_BASELINE_MSG, "ez-pc-bench", MB_OK | MB_ICONERROR);
+        return 1;
+    }
     ImGui_ImplWin32_EnableDpiAwareness();
 
     // Always ask for admin first; continue with warnings if the user declines.
     const bool no_elevate = cmdline && wcsstr(cmdline, L"--no-elevate");
     if (!no_elevate && !is_elevated() && relaunch_elevated(L"")) return 0;
 
-    // Theme first: the window class brush and title bar use its colors. Saved mode (default: follow Windows),
-    // --dark / --light override it for this session.
-    const ThemeMode saved_theme = settings_load_theme();
-    theme_set_mode(cmdline && wcsstr(cmdline, L"--dark") ? THEME_DARK : cmdline && wcsstr(cmdline, L"--light") ? THEME_LIGHT
-                                                                                                                : saved_theme);
+    // Theme first: the window class brush and title bar use its colors. Saved theme (default: follow Windows),
+    // --dark / --light / --theme <id> override it for this session.
+    ThemeMode theme = settings_load_theme();
+    if (cmdline && wcsstr(cmdline, L"--dark")) theme = THEME_DARK;
+    else if (cmdline && wcsstr(cmdline, L"--light")) theme = THEME_LIGHT;
+    else if (const wchar_t* t = cmdline ? wcsstr(cmdline, L"--theme ") : nullptr) {     // dev: screenshots
+        char id[64] = {};
+        for (u32 n = 0, i = 8; t[i] && t[i] != L' ' && n + 1 < sizeof(id); ++i) id[n++] = (char)t[i];
+        theme_find(id, &theme);
+    }
+    theme_set_mode(theme);
     theme_take_change();
 
     sysinfo_init();
+    if (cmdline && wcsstr(cmdline, L"--cpu-baseline")) sysinfo_cap_to_baseline();   // dev: act like a pre-AVX CPU
     runner_init();
     ui_init();
+    // Update check (app/updater.h): `dist` builds only and never with --dev / --no-update; --check-update forces
+    // it (testing: a local build never matches the release, so it always offers the update).
+    const bool flag_dev = cmdline && (wcsstr(cmdline, L"--dev") || wcsstr(cmdline, L"--no-update"));
+    updater_init((cmdline && wcsstr(cmdline, L"--check-update")) || (EZB_UPDATER && !flag_dev));
 
     s_dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
@@ -436,7 +468,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     s_main_io = &io;
     if (cmdline) {
         if (const wchar_t* d = wcsstr(cmdline, L"--duration ")) ui_set_duration((u32)_wtoi(d + 11));
+        if (const wchar_t* s = wcsstr(cmdline, L"--sustain ")) ui_set_sustain((u32)(_wtof(s + 10) * 60.0 + 0.5));
+        if (wcsstr(cmdline, L"--charts")) ui_show_charts();
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
+        if (wcsstr(cmdline, L"--open-gpu-combo")) ui_open_gpu_combo();  // dev: GPU combo popup open (screenshots)
+        if (wcsstr(cmdline, L"--open-theme-combo")) settings_ui_open_theme_combo();     // dev: same, Settings > Theme
+        if (const wchar_t* t = wcsstr(cmdline, L"--tab ")) {       // dev: open the output panel on this tab
+            char name[16] = {};
+            for (u32 n = 0, i = 6; t[i] && t[i] != L' ' && n + 1 < sizeof(name); ++i) name[n++] = (char)t[i];
+            ui_set_tab(name);
+        }
         if (const wchar_t* o = wcsstr(cmdline, L"--only ")) {      // dev: select only these test ids
             char ids[512] = {};
             u32 n = 0;
@@ -444,15 +485,32 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (strstr(ids, "smoke")) ui_set_dev(true);             // smoke tests are only visible in dev mode
             ui_select_only(ids);
         }
+        if (const wchar_t* g = wcsstr(cmdline, L"--gpu-present ")) {    // dev: on-screen GPU mode for this session
+            BenchParams* bp = ui_params();
+            g += 14;
+            bp->gpu_onscreen = !wcsncmp(g, L"windowed", 8) || !wcsncmp(g, L"fullscreen", 10);
+            if (bp->gpu_onscreen) bp->gpu_fullscreen = g[0] == L'f';
+        }
         if (wcsstr(cmdline, L"--autorun")) ui_start_run();   // run the default selection immediately
+        if (wcsstr(cmdline, L"--overlay")) temps_ui_show_overlay();     // sensor overlay with the saved channels
         // --compare [files...]: open the compare window with these result files.
         int argc = 0;
         if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health" };
+            static const wchar_t* const tool_names[TOOL_COUNT] = { L"compare", L"settings", L"temps", L"health",
+                                                                          L"history", L"system", L"stability", L"bench" };
             for (int i = 1; i < argc; ++i) {
                 if (!wcscmp(argv[i], L"--tool") && i + 1 < argc) {     // dev: --tool settings opens that window
                     for (u32 t = 0; t < TOOL_COUNT; ++t)
-                        if (!wcscmp(argv[i + 1], tool_names[t])) tool_open(inst, t);
+                        if (!wcscmp(argv[i + 1], tool_names[t]) || (t == TOOL_TEMPS && !wcscmp(argv[i + 1], L"sensors")))
+                            tool_open(inst, t);
+                    continue;
+                }
+                if (!wcscmp(argv[i], L"--sensor-filter") && i + 1 < argc) {   // dev: preset the Sensors window search
+                    temps_ui_set_filter(argv[++i]);
+                    continue;
+                }
+                if (!wcscmp(argv[i], L"--sensor-view") && i + 1 < argc) {     // dev: Sensors window tab / device
+                    temps_ui_set_view(argv[++i]);
                     continue;
                 }
                 if (wcscmp(argv[i], L"--compare") != 0) continue;
@@ -480,7 +538,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
             if (s_tools[i].close) tool_close(i);
 
         const f64 now = timer_now();
-        const bool running = runner_is_running();
+        const bool running = runner_is_running() || stab_is_running();
         const f64 interval = running ? 1.0 / 15.0 : (now - last_input < 1.0 ? 0.0 : 0.25);
         const bool occluded = s_gfx.occluded && s_gfx.swapchain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED;
         bool tool_vis[TOOL_COUNT], any_tool = false;
@@ -524,6 +582,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         s_gfx.ctx->OMSetRenderTargets(1, &s_gfx.rtv, nullptr);
         s_gfx.ctx->ClearRenderTargetView(s_gfx.rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        snapshot_capture(SNAP_MAIN, s_gfx.device, s_gfx.ctx, s_gfx.swapchain);
         s_gfx.occluded = s_gfx.swapchain->Present(1, 0) == DXGI_STATUS_OCCLUDED;
 
         const u32 requests = ui_take_tool_requests();
@@ -535,8 +594,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
 
     if (runner_is_running()) runner_cancel();
     runner_wait();
+    if (stab_is_running()) stab_stop("stopped: the app was closed");
+    stab_wait();     // frees locked memory, GPU and the disk test file
     ui_shutdown();
     for (u32 i = 0; i < TOOL_COUNT; ++i) tool_close(i);
+    overlay_shutdown();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -544,5 +606,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     destroy_device();
     DestroyWindow(hwnd);
     UnregisterClassW(wc.lpszClassName, inst);
+    updater_relaunch();     // after an update: start the new exe now that settings are saved
     return 0;
 }

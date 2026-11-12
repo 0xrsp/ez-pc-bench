@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EzPcBench results</title>
+<meta name="description" content="Reference and community results of EzPcBench: raw numbers and the derived, versioned score per machine.">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0B57D0">
+<style>
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.ttf") format("truetype"); font-weight: 500 700; font-display: swap; }
+:root {
+  --page: #111318; --card: #191C20; --container: #1D2024; --container-high: #282A2F;
+  --on-surface: #E2E2E9; --on-variant: #C4C6D0; --outline: #8E9099; --outline-variant: #44474E;
+  --primary: #AEC6FF; --on-primary: #002E69; --warn: #F2C46B;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --page: #F3F5FA; --card: #FFFFFF; --container: #ECEEF4; --container-high: #E1E2E9;
+    --on-surface: #191C20; --on-variant: #44474F; --outline: #74777F; --outline-variant: #C4C6D0;
+    --primary: #0B57D0; --on-primary: #FFFFFF; --warn: #8A5A00;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--on-surface);
+       font: 400 16px/1.55 "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
+header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--page) 88%, transparent);
+         backdrop-filter: blur(10px); border-bottom: 1px solid var(--outline-variant); }
+header .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.logo { font-weight: 600; color: var(--on-surface); font-size: 18px; display: flex; align-items: center; gap: 10px; }
+.logo:hover { text-decoration: none; }
+nav { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
+nav a { color: var(--on-variant); white-space: nowrap; }
+@media (max-width: 600px) { nav a.opt { display: none; } }
+h1 { font-size: clamp(30px, 5vw, 42px); font-weight: 600; margin: 40px 0 8px; letter-spacing: -0.01em; }
+p.sub { color: var(--on-variant); max-width: 820px; margin: 0 0 20px; }
+.bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 0 0 14px; }
+input[type=search] { font: inherit; padding: 9px 14px; border-radius: 100px; border: 1px solid var(--outline-variant);
+                     background: var(--card); color: var(--on-surface); width: min(360px, 100%); }
+.count { color: var(--outline); font-size: 14px; }
+.card { background: var(--card); border: 1px solid var(--outline-variant); border-radius: 16px; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { padding: 9px 12px; border-bottom: 1px solid var(--outline-variant); text-align: left; vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+th { color: var(--on-variant); font-weight: 500; white-space: nowrap; cursor: pointer; user-select: none; position: sticky; top: 0;
+     background: var(--card); }
+th.num, td.num { text-align: right; }
+td.num { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+th[aria-sort=ascending]::after { content: " \2191"; } th[aria-sort=descending]::after { content: " \2193"; }
+.dim { color: var(--outline); }
+.big { font-weight: 600; color: var(--primary); font-size: 15px; }
+.flag { color: var(--warn); font-size: 12px; }
+.machine { min-width: 250px; }
+.machine b { font-weight: 500; }
+td.date { white-space: nowrap; }
+.note { margin: 28px 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.note .card { padding: 18px 20px; overflow: visible; }
+.note h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.note p { margin: 0; color: var(--on-variant); font-size: 15px; }
+footer { border-top: 1px solid var(--outline-variant); padding: 24px 0 36px; color: var(--outline); font-size: 14px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="logo" href="index.html"><img src="favicon.svg" width="26" height="26" alt="">EzPcBench</a>
+    <nav>
+      <a href="index.html">Home</a>
+      <a class="opt" href="#submit">Submit a result</a>
+      <a href="https://github.com/0xrsp/ez-pc-bench">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Results</h1>
+  <p class="sub">Runs in the built-in library (the same ones the app's Ranking view and compare window show). Raw numbers
+    are the real results; the score is derived from them by a published, versioned formula: the reference machine scores
+    1000 per component, higher is faster. Score v1 is <b>preliminary</b> (weights not calibrated yet). Click a column to sort,
+    click a machine for its raw results file.</p>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search CPU, GPU, RAM, disk..." aria-label="Search results">
+    <span class="count" id="count"></span>
+  </div>
+  <div class="card">
+    <table id="t">
+      <thead><tr>
+        <th data-k="machine">Machine</th>
+        <th data-k="overall" class="num">Overall</th>
+        <th data-k="cpu_st" class="num">CPU ST</th>
+        <th data-k="cpu_mt" class="num">CPU MT</th>
+        <th data-k="memory" class="num">Memory</th>
+        <th data-k="gpu" class="num">GPU</th>
+        <th data-k="storage" class="num">Storage</th>
+        <th data-k="dram_latency" class="num" title="Random access latency at 256 MiB, ns (lower is better)">DRAM ns</th>
+        <th data-k="scene_fps" class="num" title="Lit scene, best of Vulkan / D3D12, average fps">Scene fps</th>
+        <th data-k="disk_q1_read_lat" class="num" title="4K random read QD1 latency, &micro;s (lower is better)">4K QD1 &micro;s</th>
+        <th data-k="date">Date</th>
+      </tr></thead>
+      <tbody><tr><td colspan="11" class="dim">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="note" id="submit">
+    <div class="card"><h3>Submit your result</h3>
+      <p>Run the <b>Score</b> preset (or Standard) on AC power with Windows set to Best performance, save the results, and
+        attach the <code>.toon.txt</code> file to a <a href="https://github.com/0xrsp/ez-pc-bench/issues/new?template=submit-result.yml">result
+        submission issue</a>. Accepted runs are added to <code>library/</code> and appear here and in the app.</p></div>
+    <div class="card"><h3>How the score works</h3>
+      <p>Each input is a ratio to the reference run (inverted for latency and frame time), each component a weighted
+        geometric mean, Overall a weighted geometric mean of the components. The app's "About the score" page lists every
+        input and weight. Runs flagged (battery, throttling, non-default settings...) are shown, not hidden.</p></div>
+  </div>
+</main>
+
+<footer><div class="wrap"><span>EzPcBench &middot; MIT license</span>
+  <span><a href="https://github.com/0xrsp/ez-pc-bench">Source on GitHub</a></span></div></footer>
+
+<script>
+(function () {
+  var rows = [], key = "overall", dir = -1;
+  var tbody = document.querySelector("#t tbody"), q = document.getElementById("q"), count = document.getElementById("count");
+  var LOWER = { dram_latency: 1, disk_q1_read_lat: 1 };
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
+  function fmt(v, digits) {
+    if (v == null || !isFinite(v)) return '<span class="dim">&mdash;</span>';
+    var a = Math.abs(v);
+    return a >= 1000 || digits === 0 ? Math.round(v).toString() : a >= 100 ? v.toFixed(1) : v.toFixed(2);
+  }
+  function val(r, k) {
+    if (k === "machine") return (r.cpu + " " + r.gpu).toLowerCase();
+    if (k === "date") return r.date;
+    if (k === "overall") return r.score ? r.score.overall : null;
+    if (r.score && r.score.components && k in r.score.components) return r.score.components[k];
+    return r.raw ? r.raw[k] : null;
+  }
+  function render() {
+    var words = q.value.toLowerCase().split(/\s+/).filter(Boolean), shown = 0, html = "";
+    var list = rows.slice().sort(function (a, b) {
+      var x = val(a, key), y = val(b, key);
+      if (x == null) return 1; if (y == null) return -1;
+      return (x < y ? -1 : x > y ? 1 : 0) * dir;
+    });
+    list.forEach(function (r) {
+      var hay = [r.name, r.cpu, r.gpu, r.ram, r.disk, r.os, r.power].join(" ").toLowerCase();
+      if (words.some(function (w) { return hay.indexOf(w) < 0; })) return;
+      shown++;
+      var s = r.score || {}, c = s.components || {};
+      var flags = s.flags ? s.flags.split("|").filter(function (f) { return f !== "no-conditions"; }).join(", ") : "";
+      html += "<tr><td class=\"machine\"><a href=\"" + esc(r.file) + "\"><b>" + esc(r.cpu) + "</b></a><br>" + esc(r.gpu) +
+        "<br><span class=\"dim\">" + esc(r.ram) + (r.disk ? " &middot; " + esc(r.disk) : "") + " &middot; " + esc(r.power) +
+        "</span>" + (flags ? "<br><span class=\"flag\">" + esc(flags) + "</span>" : "") + "</td>" +
+        "<td class=\"num big\">" + fmt(s.overall, 0) + "</td>" +
+        ["cpu_st", "cpu_mt", "memory", "gpu", "storage"].map(function (k) { return "<td class=\"num\">" + fmt(c[k], 0) + "</td>"; }).join("") +
+        "<td class=\"num\">" + fmt(r.raw.dram_latency) + "</td><td class=\"num\">" + fmt(r.raw.scene_fps, 0) + "</td>" +
+        "<td class=\"num\">" + fmt(r.raw.disk_q1_read_lat) + "</td><td class=\"dim date\">" + esc(r.date) + "</td></tr>";
+    });
+    tbody.innerHTML = html || "<tr><td colspan=\"11\" class=\"dim\">No run matches.</td></tr>";
+    count.textContent = shown + " of " + rows.length + " run" + (rows.length === 1 ? "" : "s");
+    document.querySelectorAll("#t th").forEach(function (th) {
+      th.setAttribute("aria-sort", th.dataset.k === key ? (dir > 0 ? "ascending" : "descending") : "none");
+    });
+  }
+  document.querySelectorAll("#t th").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.dataset.k;
+      if (k === key) dir = -dir; else { key = k; dir = LOWER[k] || k === "machine" ? 1 : -1; }
+      render();
+    });
+  });
+  q.addEventListener("input", render);
+  fetch("data/library.json").then(function (r) { return r.json(); }).then(function (d) { rows = d.runs || []; render(); })
+    .catch(function () { tbody.innerHTML = "<tr><td colspan=\"11\" class=\"dim\">Couldn't load data/library.json " +
+      "(it's generated at deploy time by tools/site_library.py).</td></tr>"; });
+})();
+</script>
+</body>
+</html>

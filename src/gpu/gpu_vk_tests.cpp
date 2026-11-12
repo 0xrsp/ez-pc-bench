@@ -1,6 +1,8 @@
 // Vulkan backend: the GPU tests (compute, host <-> GPU transfer, offscreen 3D / 2D with preview).
 // Workloads, timing and reporting follow the shared contract in gpu_common.h.
 #include "gpu/gpu_vk_internal.h"
+#include "gpu/gpu_present.h"
+#include "gpu/gpu_features.h"
 #include "core/results.h"
 #include "core/timer.h"
 #include <string.h>
@@ -290,6 +292,7 @@ struct FrameSetup {
     VkImg* preview;         // cs_downscale output
     VkBuf* readback[GPU_FRAMES_IN_FLIGHT];
     VkDescriptorSet tex_set, down_set;
+    VkPresent* present;     // on-screen mode (gpu_present.h), else null
 };
 
 static bool frames_setup(VkCtx* v, VkScratch* s, FrameSetup* f, GpuTestId test, const BenchParams* p) {
@@ -469,6 +472,7 @@ static void record_frame(VkCtx* v, const FrameSetup* f, VkCommandBuffer cb, u32 
         src_access = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
         src_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
+    if (f->present) vkp_record_copy(f->present, cb, src, f->w, f->h, src_stage, src_access, src_layout);
     if (!preview) return;
 
     // Preview: downscale into the storage image, copy it to this slot's readback buffer.
@@ -515,6 +519,15 @@ static void test_frames(VkCtx* v, GpuTestId test, const BenchParams* p, BenchLiv
         scratch_free(v, &s);
         return;
     }
+    u32 present_status = 0;
+    if (p->gpu_onscreen) {
+        char err[128];
+        if (!(f.present = vkp_open(v, p, gpu_test_name(test), err, sizeof(err)))) {
+            res_fail(out, "%s", err);
+            scratch_free(v, &s);
+            return;
+        }
+    }
     const f64 warm = gpu_warmup_seconds(p), seconds = p->duration_ms / 1000.0;
     bool pending[GPU_FRAMES_IN_FLIGHT] = {};
     bool measuring = false, ok = true;
@@ -536,16 +549,23 @@ static void test_frames(VkCtx* v, GpuTestId test, const BenchParams* p, BenchLiv
             measuring = true;
             t_meas = now;
             live_phase(live, "Rendering", "fps");
+            if (f.present) vkp_begin_measure(f.present);
         }
         if (measuring && now - t_meas >= seconds) break;
         const bool preview = t_preview < 0.0 || now - t_preview >= GPU_PREVIEW_INTERVAL;
         if (preview) t_preview = now;
+        if (f.present && !vkp_acquire(f.present, v, slot)) { present_status = 2; break; }
 
         VkCommandBuffer cb = v->cmd[slot];
         cmd_begin(cb);
         record_frame(v, &f, cb, frame, (f32)(now - t0), preview, slot);
         vkEndCommandBuffer(cb);
-        if (!submit(v, v->gfx_queue, cb, v->fence[slot])) { ok = false; break; }
+        if (f.present) {
+            if ((present_status = vkp_submit_present(f.present, v, cb, v->fence[slot], slot, measuring)) != 0) break;
+        } else if (!submit(v, v->gfx_queue, cb, v->fence[slot])) {
+            ok = false;
+            break;
+        }
         pending[slot] = preview;
 
         const f64 t = timer_now();
@@ -561,9 +581,16 @@ static void test_frames(VkCtx* v, GpuTestId test, const BenchParams* p, BenchLiv
         }
     }
     vkDeviceWaitIdle(v->dev);
+    const bool onscreen = f.present != nullptr;
+    vkp_close(f.present, v);
     gpu_preview_clear();
     if (!ok) res_fail(out, "GPU error (device lost or timeout)");
-    else if (!cancelled(cancel)) frames_report(&f, out);
+    else if (present_status == 1) res_fail(out, "stopped: the benchmark window was closed");
+    else if (present_status == 2) res_fail(out, "present failed (swapchain lost or device error)");
+    else if (!cancelled(cancel)) {
+        frames_report(&f, out);
+        if (onscreen) present_log_report(out);
+    }
     scratch_free(v, &s);
 }
 
@@ -588,6 +615,10 @@ void gpu_vk_run(void* state, GpuTestId test, const BenchParams* p, BenchLive* li
         break;
     case GT_VRAM_BW:  test_vram(v, p, live, out, cancel); break;
     case GT_TRANSFER: test_transfer(v, p, live, out, cancel); break;
-    default:          test_frames(v, test, p, live, out, cancel); break;
+    case GT_RAYTRACING: case GT_MESH_SHADER: case GT_TESSELLATION: case GT_VRS: case GT_SAMPLER_FEEDBACK:
+    case GT_ASYNC_COMPUTE:
+        vk_feature_test(v, test, p, live, out, cancel);
+        break;
+    default:         test_frames(v, test, p, live, out, cancel); break;
     }
 }

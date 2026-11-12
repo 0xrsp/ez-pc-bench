@@ -3,6 +3,7 @@
 #include "app/settings.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
+#include "disk/disk.h"
 #include <windows.h>
 #include <shlobj.h>
 #include <stdarg.h>
@@ -10,9 +11,12 @@
 #include <string.h>
 #include <wchar.h>
 
+bool g_gpu_preview = true;
+
 struct Snapshot {
     BenchParams params;
     ThemeMode theme = THEME_SYSTEM;
+    bool gpu_preview = true;
     bool selected[MAX_BENCHES];
 };
 
@@ -21,13 +25,15 @@ static Snapshot s_file;                         // what the ini holds (defaults 
 static Snapshot s_last;                         // state at the previous tick
 static bool s_started, s_dirty;
 static f64 s_dirty_since;
-// Command-line overrides (--duration, --light/--dark, --only): the ini keeps its value until the user changes it.
-static bool s_keep_duration, s_keep_theme, s_keep_selection;
-static u32 s_start_duration;
+// Command-line overrides (--duration, --sustain, --light/--dark/--theme, --only, --gpu-present): the ini keeps
+// its value until the user changes it.
+static bool s_keep_duration, s_keep_theme, s_keep_selection, s_keep_present, s_keep_sustain;
+static bool s_start_onscreen, s_start_fullscreen;
+static u32 s_start_duration, s_start_sustain;
 static ThemeMode s_start_theme;
 static bool s_start_selected[MAX_BENCHES];
 
-static const wchar_t* const THEME_NAMES[] = { L"system", L"light", L"dark" };
+static const wchar_t* const DISK_UNIT_NAMES[] = { L"MB/s", L"GB/s", L"IOPS", L"us" };     // DiskUnit order
 
 static const wchar_t* ini_path() {
     if (!s_path[0]) {
@@ -55,6 +61,8 @@ static bool ensure_file() {
     return GetFileAttributesW(s_path) != INVALID_FILE_ATTRIBUTES;
 }
 
+const wchar_t* settings_ini_file() { return ensure_file() ? s_path : nullptr; }
+
 static u32 read_u32(const wchar_t* key, u32 def, u32 lo, u32 hi) {
     const UINT v = GetPrivateProfileIntW(L"settings", key, (INT)def, ini_path());
     return v >= lo && v <= hi ? v : def;
@@ -65,11 +73,12 @@ static bool read_str(const wchar_t* key, wchar_t* out, u32 size) {
     return GetPrivateProfileStringW(L"settings", key, L"", out, size, ini_path()) > 0;
 }
 
-ThemeMode settings_load_theme() {
-    wchar_t v[16];
-    if (ini_path()[0] && read_str(L"theme", v, ARRAY_COUNT(v)))
-        for (u32 i = 0; i < ARRAY_COUNT(THEME_NAMES); ++i)
-            if (!_wcsicmp(v, THEME_NAMES[i])) s_file.theme = (ThemeMode)i;
+ThemeMode settings_load_theme() {      // theme=system | light | dark | <theme id> (theme.h); unknown = system
+    wchar_t v[64];
+    char id[64];
+    if (ini_path()[0] && read_str(L"theme", v, ARRAY_COUNT(v)) &&
+        WideCharToMultiByte(CP_UTF8, 0, v, -1, id, sizeof(id), nullptr, nullptr) > 0)
+        theme_find(id, &s_file.theme);
     return s_file.theme;
 }
 
@@ -84,9 +93,26 @@ void settings_load(BenchParams* p, bool* selected) {
             for (u32 i = 0; i < g_sys.gpu_count; ++i)
                 if (!strcmp(g_sys.gpus[i].name, name)) p->gpu_adapter = i;
         }
+        if (read_str(L"gpus", w, ARRAY_COUNT(w))) {    // several adapters: names separated by ';'
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
+            u32 mask = 0;
+            for (char* tok = name; tok && *tok;) {
+                char* sep = strchr(tok, ';');
+                if (sep) *sep = 0;
+                for (u32 i = 0; i < g_sys.gpu_count && i < 32; ++i)
+                    if (!strcmp(g_sys.gpus[i].name, tok)) mask |= 1u << i;
+                tok = sep ? sep + 1 : nullptr;
+            }
+            if (mask & (mask - 1)) {
+                p->gpu_adapters = mask;
+                p->gpu_adapter = (u32)__builtin_ctz(mask);
+            }
+        }
         p->gpu_width = read_u32(L"gpu_width", p->gpu_width, 64, 16384);
         p->gpu_height = read_u32(L"gpu_height", p->gpu_height, 64, 16384);
         p->gpu_fullscreen = read_u32(L"gpu_fullscreen", p->gpu_fullscreen, 0, 1) != 0;
+        p->gpu_onscreen = read_u32(L"gpu_onscreen", p->gpu_onscreen, 0, 1) != 0;
+        g_gpu_preview = read_u32(L"gpu_preview", 1, 0, 1) != 0;
         if (read_str(L"disk_drives", w, ARRAY_COUNT(w))) {      // "C,D"; drives that aren't fixed any more are dropped
             u32 mask = 0;
             for (const wchar_t* c = w; *c; ++c) {
@@ -98,6 +124,23 @@ void settings_load(BenchParams* p, bool* selected) {
         p->disk_file_bytes = read_u32(L"disk_file_mib", (u32)(p->disk_file_bytes / MiB), 16, 1024 * 1024) * MiB;
         p->disk_passes = read_u32(L"disk_passes", p->disk_passes, 1, 99);
         p->disk_write_through = read_u32(L"disk_write_through", p->disk_write_through, 0, 1) != 0;
+        p->repeat = read_u32(L"repeat", p->repeat, 1, MAX_REPEAT);
+        p->sustain_s = read_u32(L"sustain_s", p->sustain_s, 0, MAX_SUSTAIN_S);
+
+        // Disk options (DiskOptions, disk/disk.h).
+        DiskOptions* o = &p->disk;
+        if (read_str(L"disk_mode", w, ARRAY_COUNT(w))) {
+            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
+            disk_mode_parse(name, &o->mode);
+        }
+        o->mix_read_pct = (u8)read_u32(L"disk_mix_read_pct", o->mix_read_pct, 0, 100);
+        if (read_str(L"disk_unit", w, ARRAY_COUNT(w)))
+            for (u32 i = 0; i < ARRAY_COUNT(DISK_UNIT_NAMES); ++i)
+                if (!_wcsicmp(w, DISK_UNIT_NAMES[i])) o->unit = (u8)i;
+        o->buffered = read_u32(L"disk_buffered", o->buffered, 0, 1) != 0;
+        o->interval_ms = read_u32(L"disk_interval_ms", o->interval_ms, 0, 600000);
+        o->sustained_gib = read_u32(L"disk_sustained_gib", o->sustained_gib, 1, 65536);
+        read_str(L"disk_folder", o->folder, ARRAY_COUNT(o->folder));
 
         // [tests] id=0|1; ids this build doesn't know are ignored, missing ids keep the registry default.
         static wchar_t buf[32768];
@@ -113,22 +156,31 @@ void settings_load(BenchParams* p, bool* selected) {
         }
     }
     s_file.params = *p;
+    s_file.gpu_preview = g_gpu_preview;
     memcpy(s_file.selected, selected, g_bench_count);
 }
 
 static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
     s->params = *p;
     s->theme = theme_mode();
+    s->gpu_preview = g_gpu_preview;
     memcpy(s->selected, selected, g_bench_count);
+}
+
+static bool disk_same(const DiskOptions* x, const DiskOptions* y) {
+    return x->mode == y->mode && x->mix_read_pct == y->mix_read_pct && x->unit == y->unit &&
+           x->buffered == y->buffered && x->interval_ms == y->interval_ms && x->sustained_gib == y->sustained_gib &&
+           wcscmp(x->folder, y->folder) == 0;
 }
 
 static bool same(const Snapshot* a, const Snapshot* b) {
     const BenchParams *x = &a->params, *y = &b->params;
-    return a->theme == b->theme && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
-           x->gpu_adapter == y->gpu_adapter && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
-           x->gpu_fullscreen == y->gpu_fullscreen && x->disk_drives == y->disk_drives &&
+    return a->theme == b->theme && a->gpu_preview == b->gpu_preview && x->duration_ms == y->duration_ms && x->thread_count == y->thread_count &&
+           x->gpu_adapter == y->gpu_adapter && x->gpu_adapters == y->gpu_adapters && x->gpu_width == y->gpu_width && x->gpu_height == y->gpu_height &&
+           x->gpu_fullscreen == y->gpu_fullscreen && x->gpu_onscreen == y->gpu_onscreen && x->disk_drives == y->disk_drives &&
            x->disk_file_bytes == y->disk_file_bytes && x->disk_passes == y->disk_passes &&
-           x->disk_write_through == y->disk_write_through && !memcmp(a->selected, b->selected, g_bench_count);
+           x->disk_write_through == y->disk_write_through && x->repeat == y->repeat &&
+           x->sustain_s == y->sustain_s && disk_same(&x->disk, &y->disk) && !memcmp(a->selected, b->selected, g_bench_count);
 }
 
 // Appends "key=value\0" to a profile section buffer (double-null terminated by the caller).
@@ -148,13 +200,20 @@ static void write_all(const Snapshot* cur) {
     if (!ensure_file()) return;
     Snapshot out = *cur;
     if (s_keep_duration) out.params.duration_ms = s_file.params.duration_ms;
+    if (s_keep_sustain) out.params.sustain_s = s_file.params.sustain_s;
     if (s_keep_theme) out.theme = s_file.theme;
     if (s_keep_selection) memcpy(out.selected, s_file.selected, sizeof(out.selected));
+    if (s_keep_present) {
+        out.params.gpu_onscreen = s_file.params.gpu_onscreen;
+        out.params.gpu_fullscreen = s_file.params.gpu_fullscreen;
+    }
     const BenchParams* p = &out.params;
 
     static wchar_t buf[32768], old[32768];
     Section s = { buf, ARRAY_COUNT(buf), 0 };
-    sec_add(&s, L"theme=%s", THEME_NAMES[out.theme < ARRAY_COUNT(THEME_NAMES) ? out.theme : 0]);
+    wchar_t theme[64];
+    MultiByteToWideChar(CP_UTF8, 0, theme_id(out.theme), -1, theme, ARRAY_COUNT(theme));
+    sec_add(&s, L"theme=%s", theme);
     sec_add(&s, L"duration_ms=%u", p->duration_ms);
     sec_add(&s, L"threads=%u", p->thread_count);
     if (p->gpu_adapter < g_sys.gpu_count) {
@@ -162,9 +221,21 @@ static void write_all(const Snapshot* cur) {
         MultiByteToWideChar(CP_UTF8, 0, g_sys.gpus[p->gpu_adapter].name, -1, gpu, ARRAY_COUNT(gpu));
         sec_add(&s, L"gpu=%s", gpu);
     }
+    if (p->gpu_adapters & (p->gpu_adapters - 1)) {
+        wchar_t gpus[512] = {};
+        for (u32 i = 0, n = 0; i < g_sys.gpu_count && i < 32; ++i)
+            if ((p->gpu_adapters >> i) & 1) {
+                if (n++) wcscat_s(gpus, L";");
+                const size_t len = wcslen(gpus);
+                MultiByteToWideChar(CP_UTF8, 0, g_sys.gpus[i].name, -1, gpus + len, (int)(ARRAY_COUNT(gpus) - len));
+            }
+        sec_add(&s, L"gpus=%s", gpus);
+    }
     sec_add(&s, L"gpu_width=%u", p->gpu_width);
     sec_add(&s, L"gpu_height=%u", p->gpu_height);
     sec_add(&s, L"gpu_fullscreen=%u", p->gpu_fullscreen ? 1u : 0u);
+    sec_add(&s, L"gpu_onscreen=%u", p->gpu_onscreen ? 1u : 0u);
+    sec_add(&s, L"gpu_preview=%u", out.gpu_preview ? 1u : 0u);
     wchar_t drives[64] = {};
     for (u32 d = 0, n = 0; d < 26; ++d)
         if ((p->disk_drives >> d) & 1) {
@@ -175,6 +246,18 @@ static void write_all(const Snapshot* cur) {
     sec_add(&s, L"disk_file_mib=%llu", p->disk_file_bytes / MiB);
     sec_add(&s, L"disk_passes=%u", p->disk_passes);
     sec_add(&s, L"disk_write_through=%u", p->disk_write_through ? 1u : 0u);
+    sec_add(&s, L"repeat=%u", p->repeat);
+    sec_add(&s, L"sustain_s=%u", p->sustain_s);
+    const DiskOptions* o = &p->disk;
+    wchar_t mode[16];
+    MultiByteToWideChar(CP_UTF8, 0, disk_mode_name(o->mode), -1, mode, ARRAY_COUNT(mode));
+    sec_add(&s, L"disk_mode=%s", mode);
+    sec_add(&s, L"disk_mix_read_pct=%u", (u32)o->mix_read_pct);
+    sec_add(&s, L"disk_unit=%s", DISK_UNIT_NAMES[o->unit < ARRAY_COUNT(DISK_UNIT_NAMES) ? o->unit : 0]);
+    sec_add(&s, L"disk_buffered=%u", o->buffered ? 1u : 0u);
+    sec_add(&s, L"disk_interval_ms=%u", o->interval_ms);
+    sec_add(&s, L"disk_sustained_gib=%u", o->sustained_gib);
+    sec_add(&s, L"disk_folder=%s", o->folder);
     buf[s.len] = 0;
     WritePrivateProfileSectionW(L"settings", buf, s_path);
 
@@ -208,16 +291,24 @@ void settings_tick(const BenchParams* p, const bool* selected) {
         s_started = true;
         s_last = cur;
         s_start_duration = cur.params.duration_ms;
+        s_start_sustain = cur.params.sustain_s;
         s_start_theme = cur.theme;
         memcpy(s_start_selected, cur.selected, sizeof(s_start_selected));
         s_keep_duration = s_start_duration != s_file.params.duration_ms;
+        s_keep_sustain = s_start_sustain != s_file.params.sustain_s;
         s_keep_theme = s_start_theme != s_file.theme;
         s_keep_selection = memcmp(s_start_selected, s_file.selected, g_bench_count) != 0;
+        s_start_onscreen = cur.params.gpu_onscreen;
+        s_start_fullscreen = cur.params.gpu_fullscreen;
+        s_keep_present = s_start_onscreen != s_file.params.gpu_onscreen || s_start_fullscreen != s_file.params.gpu_fullscreen;
         return;
     }
     if (s_keep_duration && cur.params.duration_ms != s_start_duration) s_keep_duration = false;
+    if (s_keep_sustain && cur.params.sustain_s != s_start_sustain) s_keep_sustain = false;
     if (s_keep_theme && cur.theme != s_start_theme) s_keep_theme = false;
     if (s_keep_selection && memcmp(cur.selected, s_start_selected, g_bench_count) != 0) s_keep_selection = false;
+    if (s_keep_present && (cur.params.gpu_onscreen != s_start_onscreen || cur.params.gpu_fullscreen != s_start_fullscreen))
+        s_keep_present = false;
     const f64 now = timer_now();
     if (!same(&cur, &s_last)) {
         s_last = cur;
