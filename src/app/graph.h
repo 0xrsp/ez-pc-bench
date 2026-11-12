@@ -1,12 +1,13 @@
 #pragma once
 // Shared graph widget in the style of Windows Task Manager's Performance page, drawn with ImDrawList:
-// a box with a 1 px border in the series color, a faint 10 x 5 grid, the line over a translucent fill of the
-// same hue, a small caption above (title left, range max right). Two kinds:
+// a box with a neutral 1 px border and a faint 10 x 5 grid (theme colors), the line in the series color over a
+// translucent fill of the same hue, a small caption above (title left, range max right). Two kinds:
 //   graph_time   time series, newest sample at the right, a fixed window of samples across the width
 //   graph_xy     x / y series for benchmark charts (optional log x), tick labels, hover tooltip per point
-// Colors come from the kind of value (load, clock, power, ...), see the table in graph.cpp; units map to kinds
-// with graph_kind_for_unit so benchmark charts are colored automatically. Light and dark variants follow the
-// app theme. Also: graph_bar (horizontal bar) and graph_stat (Task Manager's big number with a small label).
+// Line colors come from the kind of value (load, clock, power, ...); units map to kinds with
+// graph_kind_for_unit so benchmark charts are colored automatically. Each theme has its own hue per kind
+// (Palette::series, theme.cpp). Also: graph_bar (horizontal bar) and graph_stat (Task Manager's big number
+// with a small label).
 #include "core/types.h"
 #include "imgui.h"
 #include <math.h>
@@ -26,7 +27,7 @@ enum GraphKind : u8 {
 extern const char* const g_graph_kind_names[GK_COUNT];
 
 GraphKind graph_kind_for_unit(const char* unit);   // "%" -> load, "MHz" -> clock, "GB/s" -> memory, ...
-u32 graph_rgb(GraphKind k, bool dark);              // 0xRRGGBB, e.g. for GDI (the overlay)
+u32 graph_rgb(GraphKind k, bool dark);              // 0xRRGGBB of plain Light / Dark, any thread (the overlay)
 ImU32 graph_color(GraphKind k, f32 alpha = 1.0f);   // for the current theme
 // Color of line `i` of a multi-line graph: line 0 in the kind's color, the others in companion hues.
 ImU32 graph_line_color(GraphKind k, u32 i, f32 alpha = 1.0f);

@@ -1,5 +1,9 @@
 # Theme refresh: graphite / cyan / orchid (2026-11-12)
 
+> **Palette superseded** the same day by plain Light / Dark plus named color schemes: see
+> [themes.md](themes.md). The shapes, radii, border rules and group boxes below still apply; the palette
+> table and the "orchid secondary" / "group titles in primary" color notes are history.
+
 Replaces the Material 3 look (seed #0B57D0, lavender-blue accents, pill buttons, tonal fills). Dark stays the
 main look; light and "Follow Windows" work as before. Everything lives in `src/app/theme.*`; the palette table
 with measured contrast is a comment above `light_palette()` in `theme.cpp`.

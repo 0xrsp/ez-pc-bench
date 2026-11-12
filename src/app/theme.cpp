@@ -8,8 +8,6 @@ ThemeFonts g_fonts;
 Palette g_pal;
 
 static f32 s_scale = 1.0f;
-static bool s_dark = false;
-static bool s_changed = false;
 
 static constexpr ImVec4 rgb(u32 hex, f32 a = 1.0f) {
     return ImVec4(((hex >> 16) & 0xFF) / 255.0f, ((hex >> 8) & 0xFF) / 255.0f, (hex & 0xFF) / 255.0f, a);
@@ -19,97 +17,115 @@ static ImVec4 mix(ImVec4 a, ImVec4 b, f32 t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
 
-// Palette "graphite / cyan / orchid". Dark is the main look: blue-black surfaces in three steps (page < card <
-// container = raised: frames, popups), a cyan primary for actions and data (buttons, checkboxes, sliders,
-// progress, graphs) and an orchid secondary for navigation and selection (tabs, toggles, selected list rows).
-// Separation comes from 1 px outlines, not tonal fills. Contrast (WCAG 2.x) is measured against the card color.
-//
-//  role                    dark      light     use                                    contrast d / l
-//  page                    #0B0E14   #F2F4F8   window background
-//  card                    #11161F   #FFFFFF   panels, cards
-//  container               #161C27   #EFF2F6   raised: frames, popups (dark)
-//  container_high          #1B2230   #E7EBF1   frame hover, headers
-//  container_highest       #232C3D   #DCE2EA   frame active, progress track
-//  on_surface              #E4E9F2   #121826   body text                              14.9 / 17.7
-//  on_surface_variant      #9BA6B9   #4A5466   secondary text, labels                 7.4 / 7.6
-//  outline                 #5D6A80   #7C8799   button / checkbox borders (3:1 needed) 3.3 / 3.6
-//  outline_variant         #2D3749   #CDD4DE   card, group, table lines (decorative)
-//  primary                 #3CCFEA   #00779C   filled buttons, checks, sliders, data  9.8 / 5.1
-//  on_primary              #002A33   #FFFFFF   text on primary                        8.2 / 5.1 *
-//  primary_container       #0C3440   #D3F1FA   tonal primary fill
-//  on_primary_container    #B4EDFA   #00303E   text on it                             10.4 / 11.9 *
-//  secondary               #D07BFF   #9C2BC4   selected tab / chip outline, accents   6.9 / 5.9
-//  on_secondary            #2B0740   #FFFFFF   text on secondary
-//  secondary_container     #2C1A3B   #F5E3FC   selected tab / chip / row fill
-//  on_secondary_container  #F0D6FF   #3B0B4F   text on it                             12.0 / 12.8 *
-//  ok                      #5BD68A   #17784A   pass, done, good                       9.9 / 5.5
-//  error                   #FF6E6E   #C42B2B   fail, errors                           6.7 / 5.6
-//  warn                    #FFB648   #9A5800   caution, notes, banner stripe          10.4 / 5.6
-//  warn_container          #33240C   #FFEBCC   warning banner
-//  on_warn_container       #FFE3B3   #3D2400   banner text                            12.1 / 12.4 *
-//  heat_lo .. heat_hi      #123D2B   #CBF2DA   matrix cells, green ..
-//                          #5C1C24   #FFD8D8   .. red
-//  (contrast against the card color; * = against its own fill). Group titles use primary.
+// ---- theme table ---------------------------------------------------------------------------------------
+// One row per theme, colors as 0xRRGGBB. The rows hold the roles that carry a scheme's identity; the rest of
+// the palette is derived in make_palette(). Sources and the role mapping: docs/notes/themes.md.
+//   page    window background            line     decorative lines: cards, groups, tables, graph grid
+//   card    panels, cards                border   control outlines (buttons, checkboxes; 3:1 where possible)
+//   raised  frames (inputs), popups      text / dim  body and secondary text
+//   title   group box titles             primary  buttons, checks, sliders, focus; secondary: selected tabs
+//   ok / warn / error                    series   graph hues in GraphKind order: load, clock, power, temperature,
+//                                                 memory, latency, disk, compute, other
+// Light and Dark are deliberately plain: neutral grays, one blue accent (also the selection color), titles in
+// the text color. Text and dim pass WCAG AA (4.5:1) on the card in every theme except Solarized Dark's dim
+// (base0, 4.75 on base03 but 4.1 on base02); accents and status colors are the schemes' own (3:1 and up,
+// lower for a few pastel hues on the light schemes).
+struct ThemeDef {
+    const char* name;
+    const char* id;
+    bool dark;
+    u32 page, card, raised, line, border, text, dim, title, primary, secondary, ok, warn, error;
+    u32 series[THEME_SERIES];
+};
 
-static Palette light_palette() {
+static const ThemeDef THEMES[] = {
+    { "Light", "light", false,
+      0xF3F3F3, 0xFFFFFF, 0xF7F7F7, 0xE0E0E0, 0x8A8A8A, 0x1F1F1F, 0x5E5E5E, 0x1F1F1F, 0x005FB8, 0x005FB8, 0x0F7B0F, 0x9D5D00, 0xC42B1C,
+      { 0x0E7490, 0x7C3AED, 0xA16207, 0xE11D48, 0xC026D3, 0x2563EB, 0x15803D, 0xEA580C, 0x64748B } },
+    { "Dark", "dark", true,
+      0x181818, 0x1F1F1F, 0x272727, 0x333333, 0x6E6E6E, 0xE6E6E6, 0xA3A3A3, 0xE6E6E6, 0x4CA2F5, 0x4CA2F5, 0x6CCB5F, 0xE5B33E, 0xFF6B6B,
+      { 0x22D3EE, 0xA78BFA, 0xFACC15, 0xFB7185, 0xE879F9, 0x60A5FA, 0x4ADE80, 0xFB923C, 0x94A3B8 } },
+    { "Solarized Dark", "solarized-dark", true,
+      0x00212B, 0x002B36, 0x073642, 0x0E4452, 0x657B83, 0x93A1A1, 0x839496, 0x268BD2, 0x268BD2, 0x6C71C4, 0x859900, 0xB58900, 0xDC322F,
+      { 0x2AA198, 0x6C71C4, 0xB58900, 0xDC322F, 0xD33682, 0x268BD2, 0x859900, 0xCB4B16, 0x839496 } },
+    { "Solarized Light", "solarized-light", false,
+      0xEEE8D5, 0xFDF6E3, 0xF5EFDC, 0xD9D2BC, 0x839496, 0x073642, 0x586E75, 0x268BD2, 0x268BD2, 0x6C71C4, 0x859900, 0xB58900, 0xDC322F,
+      { 0x2AA198, 0x6C71C4, 0xB58900, 0xDC322F, 0xD33682, 0x268BD2, 0x859900, 0xCB4B16, 0x657B83 } },
+    { "Monokai", "monokai", true,
+      0x1E1F1C, 0x272822, 0x3E3D32, 0x3E3D32, 0x75715E, 0xF8F8F2, 0xA6A28C, 0x66D9EF, 0x66D9EF, 0xAE81FF, 0xA6E22E, 0xFD971F, 0xF92672,
+      { 0x66D9EF, 0xAE81FF, 0xE6DB74, 0xF92672, 0xD670D6, 0x7AA6FF, 0xA6E22E, 0xFD971F, 0xA6A28C } },
+    { "Dracula", "dracula", true,
+      0x21222C, 0x282A36, 0x343746, 0x44475A, 0x6272A4, 0xF8F8F2, 0xA4ACCB, 0xBD93F9, 0xBD93F9, 0xFF79C6, 0x50FA7B, 0xFFB86C, 0xFF5555,
+      { 0x8BE9FD, 0xBD93F9, 0xF1FA8C, 0xFF5555, 0xFF79C6, 0x8DA2F7, 0x50FA7B, 0xFFB86C, 0xA4ACCB } },
+    { "Nord", "nord", true,
+      0x272C36, 0x2E3440, 0x3B4252, 0x434C5E, 0x7B88A1, 0xD8DEE9, 0xA3ACBD, 0x88C0D0, 0x88C0D0, 0x81A1C1, 0xA3BE8C, 0xEBCB8B, 0xBF616A,
+      { 0x88C0D0, 0x81A1C1, 0xEBCB8B, 0xBF616A, 0xB48EAD, 0x5E81AC, 0xA3BE8C, 0xD08770, 0x8FBCBB } },
+    { "Gruvbox Dark", "gruvbox-dark", true,
+      0x1D2021, 0x282828, 0x3C3836, 0x3C3836, 0x7C6F64, 0xEBDBB2, 0xA89984, 0xFABD2F, 0xFABD2F, 0x8EC07C, 0xB8BB26, 0xFE8019, 0xFB4934,
+      { 0x8EC07C, 0x83A598, 0xFABD2F, 0xFB4934, 0xD3869B, 0x458588, 0xB8BB26, 0xFE8019, 0x928374 } },
+    { "One Dark", "one-dark", true,
+      0x21252B, 0x282C34, 0x2C313A, 0x3E4451, 0x6E7787, 0xD7DAE0, 0xABB2BF, 0x61AFEF, 0x61AFEF, 0xC678DD, 0x98C379, 0xE5C07B, 0xE06C75,
+      { 0x56B6C2, 0xC678DD, 0xE5C07B, 0xE06C75, 0xD373A9, 0x61AFEF, 0x98C379, 0xD19A66, 0xABB2BF } },
+    { "Catppuccin Mocha", "catppuccin-mocha", true,
+      0x181825, 0x1E1E2E, 0x313244, 0x313244, 0x6C7086, 0xCDD6F4, 0xA6ADC8, 0xCBA6F7, 0xCBA6F7, 0xF5C2E7, 0xA6E3A1, 0xFAB387, 0xF38BA8,
+      { 0x89DCEB, 0xCBA6F7, 0xF9E2AF, 0xF38BA8, 0xF5C2E7, 0x89B4FA, 0xA6E3A1, 0xFAB387, 0x9399B2 } },
+    { "Catppuccin Latte", "catppuccin-latte", false,
+      0xE6E9EF, 0xEFF1F5, 0xDCE0E8, 0xCCD0DA, 0x7C7F93, 0x4C4F69, 0x5C5F77, 0x8839EF, 0x8839EF, 0x1E66F5, 0x40A02B, 0xFE640B, 0xD20F39,
+      { 0x179299, 0x8839EF, 0xDF8E1D, 0xD20F39, 0xEA76CB, 0x1E66F5, 0x40A02B, 0xFE640B, 0x7C7F93 } },
+    { "GitHub Light", "github-light", false,
+      0xF6F8FA, 0xFFFFFF, 0xF6F8FA, 0xD8DEE4, 0x8C959F, 0x1F2328, 0x59636E, 0x1F2328, 0x0969DA, 0x0969DA, 0x1A7F37, 0x9A6700, 0xD1242F,
+      { 0x1B7C83, 0x8250DF, 0x9A6700, 0xCF222E, 0xBF3989, 0x0969DA, 0x1A7F37, 0xBC4C00, 0x6E7781 } },
+};
+static_assert(ARRAY_COUNT(THEMES) < 255, "ThemeMode is a u8");
+
+static f32 luminance(ImVec4 c) {     // WCAG relative luminance
+    auto lin = [](f32 v) { return v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f); };
+    return 0.2126f * lin(c.x) + 0.7152f * lin(c.y) + 0.0722f * lin(c.z);
+}
+static f32 contrast(ImVec4 a, ImVec4 b) {
+    const f32 la = luminance(a), lb = luminance(b);
+    return la > lb ? (la + 0.05f) / (lb + 0.05f) : (lb + 0.05f) / (la + 0.05f);
+}
+
+static Palette make_palette(const ThemeDef* d) {
     Palette p;
-    p.page = rgb(0xF2F4F8);
-    p.card = rgb(0xFFFFFF);
-    p.container = rgb(0xEFF2F6);
-    p.container_high = rgb(0xE7EBF1);
-    p.container_highest = rgb(0xDCE2EA);
-    p.on_surface = rgb(0x121826);
-    p.on_surface_variant = rgb(0x4A5466);
-    p.outline = rgb(0x7C8799);
-    p.outline_variant = rgb(0xCDD4DE);
-    p.primary = rgb(0x00779C);
-    p.on_primary = rgb(0xFFFFFF);
-    p.primary_container = rgb(0xD3F1FA);
-    p.on_primary_container = rgb(0x00303E);
-    p.secondary = rgb(0x9C2BC4);
-    p.on_secondary = rgb(0xFFFFFF);
-    p.secondary_container = rgb(0xF5E3FC);
-    p.on_secondary_container = rgb(0x3B0B4F);
-    p.ok = rgb(0x17784A);
-    p.error = rgb(0xC42B2B);
-    p.warn = rgb(0x9A5800);
-    p.warn_container = rgb(0xFFEBCC);
-    p.on_warn_container = rgb(0x3D2400);
-    p.heat_lo = rgb(0xCBF2DA);
-    p.heat_hi = rgb(0xFFD8D8);
+    const f32 dk = d->dark ? 1.0f : 0.0f;
+    p.page = rgb(d->page);
+    p.card = rgb(d->card);
+    p.container = rgb(d->raised);
+    p.on_surface = rgb(d->text);
+    p.on_surface_variant = rgb(d->dim);
+    p.container_high = mix(p.container, p.on_surface, 0.06f);       // frame hover, headers
+    p.container_highest = mix(p.container, p.on_surface, 0.12f);    // frame active, progress track
+    p.outline = rgb(d->border);
+    p.outline_variant = rgb(d->line);
+    p.group_title = rgb(d->title);
+    // Text on a filled accent: the card or the text color, whichever contrasts more.
+    auto on = [&](ImVec4 fill) { return contrast(p.card, fill) >= contrast(p.on_surface, fill) ? p.card : p.on_surface; };
+    p.primary = rgb(d->primary);
+    p.on_primary = on(p.primary);
+    p.primary_container = mix(p.card, p.primary, 0.14f + 0.08f * dk);
+    p.on_primary_container = p.on_surface;
+    p.secondary = rgb(d->secondary);
+    p.on_secondary = on(p.secondary);
+    p.secondary_container = mix(p.card, p.secondary, 0.13f + 0.07f * dk);
+    p.on_secondary_container = p.on_surface;
+    p.ok = rgb(d->ok);
+    p.error = rgb(d->error);
+    p.warn = rgb(d->warn);
+    p.warn_container = mix(p.card, p.warn, 0.14f + 0.02f * dk);
+    p.on_warn_container = p.on_surface;
+    p.heat_lo = mix(p.card, p.ok, 0.25f + 0.05f * dk);
+    p.heat_hi = mix(p.card, p.error, 0.25f + 0.07f * dk);
+    for (u32 i = 0; i < THEME_SERIES; ++i) p.series[i] = d->series[i];
     return p;
 }
 
-static Palette dark_palette() {
-    Palette p;
-    p.page = rgb(0x0B0E14);
-    p.card = rgb(0x11161F);
-    p.container = rgb(0x161C27);
-    p.container_high = rgb(0x1B2230);
-    p.container_highest = rgb(0x232C3D);
-    p.on_surface = rgb(0xE4E9F2);
-    p.on_surface_variant = rgb(0x9BA6B9);
-    p.outline = rgb(0x5D6A80);
-    p.outline_variant = rgb(0x2D3749);
-    p.primary = rgb(0x3CCFEA);
-    p.on_primary = rgb(0x002A33);
-    p.primary_container = rgb(0x0C3440);
-    p.on_primary_container = rgb(0xB4EDFA);
-    p.secondary = rgb(0xD07BFF);
-    p.on_secondary = rgb(0x2B0740);
-    p.secondary_container = rgb(0x2C1A3B);
-    p.on_secondary_container = rgb(0xF0D6FF);
-    p.ok = rgb(0x5BD68A);
-    p.error = rgb(0xFF6E6E);
-    p.warn = rgb(0xFFB648);
-    p.warn_container = rgb(0x33240C);
-    p.on_warn_container = rgb(0xFFE3B3);
-    p.heat_lo = rgb(0x123D2B);
-    p.heat_hi = rgb(0x5C1C24);
-    return p;
-}
+// ---- theme choice --------------------------------------------------------------------------------------
 
 static ThemeMode s_mode = THEME_SYSTEM;
+static u32 s_cur = 0;                   // effective theme: row in THEMES
+static bool s_changed = false;
 
 // Windows "Choose your app mode" (Settings > Personalization > Colors). Missing value = light.
 static bool system_prefers_dark() {
@@ -119,20 +135,35 @@ static bool system_prefers_dark() {
     return light == 0;
 }
 
-static void set_dark(bool dark) {
-    if (dark != s_dark) { s_dark = dark; s_changed = true; }
+static u32 row_of(ThemeMode t) {        // THEMES row; System resolves to Light or Dark
+    if (t == THEME_SYSTEM) t = system_prefers_dark() ? THEME_DARK : THEME_LIGHT;
+    return (u32)t - 1 < ARRAY_COUNT(THEMES) ? (u32)t - 1 : 0;
 }
 
-bool theme_is_dark() { return s_dark; }
+static void set_current(u32 row) {
+    if (row != s_cur) { s_cur = row; s_changed = true; }
+}
+
+u32 theme_count() { return 1 + ARRAY_COUNT(THEMES); }
+const char* theme_name(ThemeMode t) { return t == THEME_SYSTEM ? "Follow Windows" : t < theme_count() ? THEMES[t - 1].name : "?"; }
+const char* theme_id(ThemeMode t) { return t == THEME_SYSTEM ? "system" : t < theme_count() ? THEMES[t - 1].id : "system"; }
+
+bool theme_find(const char* id, ThemeMode* out) {
+    for (u32 i = 0; i < theme_count(); ++i)
+        if (!_stricmp(id, theme_id((ThemeMode)i))) { *out = (ThemeMode)i; return true; }
+    return false;
+}
+
+bool theme_is_dark() { return THEMES[s_cur].dark; }
 ThemeMode theme_mode() { return s_mode; }
 
 void theme_set_mode(ThemeMode mode) {
-    s_mode = mode;
-    set_dark(mode == THEME_DARK || (mode == THEME_SYSTEM && system_prefers_dark()));
+    s_mode = mode < theme_count() ? mode : THEME_SYSTEM;
+    set_current(row_of(s_mode));
 }
 
 void theme_system_changed() {
-    if (s_mode == THEME_SYSTEM) set_dark(system_prefers_dark());
+    if (s_mode == THEME_SYSTEM) set_current(row_of(THEME_SYSTEM));
 }
 bool theme_take_change() {
     const bool c = s_changed;
@@ -140,9 +171,46 @@ bool theme_take_change() {
     return c;
 }
 
-void theme_bg_rgb(f32 out[3]) {
-    const ImVec4 c = (s_dark ? dark_palette() : light_palette()).page;
+static void to_rgb(u32 hex, f32 out[3]) {
+    const ImVec4 c = rgb(hex);
     out[0] = c.x; out[1] = c.y; out[2] = c.z;
+}
+void theme_bg_rgb(f32 out[3]) { to_rgb(THEMES[s_cur].page, out); }
+void theme_text_rgb(f32 out[3]) { to_rgb(THEMES[s_cur].text, out); }
+
+u32 theme_series_rgb(ThemeMode t, u32 kind) {
+    const u32 row = t != THEME_SYSTEM && t < theme_count() ? (u32)t - 1 : 0;     // no registry read: any thread
+    return THEMES[row].series[kind < THEME_SERIES ? kind : THEME_SERIES - 1];
+}
+
+static void draw_swatch(ImDrawList* dl, ImVec2 a, ImVec2 b, const ThemeDef* d) {
+    const f32 r = 2.0f * s_scale, h = b.y - a.y;
+    dl->AddRectFilled(a, b, ImGui::GetColorU32(rgb(d->card)), r);
+    // A line of "text" over two accent dots.
+    const f32 pad = h * 0.22f, dot = h * 0.16f;
+    dl->AddRectFilled(ImVec2(a.x + pad, a.y + pad), ImVec2(b.x - pad, a.y + pad + h * 0.14f), ImGui::GetColorU32(rgb(d->text)), h * 0.07f);
+    const f32 cy = b.y - pad - dot;
+    dl->AddCircleFilled(ImVec2(a.x + pad + dot, cy), dot, ImGui::GetColorU32(rgb(d->primary)), 12);
+    dl->AddCircleFilled(ImVec2(a.x + pad + dot * 3.6f, cy), dot, ImGui::GetColorU32(rgb(d->secondary != d->primary ? d->secondary : d->ok)), 12);
+    dl->AddCircleFilled(ImVec2(a.x + pad + dot * 6.2f, cy), dot, ImGui::GetColorU32(rgb(d->error)), 12);
+}
+
+f32 theme_swatch(ImDrawList* dl, ImVec2 pos, f32 h, ThemeMode t) {
+    const f32 w = floorf(h * 1.9f);
+    const ImVec2 a(floorf(pos.x), floorf(pos.y)), b(a.x + w, floorf(pos.y + h));
+    if (t == THEME_SYSTEM) {    // Light | Dark
+        const f32 mid = floorf(a.x + w * 0.5f);
+        dl->PushClipRect(a, ImVec2(mid, b.y), true);
+        draw_swatch(dl, a, b, &THEMES[0]);
+        dl->PopClipRect();
+        dl->PushClipRect(ImVec2(mid, a.y), b, true);
+        draw_swatch(dl, a, b, &THEMES[1]);
+        dl->PopClipRect();
+    } else {
+        draw_swatch(dl, a, b, &THEMES[row_of(t)]);
+    }
+    dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_Border), 2.0f * s_scale);
+    return w;
 }
 
 // ---- fonts -----------------------------------------------------------------------------
@@ -202,7 +270,7 @@ f32 theme_font_size(f32 mult) {
 
 void theme_apply_style(f32 scale) {
     s_scale = scale;
-    g_pal = s_dark ? dark_palette() : light_palette();
+    g_pal = make_palette(&THEMES[s_cur]);
     const Palette& p = g_pal;
 
     ImGuiStyle& s = ImGui::GetStyle();
@@ -240,7 +308,7 @@ void theme_apply_style(f32 scale) {
     c[ImGuiCol_TextDisabled] = p.on_surface_variant;
     c[ImGuiCol_WindowBg] = p.page;
     c[ImGuiCol_ChildBg] = none;
-    c[ImGuiCol_PopupBg] = s_dark ? p.container : p.card;     // raised one step above the cards
+    c[ImGuiCol_PopupBg] = theme_is_dark() ? p.container : p.card;     // raised one step above the cards
     c[ImGuiCol_TitleBg] = p.container_high;            // modal dialogs (save, library)
     c[ImGuiCol_TitleBgActive] = p.container_high;
     c[ImGuiCol_TitleBgCollapsed] = p.container_high;
@@ -569,7 +637,7 @@ void theme_group_begin(const char* title, f32 width, const char* help) {
     const f32 title_w = title_end > title ? ImGui::CalcTextSize(title, title_end).x : 0.0f;
     const ImVec2 at(pos.x + fs * 0.75f, pos.y);
     if (title_w > 0.0f)
-        ImGui::GetWindowDrawList()->AddText(at, ImGui::GetColorU32(g_pal.primary), title, title_end);
+        ImGui::GetWindowDrawList()->AddText(at, ImGui::GetColorU32(g_pal.group_title), title, title_end);
     ImGui::PopFont();
     GroupBox g = { ImVec2(at.x - fs * 0.3f, pos.y), ImVec2(at.x + title_w + fs * 0.3f, pos.y + line_h) };
     if (title_w <= 0.0f) g.title_max.x = g.title_min.x;

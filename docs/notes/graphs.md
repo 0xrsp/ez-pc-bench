@@ -4,8 +4,8 @@ Stream notes for merging into PLAN.md. Built 2026-11-12 on a worktree branch fro
 
 ## Look
 
-Windows Task Manager's Performance page: each graph is a box with a 1 px border in the series color, a faint
-10 x 5 grid in the same hue, a faint tint inside, the line over a translucent fill (fading towards the bottom), a
+Windows Task Manager's Performance page: each graph is a box with a neutral 1 px border and a faint 10 x 5 grid
+(theme colors, see Colors), the line in the series color over a translucent fill (fading towards the bottom), a
 small caption above (title left, range max or current value right). Time series scroll right to left, newest
 sample at the right edge (a fresh graph fills in from the right). Big numbers with small labels (`graph_stat`)
 sit under the large graphs. No new dependency: everything is ImDrawList (`fill_under` writes the gradient
@@ -47,24 +47,30 @@ void graph_format(buf, size, v, unit, decimals);         // MHz >= 1000 as GHz, 
 - Grid lines are skipped in boxes under ~1.8 font heights (table-row graphs); x/y graphs put their vertical grid
   lines on the labelled ticks (data points that fit without overlapping).
 
-## Colors (`KIND_COLORS` in graph.cpp; self-contained, not from the theme palette)
+## Colors (per theme: `Palette::series`, the theme table in theme.cpp)
+
+Since the theme rework (docs/notes/themes.md) only the line, its fill, the legend chips and `graph_stat` dots
+carry the kind's hue. Box border = `ImGuiCol_Border` (the frames' border), grid = `outline_variant`, background
+= text color at 2.5 % (dark) / 2 % (light). Each theme has its own nine hues in `GraphKind` order (Solarized's
+cyan / violet / yellow / red / magenta / blue / green / orange, Dracula's, ...); the unit → kind mapping stays in
+graph.cpp. The plain Dark and Light hues below (Light now uses the 700 steps where the 600 steps were under
+4.5:1 on white); the overlay (GDI, always a dark panel) uses the Dark hues via `graph_rgb(kind, true)`.
 
 | Kind | Units | Dark | Light |
 |---|---|---|---|
-| `GK_LOAD` load / utilization | `%` | `#22D3EE` cyan | `#0891B2` |
+| `GK_LOAD` load / utilization | `%` | `#22D3EE` cyan | `#0E7490` |
 | `GK_FREQ` clock | `MHz`, `GHz`, `kHz` | `#A78BFA` violet | `#7C3AED` |
-| `GK_POWER` power | `W`, `mW`, `V`, `Wh` | `#FACC15` amber | `#CA8A04` |
+| `GK_POWER` power | `W`, `mW`, `V`, `Wh` | `#FACC15` amber | `#A16207` |
 | `GK_TEMP` temperature | `°C` | `#FB7185` rose | `#E11D48` |
 | `GK_MEMORY` memory / bandwidth | `GB/s`, `GiB/s`, `TB/s`, `B`, `KiB`, `MiB`, `GiB`, `MB`, `GB` | `#E879F9` magenta | `#C026D3` |
 | `GK_LATENCY` latency / time | `ns`, `µs`, `us`, `ms`, `s`, `clk`, `cc`, `cycles` | `#60A5FA` blue | `#2563EB` |
-| `GK_DISK` disk throughput / IOPS | `IOPS`, `MB/s`, `MiB/s`, `KB/s` | `#4ADE80` green | `#16A34A` |
+| `GK_DISK` disk throughput / IOPS | `IOPS`, `MB/s`, `MiB/s`, `KB/s` | `#4ADE80` green | `#15803D` |
 | `GK_RATE` compute throughput | `fps`, any other `*/s` (`Gops/s`, `Mtri/s`, `PSO/s`), `*FLOPS`, `*OPS` | `#FB923C` orange | `#EA580C` |
 | `GK_OTHER` count / other | `RPM`, `x`, score, anything else | `#94A3B8` slate | `#64748B` |
 
-Dark shades are the 400 steps (light on near-black), light shades the 600 steps (contrast on white). Charts of
-disk tests use `GK_DISK` for throughput units whatever the unit string (`chart_kind` in ui.cpp: memory / rate /
-other kinds of a `SUITE_DISK` test become disk). Background tint: 6 % (dark) / 3.5 % (light) of the hue; grid
-12 % / 11 %; border 70 % / 80 %; fill 30 % / 24 % at the line, 4 % at the bottom.
+Dark shades are the 400 steps (light on near-black), light shades the 600 / 700 steps (contrast on white).
+Charts of disk tests use `GK_DISK` for throughput units whatever the unit string (`chart_kind` in ui.cpp: memory
+/ rate / other kinds of a `SUITE_DISK` test become disk). Fill 30 % / 24 % at the line, 4 % at the bottom.
 
 ## Screens
 
