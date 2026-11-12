@@ -185,34 +185,25 @@ static void draw_disk_interval(BenchParams* p) {
     }
 }
 
-// Warning box in the control column: warning-tinted background with a stripe on the left, a bold title and wrapped
-// text. Drawn in place (a child window can't sit in a table cell here).
-static void warning_box(const char* title, const char* text) {
-    const f32 fs = ImGui::GetFontSize(), pad = fs * 0.55f, stripe = fs * 0.18f, round = fs * 0.15f;
+// Small warning chip on the current line (frame height, warning-tinted, outlined); hovering it shows `text`
+// instead of the row's help.
+static void warning_chip(const char* id, const char* label, const char* text) {
+    const f32 fs = ImGui::GetFontSize(), pad = fs * 0.55f, round = fs * 0.2f;
+    const ImVec2 ts = ImGui::CalcTextSize(label), size(ts.x + pad * 2.0f, ImGui::GetFrameHeight());
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const f32 w = ImGui::GetContentRegionAvail().x;
+    ImGui::InvisibleButton(id, size);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImDrawListSplitter sp;      // text on top, the box (sized afterwards) below
-    sp.Split(dl, 2);
-    sp.SetCurrentChannel(dl, 1);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + stripe + pad, p.y + pad));
-    ImGui::BeginGroup();
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - stripe - pad * 2.0f);
-    ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_warn_container);
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(title);
-    ImGui::PopFont();
+    const ImVec2 b(p.x + size.x, p.y + size.y);
+    dl->AddRectFilled(p, b, ImGui::GetColorU32(g_pal.warn_container), round);
+    dl->AddRect(p, b, ImGui::GetColorU32(g_pal.warn), round);
+    dl->AddText(ImVec2(p.x + pad, p.y + (size.y - ts.y) * 0.5f), ImGui::GetColorU32(g_pal.on_warn_container), label);
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
+    s_row_help = nullptr;   // this tooltip, not the row's
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(fs * 26.0f);
     ImGui::TextUnformatted(text);
-    ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
-    ImGui::EndGroup();
-    const f32 bottom = ImGui::GetItemRectMax().y + pad;
-    sp.SetCurrentChannel(dl, 0);
-    dl->AddRectFilled(p, ImVec2(p.x + w, bottom), ImGui::GetColorU32(g_pal.warn_container), round);
-    dl->AddRectFilled(p, ImVec2(p.x + stripe, bottom), ImGui::GetColorU32(g_pal.warn), round, ImDrawFlags_RoundLeft);
-    sp.Merge(dl);
-    ImGui::SetCursorScreenPos(ImVec2(p.x, bottom));
-    ImGui::Dummy(ImVec2(w, 0.0f));
+    ImGui::EndTooltip();
 }
 
 // Full-window ImGui window of a settings tool window, with the wrapped intro line(s).
@@ -281,16 +272,15 @@ void settings_ui_draw() {
             p->gpu_onscreen = present != 0;
             if (present) p->gpu_fullscreen = present == 2;
         }
-        // Always visible, not just in the help: on-screen modes flash the test patterns full size.
-        ImGui::Spacing();
-        warning_box("Photosensitivity warning",
-                    "The on-screen modes show the GPU tests' rapidly flashing colors and patterns in a window or across "
-                    "the whole screen. If you, or anyone who can see the screen, may have photosensitive epilepsy, keep "
-                    "Offscreen.");
-
         row("Show preview", "Shows a small copy of what the 3D, 2D and feature tests render next to the live numbers "
                             "while they run (also in Offscreen mode). Off: the numbers only.");
         theme_checkbox("##gpu_preview", &g_gpu_preview);
+        // Visible, not only in the help: the on-screen modes flash the test patterns full size.
+        ImGui::SameLine(0.0f, ImGui::GetFontSize());
+        warning_chip("##flash", "Photosensitivity warning",
+                     "Photosensitivity warning: the on-screen present modes show the GPU tests' rapidly flashing colors "
+                     "and patterns in a window or across the whole screen. If you, or anyone who can see the screen, may "
+                     "have photosensitive epilepsy, keep Offscreen.");
         end_group();
     }
 
