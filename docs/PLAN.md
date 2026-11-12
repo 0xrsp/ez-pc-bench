@@ -539,8 +539,10 @@ builds); treat CPU single-thread and L3 numbers from them as shape, not referenc
   (`gpu_present*.cpp`), frame capture of other apps (`src/frames/`, `--tool frames`, `--capture`). Sensors:
   battery, EMI power rails, channel list with min / max / avg, sensor log (`--log-sensors`), overlay
   (`core/battery.*`, `emi.*`, `app/overlay.*`). **Untested:** live frame capture (needs admin),
-  `mem.lat.pages` (needs SeLockMemoryPrivilege), D3D12 debug layer (not installed). **Not done:** GPU suites
-  calling `gpu_api_details_query`, GPU memory type / bus width, EMI package power in the run monitor.
+  `mem.lat.pages` (needs SeLockMemoryPrivilege), D3D12 debug layer (not installed). **Not done:** GPU memory
+  type / bus width. Wired at merge time: GPU suite setup queries the GPU API details (ReBAR, feature tiers),
+  the run monitor records EMI package power (`env[].cpu_pkg_w`) and WHEA events (`env[].whea`), the stability
+  CPU limit uses PawnIO's temperature when present.
 
 Each milestone: builds warning-free, runs via CLI on this machine, numbers sanity-checked (§10).
 

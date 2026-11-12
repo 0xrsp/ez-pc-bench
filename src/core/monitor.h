@@ -15,6 +15,7 @@ enum EnvFlags : u32 {
     ENV_GPU_DROP      = 1u << 3,    // same for the GPU core clock
     ENV_CPU_HOT       = 1u << 4,    // thermal zone >= 95 C
     ENV_GPU_HOT       = 1u << 5,    // GPU at or above its driver warning temperature
+    ENV_WHEA          = 1u << 6,    // Windows logged hardware errors (WHEA-Logger) during the test
 };
 
 struct TestEnv {
@@ -31,6 +32,8 @@ struct TestEnv {
     f32 cpu_drop, gpu_drop; // % clock drop, first third -> last third of the worst phase (positive = slower)
     u32 flags;              // EnvFlags
     f32 bat_discharge_w;    // W drawn from the battery, average while discharging (NaN on AC / no battery)
+    f32 cpu_pkg_w;          // CPU package power, average (Energy Metering Interface; NaN where not exposed)
+    u32 whea;               // WHEA hardware error events (corrected + uncorrected) logged during the test
 };
 
 extern TestEnv g_env[MAX_BENCHES];

@@ -286,13 +286,14 @@ Tests (tick any combination, run together or in sequence, duration or until stop
   *Done (M9): compute + render known answers, D3D12 only.*
 - [x] **P1** **Combined CPU + GPU ("PSU") load** for power delivery and cooling.
   *Done (M9): `combined` / "All at once".*
-- [ ] **P1** **WHEA monitoring**: subscribe to Microsoft-Windows-WHEA-Logger events (`EvtSubscribe`) and
+- [x] **P1** **WHEA monitoring**: subscribe to Microsoft-Windows-WHEA-Logger events (`EvtSubscribe`) and
   count corrected/uncorrected hardware errors during the run (also shown during benchmark runs).
-  *Partial (M9): `core/whea.*` counts events during stability runs. Not yet wired into the benchmark runner.*
+  *Done (M9): `core/whea.*` in stability runs; benchmark runs count them per test (`env[].whea`, flag `whea`,
+  a warning under the result).*
 - [x] **P1** Live sensor graphs (§7, §8) and safety limits: stop at a CPU / GPU / drive temperature the
   user sets; optional stop on first error; always restore state.
-  *Done (M9). CPU limit = hottest ACPI zone; switching it to `adv_cpu_temp()` (PawnIO) not wired yet. Limits
-  are session-only.*
+  *Done (M9). CPU limit = PawnIO Tdie / package temperature (`adv_cpu_temp`) when installed, else the hottest
+  ACPI zone. Limits are session-only.*
 - [x] **P2** Per-core cycling (CoreCycler): one core at a time under a heavy ST load for X minutes each —
   the Curve Optimizer / undervolt tuning use case.
   *Done (M9): `cores`.*
@@ -395,8 +396,8 @@ ZenTimings are good references for register addresses).
 - [x] **P1** Perf-relevant Windows state, with warnings: VBS / HVCI (memory integrity), Game Mode,
   Hardware-accelerated GPU scheduling, Core Isolation, Secure Boot, TPM, Resizable BAR, active power
   overlay — these move benchmark numbers. *Done (M7, `core/sysinfo_win.cpp`); Resizable BAR (M12) via
-  Vulkan in `core/sysinfo_gpu.cpp`, only when the GPU APIs are queried (System details, `--sysinfo`): the GPU
-  suites don't call `gpu_api_details_query` yet, so results files don't always carry it.*
+  Vulkan in `core/sysinfo_gpu.cpp`, queried by the GPU suites' setup (adapter awake anyway), System details and
+  `--sysinfo`, so every run with a GPU suite carries it.*
 - [ ] **P1** GPU details (GPU-Z): shader/CU count, bus width, memory type/size, driver version + date,
   D3D feature level / shader model, Vulkan version + extension list, ReBAR, HAGS, VRR.
   *Mostly done (M12): `core/sysinfo_gpu.cpp`, `sysinfo_devices.cpp`. Missing: memory type and bus width (need
@@ -511,18 +512,15 @@ PLAN.md §8). What is still open per milestone:
 2. **M8 Disk** (§1, §2, §2.1) — RAID: Intel RST NVMe and MegaRAID. Untested: every ATA / USB bridge / CSMI
    path (no such hardware here), self-test start / abort and the raw-device tests (need admin), sustained
    write past the SLC cache. Alerts and AAM / APM reapply at boot wait on §0 resident mode.
-3. **M9 Stability** (§6) — WHEA counts in benchmark runs (`core/whea.h` API ready), CPU temperature
-   limit from PawnIO (`adv_cpu_temp`), GPU tests on Vulkan, VRAM test on every adapter in one run, stability
-   settings persistence.
+3. **M9 Stability** (§6) — GPU tests on Vulkan, VRAM test on every adapter in one run, stability settings
+   persistence.
 4. **M10 PawnIO sensors** (§8, §4 SPD) — all code untested until PawnIO is installed (user decision, PLAN.md
    §11); then map the Hawk Point PM table from an `--adv-report` dump. XMP / EXPO and shipping the module
    `.bin` files wait on the user. Zen 4+ SVI3 voltage, Intel MCHBAR timings, Super I/O not done.
 5. **M11 Score + CPU kernels** (§3, §10, §11) — calibration against real-task timings (needs other
    machines' data), score v2 inputs (new CPU kernels, disk latency percentiles), CPU ST numbers re-measured
    on an idle machine, `cpu.topo.hybrid` on a hybrid CPU.
-6. **M12 Breadth** (§4, §5, §7, §9) — GPU suites calling `gpu_api_details_query` so results carry ReBAR /
-   feature tiers, GPU memory type / bus width, EMI package power as a run-monitor column, Vulkan
-   `VK_EXT_present_timing`, displayed-frame reconstruction and a live test (admin) for frame capture, DXR
+6. **M12 Breadth** (§4, §5, §7, §9) — GPU memory type / bus width, Vulkan `VK_EXT_present_timing`, displayed-frame reconstruction and a live test (admin) for frame capture, DXR
    1.0 pipelines, D3D12 debug-layer validation. Tray icon waits on §0.
 7. **Open decisions** — §0 scope, network, resident mode; §12 waits on them (keyboard navigation and
    localization just haven't been started).

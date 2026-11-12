@@ -2,6 +2,7 @@
 // threads, samples sensors once a second and enforces the temperature limits, counts WHEA events, keeps the
 // first errors, and writes the report.
 #include "stability/stab_internal.h"
+#include "core/adv_sensors.h"
 #include "core/hwread.h"
 #include "core/physdisk.h"
 #include "core/results.h"
@@ -171,8 +172,9 @@ void stab_run_threads(u32 count, const u32* lps, StabThreadFn fn, void* user) {
 
 // ---- monitor ----------------------------------------------------------------------------------------------
 // Own readers (core/hwread.*) on a high-priority thread, so the limits work while every core is loaded. CPU
-// temperature is the hottest ACPI thermal zone: the only driverless source, and on many laptops it lags the CPU
-// or doesn't follow it at all (PLAN.md M7 notes), so the CPU limit is best effort.
+// temperature is the PawnIO reading (Tdie / package, core/adv_sensors.h) when PawnIO is installed, else the
+// hottest ACPI thermal zone: the only driverless source, and on many laptops it lags the CPU or doesn't follow it
+// at all (PLAN.md M7 notes), so without PawnIO the CPU limit is best effort.
 
 struct Monitor {
     CpuReader cpu;
@@ -190,6 +192,7 @@ static void monitor_open(Monitor* m) {
     memset(m, 0, sizeof(*m));
     cpu_reader_open(&m->cpu);
     gpu_reader_open(&m->gpu, g_stab.cfg.gpu_adapter);
+    adv_start();            // PawnIO sampling, reference counted (no-op without PawnIO)
     if (PdhOpenQueryW(nullptr, 0, &m->zq) == ERROR_SUCCESS) {
         m->zones_precise = PdhAddEnglishCounterW(m->zq, L"\\Thermal Zone Information(*)\\High Precision Temperature", 0,
                                                  &m->zones) == ERROR_SUCCESS;
@@ -213,6 +216,7 @@ static void monitor_open(Monitor* m) {
 static void monitor_close(Monitor* m) {
     cpu_reader_close(&m->cpu);
     gpu_reader_close(&m->gpu);
+    adv_stop();
     if (m->zq) PdhCloseQuery(m->zq);
     for (u32 i = 0; i < m->disk_count; ++i) CloseHandle(m->disks[i]);
 }
@@ -246,7 +250,8 @@ static void monitor_sample(Monitor* m, f32 v[SH_COUNT]) {
         v[SH_CPU_UTIL] = (f32)(sum / n);
         if (w > 0.0) v[SH_CPU_MHZ] = (f32)(wsum / w);
     }
-    v[SH_CPU_TEMP] = hottest_zone(m);
+    v[SH_CPU_TEMP] = adv_cpu_temp(2.5f);
+    if (isnan(v[SH_CPU_TEMP])) v[SH_CPU_TEMP] = hottest_zone(m);
     gpu_reader_collect(&m->gpu);
     GpuReading g;
     gpu_reader_read(&m->gpu, g_stab.cfg.gpu_adapter, &g, false);

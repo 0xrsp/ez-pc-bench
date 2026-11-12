@@ -4,6 +4,7 @@
 // extra tests (gpu_ext.h) before the base backends.
 #include "gpu/gpu_ext.h"
 #include "core/results.h"
+#include "core/sysinfo_ext.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,6 +77,9 @@ static bool suite_init(GpuApi api, const BenchParams* p, void** state, char* err
         if (!((mask >> i) & 1)) continue;
         BenchParams q = *p;
         q.gpu_adapter = i;
+        // API details for the results file (feature level, Vulkan version, ReBAR, ...): queried here because the
+        // adapter is awake for the suite anyway, never at startup (it would wake a sleeping laptop dGPU).
+        if (!((g_gpux_ready.load(std::memory_order_acquire) >> i) & 1)) gpu_api_details_query(i);
         char err[128] = {};
         void* b = nullptr;
         const bool ok = api == API_VK ? gpu_vk_init(&q, &b, err, sizeof(err)) : gpu_d3d12_init(&q, &b, err, sizeof(err));

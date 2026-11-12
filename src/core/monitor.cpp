@@ -3,6 +3,8 @@
 #include "core/monitor.h"
 #include "core/adv_sensors.h"
 #include "core/battery.h"
+#include "core/emi.h"
+#include "core/whea.h"
 #include "core/hwread.h"
 #include "core/results.h"
 #include "core/runner.h"
@@ -37,12 +39,15 @@ struct Sources {
     GpuReader gpu;
     f64 last_t;                 // time of the previous sample
     BatteryPoller bat;          // own thread: the status query can block for seconds under all-core load
+    EmiReader emi;              // energy meters (0.4-6 ms per read of all channels here)
+    i32 emi_pkg;                // channel index of the CPU package rail, -1 if none
 };
 
 struct Sample {
     f32 cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp;
     f32 gpu_mhz, gpu_mem_mhz, gpu_util, gpu_temp, gpu_power;
     f32 bat_w;              // battery discharge W (NaN on AC)
+    f32 cpu_pkg_w;          // CPU package power (EMI), NaN if not exposed
     bool on_ac;
     f64 dt;                 // seconds since the previous sample (weight)
 };
@@ -52,12 +57,18 @@ static void open_sources(Sources* s) {
     cpu_reader_open(&s->cpu);
     gpu_reader_open(&s->gpu, s_gpu_adapter);
     battery_poll_start(&s->bat, 1000);
+    s->emi_pkg = -1;
+    const u32 n = emi_open(&s->emi);
+    for (u32 i = 0; i < n && s->emi_pkg < 0; ++i)
+        if (!strcmp(s->emi.ch[i].id, "cpu_pkg")) s->emi_pkg = (i32)i;
+    if (s->emi_pkg >= 0) emi_read(&s->emi);     // power is a difference: the first read only sets the base
 }
 
 static void close_sources(Sources* s) {
     cpu_reader_close(&s->cpu);
     gpu_reader_close(&s->gpu);
     battery_poll_stop(&s->bat);
+    emi_close(&s->emi);
 }
 
 static void sample_cpu(Sources* s, Sample* out) {
@@ -100,6 +111,11 @@ static void take_sample(Sources* s, Sample* out) {
     BatteryInfo bat[BATTERY_MAX];
     const u32 nb = battery_poll_get(&s->bat, bat);
     out->bat_w = out->on_ac || !nb ? NAN : battery_discharge_w(bat, nb);
+    out->cpu_pkg_w = NAN;
+    if (s->emi_pkg >= 0) {
+        emi_read(&s->emi);
+        out->cpu_pkg_w = s->emi.ch[s->emi_pkg].watts;
+    }
     out->dt = s->last_t > 0.0 ? now - s->last_t : SAMPLE_MS / 1000.0;
     s->last_t = now;
 }
@@ -163,7 +179,8 @@ static void trend_add(Trend* t, const char* phase, f32 v) {
 struct Acc {
     i32 id;
     u32 samples;
-    Stat cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power, bat_w;
+    Stat cpu_mhz, cpu_mhz_max, cpu_util, cpu_temp, gpu_mhz, gpu_mem, gpu_util, gpu_temp, gpu_power, bat_w, cpu_pkg;
+    u32 whea0;              // WHEA events counted when the test started
     bool opened;            // first (partial) sample seen
     bool ac_seen, battery_seen;
     Trend cpu_trend, gpu_trend;
@@ -177,6 +194,11 @@ static void acc_reset(Acc* a, i32 id) {
     memset(a, 0, sizeof(*a));
     a->id = id;
     a->cpu_trend.worst = a->gpu_trend.worst = NAN;
+    if (id >= 0) {
+        WheaCounts w;
+        whea_snapshot(&w);
+        a->whea0 = w.corrected + w.uncorrected;
+    }
 }
 
 static void acc_publish(Acc* a, f32 gpu_warn_c) {
@@ -194,6 +216,10 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
     e.gpu_temp_max = stat_max(&a->gpu_temp);
     e.gpu_power = stat_avg(&a->gpu_power);
     e.bat_discharge_w = stat_avg(&a->bat_w);
+    e.cpu_pkg_w = stat_avg(&a->cpu_pkg);
+    WheaCounts w;
+    whea_snapshot(&w);
+    e.whea = w.corrected + w.uncorrected - a->whea0;
     trend_close(&a->cpu_trend);
     trend_close(&a->gpu_trend);
     e.cpu_drop = a->cpu_trend.worst;
@@ -204,6 +230,7 @@ static void acc_publish(Acc* a, f32 gpu_warn_c) {
     if (e.gpu_drop >= DROP_FLAG_PCT) e.flags |= ENV_GPU_DROP;
     if (e.cpu_temp_max >= CPU_HOT_C) e.flags |= ENV_CPU_HOT;
     if (e.gpu_temp_max >= gpu_warn_c) e.flags |= ENV_GPU_HOT;
+    if (e.whea) e.flags |= ENV_WHEA;
     g_env[a->id] = e;
     s_env_ready[a->id].store(true, std::memory_order_release);
 }
@@ -217,6 +244,7 @@ static void acc_add(Acc* a, const Sample* s, const char* phase) {
     stat_add(&a->gpu_temp, s->gpu_temp, s->dt);
     stat_add(&a->gpu_power, s->gpu_power, s->dt);
     stat_add(&a->bat_w, s->bat_w, s->dt);
+    stat_add(&a->cpu_pkg, s->cpu_pkg_w, s->dt);
     // Clocks only count while that unit is busy: an idle CPU during a GPU test (or vice versa) says nothing.
     if (!isnan(s->cpu_mhz)) {
         stat_add(&a->cpu_mhz, s->cpu_mhz, s->dt);
@@ -282,6 +310,7 @@ void monitor_begin(u32 gpu_adapter) {
     s_run_on_battery = GetSystemPowerStatus(&ps) && ps.ACLineStatus == 0;
     acc_reset(&s_acc, -1);
     adv_start();            // PawnIO CPU temperature (no-op without PawnIO)
+    whea_start();           // hardware error events (reference counted; the stability tester uses it too)
     s_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     s_thread = CreateThread(nullptr, 0, monitor_thread, nullptr, 0, nullptr);
     // Short bursts (~2 ms every 250 ms) that must not starve behind HIGHEST-priority benchmark threads.
@@ -296,6 +325,7 @@ void monitor_end() {
     CloseHandle(s_stop);
     s_thread = s_stop = nullptr;
     adv_stop();
+    whea_stop();
 }
 
 // ---- formatting ---------------------------------------------------------------------------------------
@@ -331,6 +361,7 @@ void env_describe(const TestEnv* e, bool gpu, char* buf, u32 size) {
     }
     if (!isnan(e->cpu_util)) append(buf, size, " %.0f%% busy", e->cpu_util);
     if (!isnan(e->cpu_temp_max)) append(buf, size, ", %.0f \xC2\xB0""C", e->cpu_temp_max);
+    if (!isnan(e->cpu_pkg_w)) append(buf, size, ", package %.1f W", e->cpu_pkg_w);
     if (e->bat_discharge_w > 0.0f) append(buf, size, ", battery %.1f W", e->bat_discharge_w);
     if (!gpu) return;
     append(buf, size, "  \xC2\xB7  GPU");
@@ -372,10 +403,12 @@ void env_warnings(const TestEnv* e, char* buf, u32 size) {
     if (e->flags & ENV_CPU_DROP) { append(buf, size, "%sCPU clock -%.0f%%", sep, e->cpu_drop); sep = ", "; }
     if (e->flags & ENV_GPU_DROP) { append(buf, size, "%sGPU clock -%.0f%%", sep, e->gpu_drop); sep = ", "; }
     if (e->flags & ENV_CPU_HOT) { append(buf, size, "%sCPU %.0f \xC2\xB0""C", sep, e->cpu_temp_max); sep = ", "; }
-    if (e->flags & ENV_GPU_HOT) append(buf, size, "%sGPU %.0f \xC2\xB0""C", sep, e->gpu_temp_max);
+    if (e->flags & ENV_GPU_HOT) { append(buf, size, "%sGPU %.0f \xC2\xB0""C", sep, e->gpu_temp_max); sep = ", "; }
+    if (e->flags & ENV_WHEA) append(buf, size, "%s%u WHEA hardware error%s", sep, e->whea, e->whea == 1 ? "" : "s");
 }
 
-static const char* const s_flag_names[] = { "battery", "power-changed", "cpu-drop", "gpu-drop", "cpu-hot", "gpu-hot" };
+static const char* const s_flag_names[] = { "battery", "power-changed", "cpu-drop", "gpu-drop", "cpu-hot", "gpu-hot",
+                                             "whea" };
 
 void env_flag_names(u32 flags, char* buf, u32 size) {
     buf[0] = 0;

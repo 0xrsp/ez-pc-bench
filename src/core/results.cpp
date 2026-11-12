@@ -349,7 +349,7 @@ static void write_env(FILE* f) {
     for (u32 i = 0; i < g_bench_count; ++i) n += env_valid(&g_env[i]);
     if (!n) return;
     toon_table(f, 0, "env", n, "id,samples,cpu_mhz,cpu_mhz_max,cpu_util,cpu_temp_max,gpu_mhz,gpu_mhz_max,gpu_mem_mhz,"
-                               "gpu_util,gpu_temp_max,gpu_power,cpu_drop,gpu_drop,flags,bat_discharge_w");
+                               "gpu_util,gpu_temp_max,gpu_power,cpu_drop,gpu_drop,flags,bat_discharge_w,cpu_pkg_w,whea");
     for (u32 i = 0; i < g_bench_count; ++i) {
         const TestEnv* e = &g_env[i];
         if (!env_valid(e)) continue;
@@ -363,6 +363,8 @@ static void write_env(FILE* f) {
         for (u32 k = 0; k < ARRAY_COUNT(v); ++k) toon_cell_num(&row, round(v[k] * 10.0) / 10.0);
         toon_cell_str(&row, flags);
         toon_cell_num(&row, round(e->bat_discharge_w * 10.0) / 10.0);
+        toon_cell_num(&row, round(e->cpu_pkg_w * 10.0) / 10.0);
+        toon_cell_num(&row, e->whea);
         toon_row_end(&row);
     }
 }
