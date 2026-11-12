@@ -118,12 +118,57 @@ bool battery_read(BatteryReader* r) {
     return any;
 }
 
-f32 battery_discharge_w(const BatteryReader* r) {
+f32 battery_discharge_w(const BatteryInfo* info, u32 count) {
     f32 sum = NAN;
-    for (u32 i = 0; i < r->count; ++i) {
-        const BatteryStatus* s = &r->info[i].status;
+    for (u32 i = 0; i < count; ++i) {
+        const BatteryStatus* s = &info[i].status;
         if (s->state & BAT_ONLINE) return NAN;
         if (!isnan(s->rate_w) && s->rate_w < 0.0f) sum = (isnan(sum) ? 0.0f : sum) - s->rate_w;
     }
     return sum;
+}
+
+// ---- poller --------------------------------------------------------------------------------------------
+
+static DWORD WINAPI poll_thread(void* arg) {
+    BatteryPoller* p = (BatteryPoller*)arg;
+    do {
+        battery_read(&p->r);
+        AcquireSRWLockExclusive((PSRWLOCK)&p->lock);
+        memcpy(p->info, p->r.info, sizeof(p->info));
+        ReleaseSRWLockExclusive((PSRWLOCK)&p->lock);
+    } while (WaitForSingleObject((HANDLE)p->stop, p->period_ms) == WAIT_TIMEOUT);
+    return 0;
+}
+
+u32 battery_poll_start(BatteryPoller* p, u32 period_ms) {
+    static_assert(sizeof(SRWLOCK) == sizeof(void*), "SRWLOCK storage");
+    memset(p, 0, sizeof(*p));
+    InitializeSRWLock((PSRWLOCK)&p->lock);
+    p->period_ms = period_ms;
+    p->count = battery_open(&p->r);         // includes a first status read
+    memcpy(p->info, p->r.info, sizeof(p->info));
+    memcpy(p->has_temp, p->r.has_temp, sizeof(p->has_temp));
+    if (!p->count) return 0;
+    p->stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    p->thread = CreateThread(nullptr, 0, poll_thread, p, 0, nullptr);
+    return p->count;
+}
+
+void battery_poll_stop(BatteryPoller* p) {
+    if (p->thread) {
+        SetEvent((HANDLE)p->stop);
+        WaitForSingleObject((HANDLE)p->thread, INFINITE);     // at most one stalled status read
+        CloseHandle((HANDLE)p->thread);
+    }
+    if (p->stop) CloseHandle((HANDLE)p->stop);
+    battery_close(&p->r);
+    memset(p, 0, sizeof(*p));
+}
+
+u32 battery_poll_get(BatteryPoller* p, BatteryInfo* out) {
+    AcquireSRWLockShared((PSRWLOCK)&p->lock);
+    memcpy(out, p->info, p->count * sizeof(BatteryInfo));
+    ReleaseSRWLockShared((PSRWLOCK)&p->lock);
+    return p->count;
 }

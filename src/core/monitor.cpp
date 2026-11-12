@@ -35,9 +35,7 @@ struct Sources {
     CpuReader cpu;
     GpuReader gpu;
     f64 last_t;                 // time of the previous sample
-    BatteryReader bat;
-    f64 bat_t;                  // last battery read (firmware refreshes it every few seconds: read once a second)
-    f32 bat_w;                  // discharge W from that read
+    BatteryPoller bat;          // own thread: the status query can block for seconds under all-core load
 };
 
 struct Sample {
@@ -52,14 +50,13 @@ static void open_sources(Sources* s) {
     memset(s, 0, sizeof(*s));
     cpu_reader_open(&s->cpu);
     gpu_reader_open(&s->gpu, s_gpu_adapter);
-    battery_open(&s->bat);
-    s->bat_w = NAN;
+    battery_poll_start(&s->bat, 1000);
 }
 
 static void close_sources(Sources* s) {
     cpu_reader_close(&s->cpu);
     gpu_reader_close(&s->gpu);
-    battery_close(&s->bat);
+    battery_poll_stop(&s->bat);
 }
 
 static void sample_cpu(Sources* s, Sample* out) {
@@ -98,11 +95,9 @@ static void take_sample(Sources* s, Sample* out) {
     SYSTEM_POWER_STATUS ps;
     out->on_ac = !GetSystemPowerStatus(&ps) || ps.ACLineStatus != 0;
     const f64 now = timer_now();
-    if (s->bat.count && now - s->bat_t >= 1.0) {
-        s->bat_t = now;
-        s->bat_w = battery_read(&s->bat) ? battery_discharge_w(&s->bat) : NAN;
-    }
-    out->bat_w = out->on_ac ? NAN : s->bat_w;
+    BatteryInfo bat[BATTERY_MAX];
+    const u32 nb = battery_poll_get(&s->bat, bat);
+    out->bat_w = out->on_ac || !nb ? NAN : battery_discharge_w(bat, nb);
     out->dt = s->last_t > 0.0 ? now - s->last_t : SAMPLE_MS / 1000.0;
     s->last_t = now;
 }

@@ -48,5 +48,22 @@ u32 battery_open(BatteryReader* r);
 void battery_close(BatteryReader* r);
 // Refreshes info[i].status for every battery. Returns false if no battery answered.
 bool battery_read(BatteryReader* r);
-// Sum over all batteries: discharge rate in W (positive while discharging, NaN on AC / unknown).
-f32 battery_discharge_w(const BatteryReader* r);
+// Sum over batteries: discharge rate in W (positive while discharging, NaN on AC / unknown).
+f32 battery_discharge_w(const BatteryInfo* info, u32 count);
+
+// Background poller: reads the status every `period_ms` on its own thread. Under all-core load
+// IOCTL_BATTERY_QUERY_STATUS blocked for 2.4 s here (the ACPI / embedded-controller work runs on starved
+// system threads), so sampling threads must never call battery_read themselves.
+struct BatteryPoller {
+    BatteryReader r;            // owned by the poller thread after start
+    BatteryInfo info[BATTERY_MAX];      // latest copy (lock)
+    u32 count;
+    bool has_temp[BATTERY_MAX];
+    u32 period_ms;
+    void* thread;               // HANDLE
+    void* stop;                 // HANDLE (event)
+    void* lock;                 // SRWLOCK storage
+};
+u32 battery_poll_start(BatteryPoller* p, u32 period_ms);    // opens the batteries; returns their count
+void battery_poll_stop(BatteryPoller* p);
+u32 battery_poll_get(BatteryPoller* p, BatteryInfo* out);   // latest info + status; returns the count
