@@ -332,7 +332,10 @@ static DWORD WINAPI monitor_main(void*) {
 
 static void run_test(StabTest t, f64 deadline) {
     StabTestState* s = &g_stab.tests[t];
-    if (g_stab.stop.load()) return;     // stays "not run"
+    if (g_stab.stop.load()) {           // stopped before this test's turn
+        s->status.store(SS_NOT_RUN, std::memory_order_release);
+        return;
+    }
     s->start_t = timer_now();
     s->status.store(SS_RUNNING, std::memory_order_release);
     switch (t) {
