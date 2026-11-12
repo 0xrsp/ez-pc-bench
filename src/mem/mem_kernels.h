@@ -1,5 +1,5 @@
 #pragma once
-// Memory kernels (inline asm, AVX2). Pointers 64-byte aligned, byte counts multiples of 256.
+// Memory kernels (inline asm, AVX2 or SSE2 by CPU). Pointers 64-byte aligned, byte counts multiples of 256.
 #include "core/types.h"
 
 void k_mem_read(const void* p, u64 bytes);

@@ -61,6 +61,7 @@ void ui_init() {
     for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
     s_ui.params.gpu_adapter = sysinfo_default_gpu();
     settings_load(&s_ui.params, s_ui.selected);
+    for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] &= !bench_unsupported(i);     // e.g. ini from another PC
 }
 
 void ui_shutdown() { settings_flush(&s_ui.params, s_ui.selected); }
@@ -85,7 +86,7 @@ void ui_select_only(const char* ids) {
             match = n && strncmp(id, p, n) == 0 && (id[n] == 0 || id[n] == '.');
             p += n + (end ? 1 : 0);
         }
-        s_ui.selected[i] = match;
+        s_ui.selected[i] = match && !bench_unsupported(i);
     }
 }
 
@@ -662,7 +663,7 @@ static void draw_toolbar() {
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
     if (theme_button("All"))
-        for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = suite_visible(g_benches[i].suite);
+        for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = suite_visible(g_benches[i].suite) && !bench_unsupported(i);
     ImGui::SameLine();
     if (theme_button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
     ImGui::EndDisabled();
@@ -706,10 +707,17 @@ static void draw_test_row(u32 id, bool running) {
     const BenchStatus st = status_of(id);
     ImGui::PushID((int)id);
     // Selection is frozen during a run, but the tree stays at full contrast (clicks are ignored).
-    bool sel = s_ui.selected[id];
-    if (theme_checkbox(b->name, &sel) && !running) s_ui.selected[id] = sel;
+    // Tests this CPU can't run (missing instructions) are greyed out and never selectable.
+    const char* unsupported = bench_unsupported(id);
+    bool sel = s_ui.selected[id] && !unsupported;
+    ImGui::BeginDisabled(unsupported != nullptr);
+    if (theme_checkbox(b->name, &sel) && !running && !unsupported) s_ui.selected[id] = sel;
+    ImGui::EndDisabled();
     const f32 row_h = ImGui::GetItemRectSize().y, row_top = ImGui::GetItemRectMin().y;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", b->cli_id);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (unsupported) ImGui::SetTooltip("%s\n%s", unsupported, b->cli_id);
+        else ImGui::SetTooltip("%s", b->cli_id);
+    }
 
     ImGui::SameLine(s_status_x);
     if (st == ST_RUNNING) {
@@ -734,6 +742,9 @@ static void draw_test_row(u32 id, bool running) {
     } else if (st != ST_NOT_RUN) {
         ImGui::TextColored(status_color(st), "%s", status_name(st));
         if ((st == ST_FAILED || st == ST_SKIPPED) && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_results[id].error);
+    } else if (unsupported) {
+        ImGui::TextDisabled("not supported by this CPU");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", unsupported);
     } else {
         ImGui::TextUnformatted("");     // end the line started by SameLine
     }
@@ -748,7 +759,7 @@ static void draw_tree() {
         u32 total = 0, sel = 0, in_run = 0, done = 0;
         for (u32 i = 0; i < g_bench_count; ++i) {
             if (g_benches[i].suite != s) continue;
-            ++total;
+            total += !bench_unsupported(i);
             sel += s_ui.selected[i];
             BenchStatus st = status_of(i);
             in_run += st != ST_NOT_RUN;
@@ -769,7 +780,7 @@ static void draw_tree() {
         bool all = sel == total;
         if (theme_checkbox("##all", &all, sel > 0 && sel < total) && !running)     // dash when partly selected
             for (u32 i = 0; i < g_bench_count; ++i)
-                if (g_benches[i].suite == s) s_ui.selected[i] = all;
+                if (g_benches[i].suite == s) s_ui.selected[i] = all && !bench_unsupported(i);
         ImGui::SameLine();
         if (running && in_run) ImGui::TextDisabled("%u/%u done", done, in_run);
         else ImGui::TextDisabled("%u/%u selected", sel, total);
@@ -783,9 +794,10 @@ static void draw_tree() {
                     if (group_open) ImGui::TreePop();
                     group = g_benches[i].group;
                     // Group checkbox in the status column, like the suite's: dash when partly selected.
-                    u32 gtotal = 0, gsel = 0;
+                    u32 gtotal = 0, gsupported = 0, gsel = 0;
                     for (u32 k = i; k < g_bench_count && g_benches[k].suite == s && !strcmp(g_benches[k].group, group); ++k) {
                         ++gtotal;
+                        gsupported += !bench_unsupported(k);
                         gsel += s_ui.selected[k];
                     }
                     ImGui::AlignTextToFramePadding();
@@ -794,10 +806,12 @@ static void draw_tree() {
                     const f32 row_h = ImGui::GetItemRectSize().y;
                     ImGui::SameLine(s_status_x);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row_h - theme_checkbox_height()) * 0.5f);
-                    bool gall = gsel == gtotal;
+                    bool gall = gsupported && gsel == gsupported;
                     ImGui::PushID(group);
-                    if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gtotal) && !running)
-                        for (u32 k = i; k < i + gtotal; ++k) s_ui.selected[k] = gall;
+                    ImGui::BeginDisabled(gsupported == 0);      // the whole group needs instructions this CPU lacks
+                    if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gsupported) && !running)
+                        for (u32 k = i; k < i + gtotal; ++k) s_ui.selected[k] = gall && !bench_unsupported(k);
+                    ImGui::EndDisabled();
                     ImGui::PopID();
                 }
                 if (group_open) draw_test_row(i, running);

@@ -65,7 +65,7 @@ static inline u64 xx_merge(u64 h, u64 v) { return (h ^ xx_round(0, v)) * XP1 + X
 static inline u64 rd64(const u8* p) { u64 v; memcpy(&v, p, 8); return v; }
 static inline u32 rd32(const u8* p) { u32 v; memcpy(&v, p, 4); return v; }
 
-static u64 xxh64(const u8* p, u64 n, u64 seed) {
+FORCE_INLINE static u64 xxh64_body(const u8* p, u64 n, u64 seed) {
     const u8* const end = p + n;
     u64 h;
     if (n >= 32) {
@@ -90,6 +90,10 @@ static u64 xxh64(const u8* p, u64 n, u64 seed) {
     h ^= h >> 32;
     return h;
 }
+
+TARGET_AVX2 static u64 xxh64_avx2(const u8* p, u64 n, u64 seed) { return xxh64_body(p, n, seed); }
+static u64 xxh64_base(const u8* p, u64 n, u64 seed) { return xxh64_body(p, n, seed); }
+static u64 xxh64(const u8* p, u64 n, u64 seed) { return g_sys.cpu.avx2 ? xxh64_avx2(p, n, seed) : xxh64_base(p, n, seed); }
 
 static bool xxh64_selftest() {
     // Reference values: xxHash test vectors and the python-xxhash documentation example (39 bytes: covers the
@@ -210,15 +214,15 @@ static void chacha20_scalar(const u8 key[32], u32 counter, const u8 nonce[12], c
     }
 }
 
-static inline __m256i rot16(__m256i x) {
+TARGET_AVX2 static inline __m256i rot16(__m256i x) {
     return _mm256_shuffle_epi8(x, _mm256_set_epi8(13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2,
                                                   13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2));
 }
-static inline __m256i rot8(__m256i x) {
+TARGET_AVX2 static inline __m256i rot8(__m256i x) {
     return _mm256_shuffle_epi8(x, _mm256_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3,
                                                   14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3));
 }
-static inline __m256i rotn(__m256i x, int n) { return _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n)); }
+TARGET_AVX2 static inline __m256i rotn(__m256i x, int n) { return _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n)); }
 
 #define VQR(a, b, c, d)                                                                         \
     a = _mm256_add_epi32(a, b); d = rot16(_mm256_xor_si256(d, a));                              \
@@ -227,7 +231,7 @@ static inline __m256i rotn(__m256i x, int n) { return _mm256_or_si256(_mm256_sll
     c = _mm256_add_epi32(c, d); b = rotn(_mm256_xor_si256(b, c), 7);
 
 // Transposes 8 state words (one per block lane) and XORs them into the 8 output blocks at word offset `w0`.
-static inline void chacha_store8(const __m256i x[8], const u8* src, u8* dst, u32 w0) {
+TARGET_AVX2 static inline void chacha_store8(const __m256i x[8], const u8* src, u8* dst, u32 w0) {
     const __m256i t0 = _mm256_unpacklo_epi32(x[0], x[1]), t1 = _mm256_unpackhi_epi32(x[0], x[1]);
     const __m256i t2 = _mm256_unpacklo_epi32(x[2], x[3]), t3 = _mm256_unpackhi_epi32(x[2], x[3]);
     const __m256i t4 = _mm256_unpacklo_epi32(x[4], x[5]), t5 = _mm256_unpackhi_epi32(x[4], x[5]);
@@ -245,7 +249,7 @@ static inline void chacha_store8(const __m256i x[8], const u8* src, u8* dst, u32
 }
 
 // dst = src ^ keystream, n multiple of 512.
-static void chacha20_avx2(const u8 key[32], u32 counter, const u8 nonce[12], const u8* src, u8* dst, u64 n) {
+TARGET_AVX2 static void chacha20_avx2(const u8 key[32], u32 counter, const u8 nonce[12], const u8* src, u8* dst, u64 n) {
     u32 st[16];
     chacha_init(st, key, counter, nonce);
     __m256i in[16];

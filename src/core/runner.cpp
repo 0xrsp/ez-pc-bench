@@ -180,6 +180,12 @@ static DWORD WINAPI worker_main(void*) {
         BenchResult* r = &g_results[id];
 
         if (g_run.cancel.load(std::memory_order_relaxed)) { finish(id, ST_CANCELLED); continue; }
+        if (const char* why = bench_unsupported(id)) {      // CPU lacks the test's instructions: never call it
+            snprintf(r->error, sizeof(r->error), "%s", why);
+            r->skipped = true;
+            finish(id, ST_SKIPPED);
+            continue;
+        }
 
         if (b->suite != suite) {
             if (suite != SUITE_COUNT && suite_ok && g_suites[suite].shutdown) g_suites[suite].shutdown(suite_state);

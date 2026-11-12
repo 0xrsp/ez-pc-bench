@@ -54,7 +54,7 @@ void gemm_destroy(GemmCtx* g) {
 }
 
 // C[6x16] += Ap[kc x 6] * Bp[kc x 16]
-static void micro_6x16(u32 kc, const f32* a, const f32* b, f32* c, u32 ldc) {
+TARGET_AVX2 static void micro_6x16(u32 kc, const f32* a, const f32* b, f32* c, u32 ldc) {
     __m256 c00 = _mm256_loadu_ps(c + 0 * ldc), c01 = _mm256_loadu_ps(c + 0 * ldc + 8);
     __m256 c10 = _mm256_loadu_ps(c + 1 * ldc), c11 = _mm256_loadu_ps(c + 1 * ldc + 8);
     __m256 c20 = _mm256_loadu_ps(c + 2 * ldc), c21 = _mm256_loadu_ps(c + 2 * ldc + 8);
@@ -79,7 +79,7 @@ static void micro_6x16(u32 kc, const f32* a, const f32* b, f32* c, u32 ldc) {
     _mm256_storeu_ps(c + 5 * ldc, c50); _mm256_storeu_ps(c + 5 * ldc + 8, c51);
 }
 
-f64 gemm_run_part(GemmCtx* g, u32 index, u32 count) {
+TARGET_AVX2 f64 gemm_run_part(GemmCtx* g, u32 index, u32 count) {
     const u32 N = GEMM_N, strips = N / MR;
     const u32 m0 = MR * (strips * index / count), m1 = MR * (strips * (index + 1) / count);
     if (m0 == m1) return 0.0;

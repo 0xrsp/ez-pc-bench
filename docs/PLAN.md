@@ -59,8 +59,8 @@ games on this laptop). The UI's D3D11 device will likely land on the iGPU, leavi
   `cmake --preset release` then `cmake --build --preset release`.
 - Targets: `ezbench_core` (static lib: all benchmarks, sysinfo, runner), `ez-pc-bench` (GUI,
   `/SUBSYSTEM:WINDOWS`), `ez-pc-bench-cli` (console). Two exes avoid the AttachConsole mess.
-- Release: `/O2 /arch:AVX2` for app code. AVX-512 kernels per-function via
-  `__attribute__((target("avx512f,avx512vl,...")))`, selected by runtime CPUID.
+- Release: `/O2 -march=x86-64-v2` (SSE4.2 + POPCNT) for app code. AVX2 / FMA / AVX-512 kernels per function
+  (`TARGET_AVX2` in `core/types.h`, `__attribute__((target(...)))`), selected by runtime CPUID (§12 2026-11-12).
 - `/EHs-c- -D_HAS_EXCEPTIONS=0 /GR-`, static CRT (`/MT`), `/W4`, warnings clean.
 - Manifest: `asInvoker` + per-monitor-v2 DPI awareness + `longPathAware`. Elevation handled at runtime (§5.4).
 - Exe sizes at M0 (release): GUI 846 KB, CLI 223 KB.
@@ -554,7 +554,7 @@ Each milestone: builds warning-free, runs via CLI on this machine, numbers sanit
   fixed duration, report best + median; keep test order stable.
 - **Timers**: QPC (10 MHz) for wall time. `rdtsc` invariant on Zen 4 but runs at a fixed reference
   frequency, not core clock — short relative timing only.
-- **Compiler**: scalar loops get auto-vectorized under `/arch:AVX2` and chains can be folded → kernels in
+- **Compiler**: scalar loops get auto-vectorized (SSE4.2 baseline, AVX2 inside `TARGET_AVX2` functions) and chains can be folded → kernels in
   inline asm; every result feeds a sink. Inspect generated asm for benchmark TUs.
 - **Inline asm, equal constant inputs**: clang may put two `"r"` inputs with the same value in one
   register. `cpu.micro.branch` passed the wrap value as a separate `"r"(0)` next to a zero loop index; both
@@ -682,6 +682,34 @@ Waiting on the user (2026-11-11):
     `PAWNIO_MODULES_VERSION`, checked against `PAWNIO_MODULES_SHA256` (`core/pawnio_modules.h`), unpacked by our own
     zip reader (`core/unzip.*`) into `%LOCALAPPDATA%\ez-pc-bench\pawnio\<version>\` with COPYING; no embedded
     modules any more. The driver verifies module signatures at load. CLI `--pawnio-modules`.
+
+- 2026-11-12 (x86-64-v2 baseline): the exes no longer need AVX2 (they used to crash at launch on pre-Haswell /
+  pre-Ryzen CPUs and on Pentium / Celeron parts up to ~2021, which had AVX switched off).
+  - Build: `-march=x86-64-v2 -mtune=generic` (SSE4.2 + POPCNT, the Windows 11 24H2 floor) instead of
+    `/arch:AVX2`. `-mtune=generic` matters: `-march` alone also tunes for x86-64-v2 and splits unaligned 256-bit
+    loads in the AVX2 functions (ray-box / ray-triangle −12 %). Both mains check SSE4.2 + POPCNT first and
+    explain instead of crashing.
+  - AVX2 code is per function: `TARGET_AVX2` (avx2, fma, bmi1/2, lzcnt, f16c, movbe: what `/arch:AVX2` gave),
+    `TARGET_FMA`. Plain C++ kernels the compiler vectorizes are compiled twice (`FORCE_INLINE` body, AVX2 +
+    baseline copies, picked by CPUID): xxHash64 (−50 % without), ray-box / ray-triangle (−50 / −65 %), FFT (also
+    used by pi, −18 %), LZ77 compress / decompress (also per-core; −15 / −11 % single thread), sieve range (−3 %).
+    Memory kernels have SSE2 copies (16 xmm per 256 B, triad as mulps + addps).
+  - `BenchDesc::isa` (`ISA_FMA`, `ISA_AVX2` = AVX2 + FMA, `ISA_AVX512`, `ISA_AVX512_BF16`, `ISA_SHA`, `ISA_AES`)
+    and `bench_unsupported(id)`: the runner skips such tests with the reason, the GUI greys them out (tooltip
+    with the reason, "not supported by this CPU" in the status column, never selected by All / suite / group
+    checkboxes, presets or the ini), `--list` marks them. AVX2: FP32 FMA scalar (FMA), AVX2 FMA, SGEMM, ChaCha20,
+    N-body, AI INT8, thread scaling. Instruction table: ymm rows need AVX2; aesenc / pclmul rows now set up
+    their registers with SSE (were VEX, would have crashed on AES-NI CPUs without AVX).
+  - Stability: AVX2 and large-data kernels need AVX2 + FMA (mixed mode skips them, choosing them fails setup).
+  - Dev flag `--cpu-baseline` (GUI and CLI): clears AVX / FMA / AVX-512 in `g_sys.cpu` after `sysinfo_init` to
+    try the gated tests and SSE fallbacks on a modern PC.
+  - Checked: no VEX instruction outside gated functions (llvm-objdump over all objects). Interleaved A/B/A/B
+    against the `/arch:AVX2` build on this laptop (on battery, 1 s phases): all CPU / memory results within
+    run-to-run noise (memory latency / sweeps and Windows codecs vary ±10-20 % between runs of the same exe).
+    `--cpu-baseline` run: gated tests skip with the reason, the rest (SSE memory kernels, baseline copies)
+    pass their self-checks.
+  - Not done: the score needs `cpu.fp.scalar` and `cpu.fp.avx2_f32`, so CPUs without FMA / AVX2 only get
+    component scores ("incomplete"). Needs a score-version decision.
 
 - 2026-11-11 (trim): features cut, UI reworked (details in [notes/](notes/), marked "Removed 2026-11-11 (trim)"):
   - Disk health: History and "Thresholds & features" tabs gone (health samples, plots, endurance projection,

@@ -72,7 +72,8 @@ keep it updated (decision log, open questions, measured facts).
 - CLI modes (besides `--run`): `--health [--hide-serial]` (drive health report), `--sysinfo [base]` (system
   report), `--stress <tests>` (stability tester), `--log-sensors <file>` (CSV) / `--list-sensors`,
   `--score [files...]` (`--score-write`), `--html <file>`, `--adv-report` (PawnIO sensors), `--pawnio-modules` (download them); run options `--preset quick|standard|extended|sustained|score`, `--repeat N`,
-  `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests). `-h` prints the full usage.
+  `--sustain <minutes>`, `--yes` (allow `BENCH_CONFIRM` tests), `--cpu-baseline` (dev: act as if the CPU had no
+  AVX / FMA / AVX-512). `-h` prints the full usage.
 - GUI dev flags: `--no-elevate` (skip UAC prompt), `--autorun`, `--duration <ms>`, `--dev` (show the smoke-test
   suite), `--only <ids>` (implies `--dev` when an id starts with `smoke`), `--light` / `--dark` / `--theme <id>` (e.g. `solarized-dark`, `monokai`; ids in theme.cpp), `--compare [files...]` (opens the compare
   window with those results), `--tool compare|settings|bench|sensors|health|system|stability|history` (`temps` =
@@ -82,12 +83,17 @@ keep it updated (decision log, open questions, measured facts).
   Overview device, e.g. `cpu`, `gpu0`), `--open-gpu-combo` (GPU combo popup open, for screenshots),
   `--stability-run <ids> [seconds]` (`--dev --inject` adds the error self-test), `--check-update` (run the update
   check in a non-`dist` build: always offers the latest release), `--no-update` (skip it in a `dist` build;
-  `--dev` skips it too). Session only, never saved to the ini.
+  `--dev` skips it too), `--cpu-baseline` (act as if the CPU had no AVX / FMA / AVX-512: those tests greyed out).
+  Session only, never saved to the ini.
   Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style
   escapes for non-ASCII string literals.
 - New tests: add the function in the suite's file and one row in `src/core/registry.cpp`.
+- The build targets x86-64-v2 (SSE4.2 + POPCNT), not AVX2. Code using AVX2 / FMA / AVX-512 goes in functions
+  marked `TARGET_AVX2` / `TARGET_FMA` / `__attribute__((target(...)))` and runs only after a CPU check; a test
+  that needs them sets `isa` in its registry row (the GUI greys it out, the runner skips it). Vectorized plain C++
+  hot loops get an AVX2 copy too (`FORCE_INLINE` body, see `cpu_sci.cpp`), or AVX2 PCs lose up to half.
 - Reference runs for the GUI library: drop a `*.toon.txt` into `library/` (name it
   `<date>_<cpu-short>_<gpu-short>.toon.txt`) and build; the glob is CONFIGURE_DEPENDS, so the next build
   repacks it into the GUI exe.

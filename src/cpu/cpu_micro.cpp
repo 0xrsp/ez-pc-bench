@@ -74,6 +74,14 @@ MICRO_GP(tp_load, , "", GP20, I_LOADTP)
     "vmovdqa64 %%zmm15, %%zmm3\n\t" "vmovdqa64 %%zmm15, %%zmm4\n\t" "vmovdqa64 %%zmm15, %%zmm5\n\t"        \
     "vmovdqa64 %%zmm15, %%zmm6\n\t" "vmovdqa64 %%zmm15, %%zmm7\n\t" "vmovdqa64 %%zmm15, %%zmm8\n\t"        \
     "vmovdqa64 %%zmm15, %%zmm9\n\t"
+// Same for legacy-SSE instructions (aesenc, pclmulqdq): xmm only, no VEX, so they run on CPUs without AVX.
+#define X_INIT                                                                                            \
+    "movq %1, %%xmm15\n\t" "pshufd $0, %%xmm15, %%xmm15\n\t" "movdqa %%xmm15, %%xmm14\n\t"                 \
+    "pxor %%xmm13, %%xmm13\n\t"                                                                           \
+    "movdqa %%xmm15, %%xmm0\n\t" "movdqa %%xmm15, %%xmm1\n\t" "movdqa %%xmm15, %%xmm2\n\t"                  \
+    "movdqa %%xmm15, %%xmm3\n\t" "movdqa %%xmm15, %%xmm4\n\t" "movdqa %%xmm15, %%xmm5\n\t"                  \
+    "movdqa %%xmm15, %%xmm6\n\t" "movdqa %%xmm15, %%xmm7\n\t" "movdqa %%xmm15, %%xmm8\n\t"                  \
+    "movdqa %%xmm15, %%xmm9\n\t"
 #define V_CLOBBERS "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm13", \
                    "xmm14", "xmm15", "cc"
 #define Z_CLOBBERS "zmm0", "zmm1", "zmm2", "zmm3", "zmm4", "zmm5", "zmm6", "zmm7", "zmm8", "zmm9", "zmm13", \
@@ -83,6 +91,12 @@ MICRO_GP(tp_load, , "", GP20, I_LOADTP)
     ATTR static u64 name(u64 iters, u64 arg) {                                                                     \
         u64 n = iters;                                                                                             \
         __asm__ volatile(INIT "1:\n\t" REP(I) "dec %0\n\tjnz 1b\n\tvzeroupper\n\t" : "+r"(n) : "r"(arg) : CLOB);   \
+        return iters * 20;                                                                                         \
+    }
+#define MICRO_X(name, ATTR, REP, I)                                                                                \
+    ATTR static u64 name(u64 iters, u64 arg) {                                                                     \
+        u64 n = iters;                                                                                             \
+        __asm__ volatile(X_INIT "1:\n\t" REP(I) "dec %0\n\tjnz 1b\n\t" : "+r"(n) : "r"(arg) : V_CLOBBERS);         \
         return iters * 20;                                                                                         \
     }
 
@@ -101,34 +115,34 @@ MICRO_GP(tp_load, , "", GP20, I_LOADTP)
 #define I_ZFMAPD(n) "vfmadd231pd %%zmm15, %%zmm14, %%zmm" #n "\n\t"
 
 #define AVX512 __attribute__((target("avx512f")))
-MICRO_V(lat_vaddps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VADDPS)
-MICRO_V(tp_vaddps, , V_INIT(0), V_CLOBBERS, V20, I_VADDPS)
-MICRO_V(lat_vmulps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VMULPS)
-MICRO_V(tp_vmulps, , V_INIT(0), V_CLOBBERS, V20, I_VMULPS)
-MICRO_V(lat_vfmaps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VFMAPS)
-MICRO_V(tp_vfmaps, , V_INIT(0), V_CLOBBERS, V20, I_VFMAPS)
-MICRO_V(lat_vdivps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VDIVPS)
-MICRO_V(tp_vdivps, , V_INIT(0), V_CLOBBERS, V20, I_VDIVPS)
-MICRO_V(lat_vsqrtps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VSQRTPS)
-MICRO_V(tp_vsqrtps, , V_INIT(0), V_CLOBBERS, V20, I_VSQRTPS)
-MICRO_V(lat_vpaddd, , V_INIT(0), V_CLOBBERS, VSAME20, I_VPADDD)
-MICRO_V(tp_vpaddd, , V_INIT(0), V_CLOBBERS, V20, I_VPADDD)
-MICRO_V(lat_vpmulld, , V_INIT(0), V_CLOBBERS, VSAME20, I_VPMULLD)
-MICRO_V(tp_vpmulld, , V_INIT(0), V_CLOBBERS, V20, I_VPMULLD)
-MICRO_V(lat_vpshufb, , V_INIT(0), V_CLOBBERS, VSAME20, I_VPSHUFB)
-MICRO_V(tp_vpshufb, , V_INIT(0), V_CLOBBERS, V20, I_VPSHUFB)
-MICRO_V(lat_vpermps, , V_INIT(0), V_CLOBBERS, VSAME20, I_VPERMPS)
-MICRO_V(tp_vpermps, , V_INIT(0), V_CLOBBERS, V20, I_VPERMPS)
-MICRO_V(lat_aesenc, __attribute__((target("aes"))), V_INIT(0), V_CLOBBERS, VSAME20, I_AESENC)
-MICRO_V(tp_aesenc, __attribute__((target("aes"))), V_INIT(0), V_CLOBBERS, V20, I_AESENC)
-MICRO_V(lat_pclmul, __attribute__((target("pclmul"))), V_INIT(0), V_CLOBBERS, VSAME20, I_PCLMUL)
-MICRO_V(tp_pclmul, __attribute__((target("pclmul"))), V_INIT(0), V_CLOBBERS, V20, I_PCLMUL)
+MICRO_V(lat_vaddps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VADDPS)
+MICRO_V(tp_vaddps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VADDPS)
+MICRO_V(lat_vmulps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VMULPS)
+MICRO_V(tp_vmulps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VMULPS)
+MICRO_V(lat_vfmaps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VFMAPS)
+MICRO_V(tp_vfmaps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VFMAPS)
+MICRO_V(lat_vdivps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VDIVPS)
+MICRO_V(tp_vdivps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VDIVPS)
+MICRO_V(lat_vsqrtps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VSQRTPS)
+MICRO_V(tp_vsqrtps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VSQRTPS)
+MICRO_V(lat_vpaddd, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VPADDD)
+MICRO_V(tp_vpaddd, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VPADDD)
+MICRO_V(lat_vpmulld, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VPMULLD)
+MICRO_V(tp_vpmulld, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VPMULLD)
+MICRO_V(lat_vpshufb, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VPSHUFB)
+MICRO_V(tp_vpshufb, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VPSHUFB)
+MICRO_V(lat_vpermps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, VSAME20, I_VPERMPS)
+MICRO_V(tp_vpermps, TARGET_AVX2, V_INIT(0), V_CLOBBERS, V20, I_VPERMPS)
+MICRO_X(lat_aesenc, __attribute__((target("aes"))), VSAME20, I_AESENC)
+MICRO_X(tp_aesenc, __attribute__((target("aes"))), V20, I_AESENC)
+MICRO_X(lat_pclmul, __attribute__((target("pclmul"))), VSAME20, I_PCLMUL)
+MICRO_X(tp_pclmul, __attribute__((target("pclmul"))), V20, I_PCLMUL)
 MICRO_V(lat_zaddps, AVX512, Z_INIT, Z_CLOBBERS, VSAME20, I_ZADDPS)
 MICRO_V(tp_zaddps, AVX512, Z_INIT, Z_CLOBBERS, V20, I_ZADDPS)
 MICRO_V(lat_zfmapd, AVX512, Z_INIT, Z_CLOBBERS, VSAME20, I_ZFMAPD)
 MICRO_V(tp_zfmapd, AVX512, Z_INIT, Z_CLOBBERS, V20, I_ZFMAPD)
 
-enum Need : u8 { NEED_NONE, NEED_AVX512, NEED_AES, NEED_PCLMUL, NEED_SSE42 };
+enum Need : u8 { NEED_NONE, NEED_AVX2, NEED_AVX512, NEED_AES, NEED_PCLMUL, NEED_SSE42 };
 typedef u64 (*MicroFn)(u64 iters, u64 arg);
 
 struct InstrRow {
@@ -149,15 +163,15 @@ static const InstrRow INSTRS[] = {
     { "popcnt r64, latency", "popcnt r64, reciprocal throughput", lat_popcnt, tp_popcnt, 1, NEED_NONE },
     { "crc32 r64, latency", "crc32 r64, reciprocal throughput", lat_crc, tp_crc, 3, NEED_SSE42 },
     { "load (L1 hit), latency", "load (L1 hit), reciprocal throughput", lat_load, tp_load, 0, NEED_NONE },
-    { "vaddps ymm, latency", "vaddps ymm, reciprocal throughput", lat_vaddps, tp_vaddps, ONE_F32, NEED_NONE },
-    { "vmulps ymm, latency", "vmulps ymm, reciprocal throughput", lat_vmulps, tp_vmulps, ONE_F32, NEED_NONE },
-    { "vfmadd231ps ymm, latency", "vfmadd231ps ymm, reciprocal throughput", lat_vfmaps, tp_vfmaps, ONE_F32, NEED_NONE },
-    { "vdivps ymm, latency", "vdivps ymm, reciprocal throughput", lat_vdivps, tp_vdivps, ONE_F32, NEED_NONE },
-    { "vsqrtps ymm, latency", "vsqrtps ymm, reciprocal throughput", lat_vsqrtps, tp_vsqrtps, ONE_F32, NEED_NONE },
-    { "vpaddd ymm, latency", "vpaddd ymm, reciprocal throughput", lat_vpaddd, tp_vpaddd, ONE_F32, NEED_NONE },
-    { "vpmulld ymm, latency", "vpmulld ymm, reciprocal throughput", lat_vpmulld, tp_vpmulld, ONE_F32, NEED_NONE },
-    { "vpshufb ymm, latency", "vpshufb ymm, reciprocal throughput", lat_vpshufb, tp_vpshufb, ONE_F32, NEED_NONE },
-    { "vpermps ymm, latency", "vpermps ymm, reciprocal throughput", lat_vpermps, tp_vpermps, ONE_F32, NEED_NONE },
+    { "vaddps ymm, latency", "vaddps ymm, reciprocal throughput", lat_vaddps, tp_vaddps, ONE_F32, NEED_AVX2 },
+    { "vmulps ymm, latency", "vmulps ymm, reciprocal throughput", lat_vmulps, tp_vmulps, ONE_F32, NEED_AVX2 },
+    { "vfmadd231ps ymm, latency", "vfmadd231ps ymm, reciprocal throughput", lat_vfmaps, tp_vfmaps, ONE_F32, NEED_AVX2 },
+    { "vdivps ymm, latency", "vdivps ymm, reciprocal throughput", lat_vdivps, tp_vdivps, ONE_F32, NEED_AVX2 },
+    { "vsqrtps ymm, latency", "vsqrtps ymm, reciprocal throughput", lat_vsqrtps, tp_vsqrtps, ONE_F32, NEED_AVX2 },
+    { "vpaddd ymm, latency", "vpaddd ymm, reciprocal throughput", lat_vpaddd, tp_vpaddd, ONE_F32, NEED_AVX2 },
+    { "vpmulld ymm, latency", "vpmulld ymm, reciprocal throughput", lat_vpmulld, tp_vpmulld, ONE_F32, NEED_AVX2 },
+    { "vpshufb ymm, latency", "vpshufb ymm, reciprocal throughput", lat_vpshufb, tp_vpshufb, ONE_F32, NEED_AVX2 },
+    { "vpermps ymm, latency", "vpermps ymm, reciprocal throughput", lat_vpermps, tp_vpermps, ONE_F32, NEED_AVX2 },
     { "aesenc xmm, latency", "aesenc xmm, reciprocal throughput", lat_aesenc, tp_aesenc, ONE_F32, NEED_AES },
     { "pclmulqdq xmm, latency", "pclmulqdq xmm, reciprocal throughput", lat_pclmul, tp_pclmul, ONE_F32, NEED_PCLMUL },
     { "vaddps zmm, latency", "vaddps zmm, reciprocal throughput", lat_zaddps, tp_zaddps, ONE_F32, NEED_AVX512 },
@@ -200,6 +214,7 @@ struct InstrJob {
 
 static bool instr_supported(Need n) {
     switch (n) {
+        case NEED_AVX2: return g_sys.cpu.avx2 && g_sys.cpu.fma;
         case NEED_AVX512: return g_sys.cpu.avx512f;
         case NEED_AES: return g_sys.cpu.aes;
         case NEED_PCLMUL: return g_cpu_ext.pclmul;

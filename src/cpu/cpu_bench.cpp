@@ -258,7 +258,7 @@ struct SieveJob {
     std::atomic<u64> count;
 };
 
-static void sieve_range(u32 index, u32 count, void* user) {
+FORCE_INLINE static void sieve_range_body(u32 index, u32 count, void* user) {
     SieveJob* j = (SieveJob*)user;
     const u64 total = SIEVE_N / 2;
     // Segment-aligned split of [0, total).
@@ -292,6 +292,14 @@ static void sieve_range(u32 index, u32 count, void* user) {
         found += zeros;
     }
     j->count.fetch_add(found, std::memory_order_relaxed);
+}
+
+// AVX2 + baseline copies (the zero count vectorizes: ~3 % of the result).
+TARGET_AVX2 static void sieve_range_avx2(u32 index, u32 count, void* user) { sieve_range_body(index, count, user); }
+static void sieve_range_base(u32 index, u32 count, void* user) { sieve_range_body(index, count, user); }
+static void sieve_range(u32 index, u32 count, void* user) {
+    if (g_sys.cpu.avx2) sieve_range_avx2(index, count, user);
+    else sieve_range_base(index, count, user);
 }
 
 void cpu_sieve(void*, const BenchParams* p, BenchLive* live, BenchResult* out, const CancelFlag* cancel) {

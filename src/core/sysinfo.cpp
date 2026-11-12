@@ -30,6 +30,19 @@ static void trim(char* s) {
     while (n && s[n - 1] == ' ') s[--n] = 0;
 }
 
+bool cpu_baseline_ok() {
+    int r[4];
+    __cpuid(r, 1);
+    const u32 ecx = (u32)r[2];
+    return ((ecx >> 20) & 1) && ((ecx >> 23) & 1);     // SSE4.2, POPCNT
+}
+
+void sysinfo_cap_to_baseline() {
+    CpuInfo* c = &g_sys.cpu;
+    c->avx = c->avx2 = c->fma = c->vaes = false;
+    c->avx512f = c->avx512vl = c->avx512bw = c->avx512dq = c->avx512vnni = c->avx512bf16 = false;
+}
+
 static void cpu_query(CpuInfo* c) {
     int r[4];
     __cpuid(r, 0);
@@ -63,6 +76,7 @@ static void cpu_query(CpuInfo* c) {
     const bool os_avx512 = (xcr0 & 0xE6) == 0xE6;
 
     c->sse42 = (ecx1 >> 20) & 1;
+    c->popcnt = (ecx1 >> 23) & 1;
     c->aes = (ecx1 >> 25) & 1;
     c->avx = os_avx && ((ecx1 >> 28) & 1);
     c->fma = os_avx && ((ecx1 >> 12) & 1);
@@ -78,6 +92,10 @@ static void cpu_query(CpuInfo* c) {
         c->avx512bw = os_avx512 && ((ebx >> 30) & 1);
         c->avx512vl = os_avx512 && ((ebx >> 31) & 1);
         c->avx512vnni = os_avx512 && ((ecx >> 11) & 1);
+        if (r[0] >= 1) {    // sub-leaves
+            __cpuidex(r, 7, 1);
+            c->avx512bf16 = c->avx512f && ((r[0] >> 5) & 1);
+        }
     }
 }
 

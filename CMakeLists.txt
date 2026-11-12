@@ -13,9 +13,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
-# Common flags for all our targets
+# Common flags for all our targets. Baseline x86-64-v2 (SSE4.2 + POPCNT, same floor as Windows 11 24H2):
+# AVX2 / AVX-512 code is compiled per function (TARGET_AVX2 in core/types.h) and gated at run time.
+# -mtune=generic keeps the old tuning: -march alone also tunes for x86-64-v2, which splits unaligned 256-bit
+# loads in the AVX2 functions into two halves (ray-box / ray-triangle -12 %).
 add_library(ezb_flags INTERFACE)
-target_compile_options(ezb_flags INTERFACE /EHs-c- /GR- /arch:AVX2 /utf-8 /Zc:__cplusplus)
+target_compile_options(ezb_flags INTERFACE /EHs-c- /GR- /clang:-march=x86-64-v2 /clang:-mtune=generic /utf-8 /Zc:__cplusplus)
 target_compile_definitions(ezb_flags INTERFACE
     _HAS_EXCEPTIONS=0 WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 
