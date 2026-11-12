@@ -270,7 +270,7 @@ static void draw_tests() {
     ImGui::TableSetupColumn("Checked", ImGuiTableColumnFlags_WidthStretch, 1.2f);
     ImGui::TableSetupColumn("Now / notes", ImGuiTableColumnFlags_WidthStretch, 2.6f);
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     ImGui::PopStyleColor();
     for (u32 t = 0; t < STAB_COUNT; ++t) {
         const StabTestState* s = &g_stab.tests[t];
@@ -427,7 +427,7 @@ static void draw_errors() {
     ImGui::TableSetupColumn("Actual", ImGuiTableColumnFlags_WidthStretch, 1.6f);
     ImGui::TableSetupColumn("Bits", ImGuiTableColumnFlags_WidthStretch, 1.6f);
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     ImGui::PopStyleColor();
     for (u32 i = 0; i < n; ++i) {
         const StabError* e = &s_ui.log[i];

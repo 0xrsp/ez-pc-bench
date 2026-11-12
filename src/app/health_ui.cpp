@@ -313,7 +313,7 @@ static void draw_smart(DiskHealth* h) {
     }
     ImGui::TableSetupColumn("Raw values");
     ImGui::TableSetupColumn("Decoded", ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     for (u32 i = 0; i < h->row_count; ++i) {
         const SmartRow* r = &h->rows[i];
         ImGui::TableNextRow();
@@ -431,7 +431,7 @@ static void draw_selftest(DiskHealth* h) {
     ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableSetupColumn("At power-on hour", ImGuiTableColumnFlags_WidthStretch, 0.8f);
     ImGui::TableSetupColumn("First failing LBA", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     for (u32 i = 0; i < h->test_count; ++i) {
         const SelfTestEntry* e = &h->tests[i];
         ImGui::TableNextRow();
@@ -592,7 +592,7 @@ static void draw_nvme(DiskHealth* h) {
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Entry latency");
         ImGui::TableSetupColumn("Exit latency");
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         for (u32 i = 0; i < h->power_state_count; ++i) {
             const NvmePowerState* p = &h->power_states[i];
             ImGui::TableNextRow();
@@ -618,7 +618,7 @@ static void draw_nvme(DiskHealth* h) {
             ImGui::TableSetupColumn("Status");
             ImGui::TableSetupColumn("Namespace");
             ImGui::TableSetupColumn("LBA");
-            ImGui::TableHeadersRow();
+            theme_table_headers();
             for (u32 i = 0; i < h->error_count; ++i) {
                 const NvmeErrorEntry* e = &h->errors[i];
                 ImGui::TableNextRow();

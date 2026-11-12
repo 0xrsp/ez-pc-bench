@@ -110,7 +110,7 @@ static void draw_table() {
     ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed, fs * 5.0f);
     ImGui::TableSetupColumn("Last 2 minutes", ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     ImGui::PopStyleColor();
     for (u32 i = 0; i < s_series_count; ++i) {
         const Series* s = &s_series[i];

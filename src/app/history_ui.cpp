@@ -352,7 +352,7 @@ void history_ui_draw() {
         ImGui::TableSetupColumn("Overall", ImGuiTableColumnFlags_WidthStretch, 0.9f);
         ImGui::TableSetupColumn("Selected", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         char t[32], flags_text[300];
         for (i32 i = (i32)s_hu.run_count - 1; i >= 0; --i) {
             HistRun* r = &s_hu.d->runs[i];

@@ -640,6 +640,25 @@ void theme_header_push(bool framed) {
 
 void theme_header_pop() { ImGui::PopStyleColor(2); }
 
+void theme_table_headers() {
+    theme_header_push(false);
+    ImGui::TableHeadersRow();
+    theme_header_pop();
+}
+
+bool theme_list_item(const char* label, bool selected) {
+    const f32 pad = ImGui::GetStyle().FramePadding.x;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const f32 w = ImGui::GetContentRegionAvail().x;
+    ImGui::PushID(label);
+    const bool clicked = ImGui::Selectable("##item", selected, 0, ImVec2(w, ImGui::GetTextLineHeight()));
+    ImGui::PopID();
+    const ImVec4 clip(pos.x + pad, pos.y, pos.x + w - pad, pos.y + ImGui::GetTextLineHeight());
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(pos.x + pad, pos.y),
+                                        ImGui::GetColorU32(ImGuiCol_Text), label, nullptr, 0.0f, &clip);
+    return clicked;
+}
+
 // Group box: an auto-height child without its own border; the frame is drawn on the parent's draw list after
 // the child ends (its height is known then), with a gap in the top line where the title sits. The parent's draw
 // list renders below the child, and the child has no background, so frame and title stay visible.

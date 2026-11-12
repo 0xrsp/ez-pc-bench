@@ -1270,7 +1270,7 @@ static void draw_channels() {
     ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed, fs * 5.2f);
     ImGui::TableSetupColumn(big ? "Last 10 minutes" : "Last 2 minutes", ImGuiTableColumnFlags_WidthStretch, big ? 2.2f : 1.4f);
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     ImGui::PopStyleColor();
     for (u32 g = 0; g < CHG_COUNT; ++g) {
         bool header = false;

@@ -85,6 +85,11 @@ void theme_help(const char* text);
 // (Selectable) keep their hover highlight: it shows what a click picks.
 void theme_header_push(bool framed);
 void theme_header_pop();
+// ImGui::TableHeadersRow without the hover fill (our tables aren't sortable: headers can't be clicked).
+void theme_table_headers();
+// Text list entry (Selectable) whose text is inset from the highlight's left edge; full available width. In a
+// panel ImGui clips a plain Selectable's highlight to the text, so it had no padding. Caller pushes colors.
+bool theme_list_item(const char* label, bool selected);
 
 // Titled, outlined section that groups related controls (settings groups, tool-window sections): a 1 px frame
 // with the title on its top line. Height fits the content; width = `width` (default: the full available width).

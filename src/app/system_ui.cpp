@@ -114,7 +114,7 @@ static void draw_table(u32 header, u32 end) {
     if (cols && ImGui::BeginTable("t", (int)cols, flags)) {
         for (u32 c = 0; c < cols; ++c) ImGui::TableSetupColumn(rep_cell(&s_rep, h, c + 1));
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         ImGui::PopStyleColor();
         for (u32 i = header + 1; i < end; ++i) {
             ImGui::TableNextRow();
@@ -179,7 +179,7 @@ void system_ui_draw() {
             ImGui::PushStyleColor(ImGuiCol_Header, g_pal.secondary_container);
             ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_secondary_container);
         }
-        if (ImGui::Selectable(rep_cell(&s_rep, &s_rep.items[i], 0), sel)) s_section = i;
+        if (theme_list_item(rep_cell(&s_rep, &s_rep.items[i], 0), sel)) s_section = i;
         if (sel) ImGui::PopStyleColor(2);
         ImGui::PopID();
     }

@@ -1001,6 +1001,7 @@ static void draw_results() {
     // Header row by hand so the number columns can be right-aligned over their numbers.
     ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
     ImGui::PushFont(g_fonts.medium, 0.0f);
+    theme_header_push(false);       // headers can't be clicked: no hover fill
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
     for (int c = 0; c < cols; ++c) {
         ImGui::TableSetColumnIndex(c);
@@ -1008,6 +1009,7 @@ static void draw_results() {
         if (c == 2) align_right(ImGui::CalcTextSize(name).x);
         ImGui::TableHeader(name);
     }
+    theme_header_pop();
     ImGui::PopFont();
     ImGui::PopStyleColor();
 

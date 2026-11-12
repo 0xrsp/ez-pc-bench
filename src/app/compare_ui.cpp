@@ -542,7 +542,7 @@ static void draw_library() {
         ImGui::TableSetupColumn("RAM", ImGuiTableColumnFlags_WidthStretch, 1.1f);
         ImGui::TableSetupColumn("Power", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthStretch, 1.3f);
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         for (u32 i = 0; i < n && i < ARRAY_COUNT(s_cu.lib_selected); ++i) {
             const LibraryRun* r = library_run(i);
             if (!s_cu.lib_filter.PassFilter(r->name) && !s_cu.lib_filter.PassFilter(r->info.info[CI_CPU]) &&

@@ -37,7 +37,7 @@ void score_ui_inputs_table(const ScoreResult* s, ScoreComp c) {
     ImGui::TableSetupColumn("vs ref");
     ImGui::TableSetupColumn("Weight");
     ImGui::TableSetupColumn("Test");
-    ImGui::TableHeadersRow();
+    theme_table_headers();
     char v[32], r[32];
     for (u32 i = 0; i < g_score.input_count; ++i) {
         const ScoreInput* in = &g_score.inputs[i];
@@ -153,7 +153,7 @@ void score_ui_about(bool* request) {
     about_group_begin("Overall (component weights, %)");
     if (ImGui::BeginTable("##weights", SC_COUNT, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH)) {
         for (u32 c = 0; c < SC_COUNT; ++c) ImGui::TableSetupColumn(g_score_comp_names[c]);
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         ImGui::TableNextRow();
         for (u32 c = 0; c < SC_COUNT; ++c) {
             ImGui::TableNextColumn();
@@ -170,7 +170,7 @@ void score_ui_about(bool* request) {
         ImGui::TableSetupColumn("Weight");
         ImGui::TableSetupColumn("Reference");
         ImGui::TableSetupColumn("Better");
-        ImGui::TableHeadersRow();
+        theme_table_headers();
         char r[32];
         for (u32 i = 0; i < g_score.input_count; ++i) {
             const ScoreInput* in = &g_score.inputs[i];
