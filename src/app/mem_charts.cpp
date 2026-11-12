@@ -1,5 +1,6 @@
 // Memory result views for the Charts tab (see mem_charts.h).
 #include "app/mem_charts.h"
+#include "app/graph.h"
 #include "app/theme.h"
 #include "core/results.h"
 #include "imgui.h"
@@ -58,55 +59,32 @@ static void draw_grid(const BenchResult* r) {
 // Latency (y) against the bandwidth the other cores generate (x), one point per load level.
 static void draw_loaded(const BenchResult* r) {
     const Metric* m = res_metrics(r);
-    f32 bw[64], lat[64];
+    f32 bw[64], lat[64], delay[64];
     u32 n = 0;
     for (u32 k = 0; k + 1 < r->count && n < 64; ++k)
         if (!strcmp(m[k].name, "Latency") && !strcmp(m[k + 1].name, "Bandwidth") && m[k].x == m[k + 1].x) {
             lat[n] = (f32)m[k].value;
+            delay[n] = (f32)m[k].x;
             bw[n++] = (f32)m[k + 1].value;
         }
     if (!n) return;
-    f32 bw_max = 1.0f, lat_max = 1.0f;
-    for (u32 i = 0; i < n; ++i) {
-        bw_max = bw[i] > bw_max ? bw[i] : bw_max;
-        lat_max = lat[i] > lat_max ? lat[i] : lat_max;
-    }
-    bw_max *= 1.1f;
-    lat_max *= 1.15f;
-    ImGui::TextDisabled("Latency [ns] vs bandwidth the other cores generate [GB/s]");
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, ImGui::GetFontSize() * 12.0f);
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("##loaded", size);
-    const bool hovered = ImGui::IsItemHovered();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const f32 pad = ImGui::GetFontSize() * 0.5f;
-    const ImVec2 a(p0.x + pad * 5.0f, p0.y + pad), b(p0.x + size.x - pad, p0.y + size.y - pad * 3.0f);
-    dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), ImGui::GetColorU32(g_pal.container),
-                      ImGui::GetStyle().FrameRounding);
-    const ImU32 axis = ImGui::GetColorU32(g_pal.outline_variant), text = ImGui::GetColorU32(g_pal.on_surface_variant);
-    char lbl[32];
-    for (u32 i = 0; i <= 4; ++i) {      // grid lines + labels
-        const f32 ty = b.y - (b.y - a.y) * i / 4.0f, tx = a.x + (b.x - a.x) * i / 4.0f;
-        dl->AddLine(ImVec2(a.x, ty), ImVec2(b.x, ty), axis);
-        snprintf(lbl, sizeof(lbl), "%.0f", lat_max * i / 4.0f);
-        dl->AddText(ImVec2(p0.x + pad * 0.5f, ty - ImGui::GetFontSize() * 0.5f), text, lbl);
-        snprintf(lbl, sizeof(lbl), "%.0f", bw_max * i / 4.0f);
-        dl->AddText(ImVec2(tx - ImGui::CalcTextSize(lbl).x * 0.5f, b.y + pad * 0.3f), text, lbl);
-    }
-    const ImU32 line = ImGui::GetColorU32(g_pal.primary);
-    ImVec2 pts[64];
-    for (u32 i = 0; i < n; ++i) pts[i] = ImVec2(a.x + (b.x - a.x) * bw[i] / bw_max, b.y - (b.y - a.y) * lat[i] / lat_max);
-    dl->AddPolyline(pts, (int)n, line, ImGui::GetFontSize() * 0.12f);
-    i32 near = -1;
-    f32 best = 1e30f;
-    for (u32 i = 0; i < n; ++i) {
-        dl->AddCircleFilled(pts[i], ImGui::GetFontSize() * 0.22f, line);
-        const f32 dx = ImGui::GetIO().MousePos.x - pts[i].x, dy = ImGui::GetIO().MousePos.y - pts[i].y;
-        if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; near = (i32)i; }
-    }
-    if (hovered && near >= 0)
-        ImGui::SetTooltip("%.1f GB/s load: %.1f ns\n(delay %.0f cycles per 256 B per load thread)", bw[near], lat[near],
-                          m[near * 2].x);
+    bool rising = true;     // bandwidth grows with the load: the area under the curve reads well
+    for (u32 i = 1; i < n; ++i) rising &= bw[i] >= bw[i - 1];
+    Graph g;
+    g.title = "Latency [ns] vs bandwidth the other cores generate [GB/s]";
+    g.unit = "ns";
+    g.kind = GK_LATENCY;
+    g.flags = GF_ZERO | GF_POINTS | GF_NO_TOOLTIP | (rising ? 0u : GF_NO_FILL);
+    g.x_unit = "GB/s";
+    g.fmt_x = [](char* buf, u32 size, f64 x, const void*) { snprintf(buf, size, x < 10.0 ? "%.1f GB/s" : "%.0f GB/s", x); };
+    GraphLine line;
+    line.x = bw;
+    line.y = lat;
+    line.n = n;
+    const GraphHit hit = graph_xy("##loaded", &g, &line, 1, ImVec2(0.0f, ImGui::GetFontSize() * 12.0f));
+    if (hit.point >= 0)
+        ImGui::SetTooltip("%.1f GB/s load: %.1f ns\n(delay %.0f cycles per 256 B per load thread)", bw[hit.point],
+                          lat[hit.point], delay[hit.point]);
 }
 
 bool mem_chart_has_view(u32 bench) {

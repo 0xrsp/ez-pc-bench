@@ -1,5 +1,6 @@
 // History window: results\history\*.toon.txt, trend chart per metric / score, runs list (see history_ui.h).
 #include "app/history_ui.h"
+#include "app/graph.h"
 #include "app/score_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
@@ -230,72 +231,51 @@ static void draw_picker() {
     }
 }
 
+// x = run index (gaps where a run doesn't have the value are bridged); y = the picked item.
+static void chart_x(char* buf, u32 size, f64 x, const void*) {
+    const u32 i = (u32)x;
+    snprintf(buf, size, "%s", i < s_hu.run_count ? s_hu.d->runs[i].stamp : "");
+}
+
+static void chart_y(char* buf, u32 size, f64 y, const void*) { format_item(buf, size, s_hu.sel, y); }
+
 static void draw_chart(f32 height) {
     const u32 n = s_hu.run_count;
-    static f64 vals[HIST_MAX_RUNS];
-    f64 lo = INFINITY, hi = -INFINITY;
+    static f32 xs[HIST_MAX_RUNS], ys[HIST_MAX_RUNS];
+    static u8 flagged[HIST_MAX_RUNS];
     u32 points = 0;
     for (u32 i = 0; i < n; ++i) {
-        vals[i] = run_value(&s_hu.d->runs[i], s_hu.sel);
-        if (!isfinite(vals[i])) continue;
-        lo = vals[i] < lo ? vals[i] : lo;
-        hi = vals[i] > hi ? vals[i] : hi;
-        ++points;
+        const f64 v = run_value(&s_hu.d->runs[i], s_hu.sel);
+        if (!isfinite(v)) continue;
+        xs[points] = (f32)i;
+        ys[points] = (f32)v;
+        flagged[points++] = (s_hu.d->runs[i].flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
     }
-    const f32 fs = ImGui::GetFontSize();
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    const f32 w = ImGui::GetContentRegionAvail().x;
-    ImGui::InvisibleButton("##chart", ImVec2(w, height));
-    const bool hovered = ImGui::IsItemHovered();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + height), ImGui::GetColorU32(g_pal.container), fs * 0.4f);
     if (!points) {
-        dl->AddText(ImVec2(p0.x + fs, p0.y + fs), ImGui::GetColorU32(g_pal.on_surface_variant), "No run has this value.");
+        const f32 fs = ImGui::GetFontSize();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, height));
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p0.x + fs, p0.y + fs), ImGui::GetColorU32(g_pal.on_surface_variant),
+                                            "No run has this value.");
         return;
     }
-    const f64 pad = hi > lo ? (hi - lo) * 0.15 : (hi != 0.0 ? fabs(hi) * 0.05 : 1.0);
-    lo -= pad;
-    hi += pad;
-    const f32 left = p0.x + fs * 4.5f, right = p0.x + w - fs, top = p0.y + fs * 0.8f, bottom = p0.y + height - fs * 1.6f;
-    char t[32];
-    const ImU32 dim = ImGui::GetColorU32(g_pal.on_surface_variant), grid = ImGui::GetColorU32(g_pal.outline_variant);
-    for (u32 g = 0; g <= 4; ++g) {      // horizontal grid with values
-        const f32 y = bottom - (bottom - top) * g / 4.0f;
-        dl->AddLine(ImVec2(left, y), ImVec2(right, y), grid, 1.0f);
-        format_item(t, sizeof(t), s_hu.sel, lo + (hi - lo) * g / 4.0);
-        dl->AddText(ImVec2(p0.x + fs * 0.4f, y - fs * 0.55f), dim, t);
-    }
-    auto px = [&](u32 i) { return n > 1 ? left + (right - left) * i / (f32)(n - 1) : (left + right) * 0.5f; };
-    auto py = [&](f64 v) { return bottom - (f32)((v - lo) / (hi - lo)) * (bottom - top); };
-    const ImU32 line = ImGui::GetColorU32(g_pal.primary);
-    i32 prev = -1;
-    for (u32 i = 0; i < n; ++i) {
-        if (!isfinite(vals[i])) continue;
-        if (prev >= 0) dl->AddLine(ImVec2(px(prev), py(vals[prev])), ImVec2(px(i), py(vals[i])), line, 2.0f);
-        prev = (i32)i;
-    }
-    i32 near_i = -1;
-    f32 near_d = fs * 1.2f;
-    const ImVec2 mouse = ImGui::GetIO().MousePos;
-    for (u32 i = 0; i < n; ++i) {
-        if (!isfinite(vals[i])) continue;
-        const HistRun* r = &s_hu.d->runs[i];
-        const bool flagged = (r->flags & ~(SF_INCOMPLETE | SF_NO_CONDITIONS)) != 0;
-        dl->AddCircleFilled(ImVec2(px(i), py(vals[i])), fs * 0.28f, ImGui::GetColorU32(flagged ? g_pal.warn : g_pal.primary));
-        const f32 d = fabsf(mouse.x - px(i));
-        if (hovered && d < near_d) { near_d = d; near_i = (i32)i; }
-    }
-    // First / last date under the axis.
-    dl->AddText(ImVec2(left, bottom + fs * 0.3f), dim, s_hu.d->runs[0].stamp);
-    if (n > 1) {
-        const char* last = s_hu.d->runs[n - 1].stamp;
-        dl->AddText(ImVec2(right - ImGui::CalcTextSize(last).x, bottom + fs * 0.3f), dim, last);
-    }
-    if (near_i >= 0) {
-        const HistRun* r = &s_hu.d->runs[near_i];
-        dl->AddCircle(ImVec2(px(near_i), py(vals[near_i])), fs * 0.5f, line, 16, 2.0f);
-        format_item(t, sizeof(t), s_hu.sel, vals[near_i]);
-        char flags[300];
+    Graph g;
+    g.unit = item_unit(s_hu.sel);
+    g.kind = graph_kind_for_unit(g.unit);
+    g.flags = GF_POINTS | GF_NO_TOOLTIP | GF_NO_CAPTION;
+    g.fmt_x = chart_x;
+    g.fmt_y = chart_y;
+    g.mark_col = ImGui::GetColorU32(g_pal.warn);
+    GraphLine line;
+    line.x = xs;
+    line.y = ys;
+    line.n = points;
+    line.marked = flagged;
+    const GraphHit hit = graph_xy("##chart", &g, &line, 1, ImVec2(0.0f, height));
+    if (hit.point >= 0) {
+        const HistRun* r = &s_hu.d->runs[(u32)xs[hit.point]];
+        char t[32], flags[300];
+        format_item(t, sizeof(t), s_hu.sel, ys[hit.point]);
         score_flag_text(r->flags & ~SF_INCOMPLETE, flags, sizeof(flags));
         ImGui::SetTooltip("%s  %s %s\n%s\n%s, %s%s%s", r->stamp, t, item_unit(s_hu.sel), r->name, r->cpu, r->gpu,
                           flags[0] ? "\nFlags: " : "", flags);

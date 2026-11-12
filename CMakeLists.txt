@@ -306,6 +306,7 @@ add_executable(ez-pc-bench WIN32
     src/app/health_ui.cpp
     src/app/adv_ui.cpp
     src/app/mem_charts.cpp
+    src/app/graph.cpp
     src/app/system_ui.cpp
     src/app/stability_ui.cpp
     src/app/library.cpp

@@ -1,5 +1,6 @@
 // Score tab, ranking tab and the "About the score" page (see score_ui.h).
 #include "app/score_ui.h"
+#include "app/graph.h"
 #include "app/library.h"
 #include "app/snapshot.h"
 #include "app/theme.h"
@@ -25,16 +26,7 @@ static void score_text(char* buf, u32 size, f64 v) {
 
 // Horizontal bar of `w` x `h` at the cursor: filled to `frac`, with a thin marker at `marker` (the reference).
 static void bar(f32 frac, f32 marker, f32 w, f32 h, const ImVec4& col) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const f32 y = p.y + (ImGui::GetTextLineHeight() - h) * 0.5f;
-    dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + h), ImGui::GetColorU32(g_pal.container_high), h * 0.5f);
-    const f32 fw = w * (frac < 0.0f ? 0.0f : frac > 1.0f ? 1.0f : frac);
-    if (fw > 0.5f) dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + fw, y + h), ImGui::GetColorU32(col), h * 0.5f);
-    if (marker > 0.0f && marker < 1.0f)
-        dl->AddLine(ImVec2(p.x + w * marker, y - 2.0f), ImVec2(p.x + w * marker, y + h + 2.0f),
-                    ImGui::GetColorU32(g_pal.on_surface_variant), 1.5f);
-    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+    graph_bar(frac, marker, ImVec2(w, h), ImGui::GetColorU32(col));
 }
 
 void score_ui_inputs_table(const ScoreResult* s, ScoreComp c) {

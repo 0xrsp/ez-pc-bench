@@ -2,6 +2,7 @@
 #include "app/ui.h"
 #include "app/score_ui.h"
 #include "app/mem_charts.h"
+#include "app/graph.h"
 #include "app/settings.h"
 #include "app/theme.h"
 #include "core/elevation.h"
@@ -743,6 +744,12 @@ static PreviewState s_preview;
 
 void ui_set_preview(void* texture, u32 w, u32 h) { s_preview = { texture, w, h }; }
 
+// Graph color of a test's values: by unit; disk throughput (GB/s, MB/s, IOPS) in the disk color.
+static GraphKind chart_kind(u32 suite, const char* unit) {
+    const GraphKind k = graph_kind_for_unit(unit);
+    return suite == SUITE_DISK && (k == GK_MEMORY || k == GK_RATE || k == GK_OTHER) ? GK_DISK : k;
+}
+
 static void draw_live() {
     const i32 cur = g_run.current.load(std::memory_order_relaxed);
     if (!runner_is_running() || cur < 0) {
@@ -805,10 +812,17 @@ static void draw_live() {
         hist[i] = g_live.history[(count - n + i) % LIVE_HISTORY].load(std::memory_order_relaxed);
         if (hist[i] > max_v) max_v = hist[i];
     }
-    if (n > 0) {
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-        ImGui::PlotLines("##hist", hist, (int)n, 0, nullptr, 0.0f, max_v * 1.1f, ImVec2(-FLT_MIN, -FLT_MIN));
-        ImGui::PopStyleColor();
+    if (n > 0 && max_v >= 0.0f) {
+        Graph g;
+        g.unit = g_live.unit.load();
+        g.kind = chart_kind(b->suite, g.unit);
+        g.flags = GF_ZERO;
+        g.window = LIVE_HISTORY;
+        GraphLine line;
+        line.y = hist;
+        line.n = n;
+        const f32 h = ImGui::GetContentRegionAvail().y;
+        graph_time("##hist", &g, &line, 1, ImVec2(0.0f, h > ImGui::GetFontSize() * 3.0f ? h : ImGui::GetFontSize() * 3.0f));
     }
 
     if (preview) {
@@ -969,11 +983,11 @@ static void draw_results() {
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
 // A series can hold several named lines (e.g. "Read" and "Write" per thread count, interleaved or not, or
-// "C: Read" / "C: Write" per drive): one plot per name. Names with a single point are summary values and are
-// shown as text.
-static void draw_series_one(const BenchResult* r, const char* name);
+// "C: Read" / "C: Write" per drive). Lines with the same unit share one graph (up to 6); names with a single
+// point are summary values and are shown as text.
+static void draw_series_lines(const BenchResult* r, u32 suite, const char* const* names, u32 count);
 
-static void draw_series(const BenchResult* r) {
+static void draw_series(const BenchResult* r, u32 suite) {
     const Metric* m = res_metrics(r);
     const char* names[32];
     u32 points[32] = {}, first[32] = {}, count = 0;
@@ -987,52 +1001,81 @@ static void draw_series(const BenchResult* r) {
         }
         ++points[i];
     }
+    bool done[32] = {};
     for (u32 i = 0; i < count; ++i) {
-        ImGui::PushID((int)i);
+        if (done[i]) continue;
         if (points[i] == 1 && count > 1) {
             char v[32];
             format_value(v, sizeof(v), m[first[i]].value);
             ImGui::TextDisabled("%s: %s %s", names[i], v, m[first[i]].unit);
-        } else {
-            draw_series_one(r, count > 1 ? names[i] : nullptr);
+            continue;
         }
+        // This name and the later multi-point names with the same unit.
+        const char* group[6];
+        u32 n = 0;
+        for (u32 j = i; j < count && n < ARRAY_COUNT(group); ++j) {
+            if (done[j] || (points[j] == 1 && count > 1) || strcmp(m[first[j]].unit, m[first[i]].unit) != 0) continue;
+            group[n++] = names[j];
+            done[j] = true;
+        }
+        ImGui::PushID((int)i);
+        draw_series_lines(r, suite, group, count > 1 ? n : 0);
         ImGui::PopID();
     }
 }
 
-static void draw_series_one(const BenchResult* r, const char* name) {
-    static f32 ys[1024];
-    static Metric pts[1024];
+// Lines `names` (count 0: every metric is one line) against the series' x; log x for geometric x steps
+// (block sizes, queue depths).
+static void draw_series_lines(const BenchResult* r, u32 suite, const char* const* names, u32 count) {
+    static f32 xs[1024], ys[1024];
     const Metric* all = res_metrics(r);
-    u32 n = 0;
-    for (u32 k = 0; k < r->count && n < 1024; ++k)
-        if (!name || !strcmp(all[k].name, name)) pts[n++] = all[k];
-    if (!n) return;
-    const Metric* m = pts;
-    f32 hi = 0.0f;
-    for (u32 k = 0; k < n; ++k) {
-        ys[k] = (f32)m[k].value;
-        if (ys[k] > hi) hi = ys[k];
+    GraphLine lines[6];
+    u32 used = 0, line_count = 0;
+    const Metric* m0 = nullptr;
+    for (u32 l = 0; l < (count ? count : 1); ++l) {
+        GraphLine* ln = &lines[line_count];
+        ln->x = xs + used;
+        ln->y = ys + used;
+        ln->name = count > 1 ? names[l] : nullptr;
+        ln->n = 0;
+        for (u32 k = 0; k < r->count && used < ARRAY_COUNT(xs); ++k) {
+            if (count && strcmp(all[k].name, names[l]) != 0) continue;
+            if (!m0) m0 = &all[k];
+            xs[used] = (f32)all[k].x;
+            ys[used++] = (f32)all[k].value;
+            ++ln->n;
+        }
+        if (ln->n) ++line_count;
     }
-    char first[32], last[32];
-    format_x(first, sizeof(first), m[0].x, r->x_unit);
-    format_x(last, sizeof(last), m[n - 1].x, r->x_unit);
-    char overlay[160];
-    snprintf(overlay, sizeof(overlay), "%s [%s] vs %s (%s .. %s)", m[0].name, m[0].unit, r->x_name ? r->x_name : "x",
-             first, last);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-    ImGui::PlotLines("##series", ys, (int)n, 0, overlay, 0.0f, hi * 1.15f, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 8.0f));
-    ImGui::PopStyleColor();
-    if (ImGui::IsItemHovered()) {
-        // Map mouse x to a point index (PlotLines spaces points evenly).
-        const f32 t = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x) / ImGui::GetItemRectSize().x;
-        u32 k = (u32)(t * (n - 1) + 0.5f);
-        if (k >= n) k = n - 1;
-        char x[32], v[32];
-        format_x(x, sizeof(x), m[k].x, r->x_unit);
-        format_value(v, sizeof(v), m[k].value);
-        ImGui::SetTooltip("%s: %s %s", x, v, m[k].unit);
+    if (!line_count) return;
+    // Geometric x (most steps x1.4 or more, all positive): log scale.
+    u32 steps = 0, geo = 0;
+    bool positive = true;
+    for (u32 i = 0; i < lines[0].n; ++i) {
+        positive &= lines[0].x[i] > 0.0f;
+        if (i && lines[0].x[i - 1] > 0.0f) {
+            ++steps;
+            geo += lines[0].x[i] / lines[0].x[i - 1] >= 1.4f;
+        }
     }
+    char first[32], last[32], title[200];
+    format_x(first, sizeof(first), lines[0].x[0], r->x_unit);
+    format_x(last, sizeof(last), lines[0].x[lines[0].n - 1], r->x_unit);
+    const bool logx = positive && steps >= 2 && geo * 10 >= steps * 7;
+    if (line_count > 1)     // the legend names the lines
+        snprintf(title, sizeof(title), "[%s] vs %s (%s .. %s%s)", m0->unit, r->x_name ? r->x_name : "x", first, last,
+                 logx ? ", log scale" : "");
+    else
+        snprintf(title, sizeof(title), "%s [%s] vs %s (%s .. %s%s)", m0->name, m0->unit, r->x_name ? r->x_name : "x",
+                 first, last, logx ? ", log scale" : "");
+    Graph g;
+    g.title = title;
+    g.unit = m0->unit;
+    g.kind = chart_kind(suite, m0->unit);
+    g.x_unit = r->x_unit;
+    g.flags = GF_ZERO | GF_POINTS | (logx ? GF_LOG_X : 0u);
+    graph_xy("##series", &g, lines, line_count, ImVec2(0.0f, ImGui::GetFontSize() * 10.0f));
+    ImGui::Spacing();
 }
 
 static void draw_matrix(const BenchResult* r) {
@@ -1076,6 +1119,12 @@ static void draw_matrix(const BenchResult* r) {
 }
 
 // Sustained mode: one small plot per tracked metric, value per pass, with the first / last / drop summary.
+static void sustain_x(char* buf, u32 size, f64 x, const void* user) {
+    const SustainRecord* s = (const SustainRecord*)user;
+    const u32 i = (u32)x;
+    snprintf(buf, size, "Pass %u (ended at %.0f s)", i + 1, i < s->passes ? sustain_time(s, i) : 0.0f);
+}
+
 static void draw_sustain(u32 id) {
     const SustainRecord* s = &g_sustain[id];
     static f32 ys[MAX_SUSTAIN_PASSES];
@@ -1086,23 +1135,23 @@ static void draw_sustain(u32 id) {
         SustainStats st;
         sustain_stats(s, k, m->unit, &st);
         for (u32 i = 0; i < s->passes; ++i) ys[i] = sustain_value(s, i, k);
-        char a[32], b[32], overlay[160];
+        char a[32], b[32], title[160];
         format_value(a, sizeof(a), st.first);
         format_value(b, sizeof(b), st.last);
-        snprintf(overlay, sizeof(overlay), "%s%s [%s] per pass: first %s, last %s, drop %.1f%%", m->name,
+        snprintf(title, sizeof(title), "%s%s [%s] per pass: first %s, last %s, drop %.1f%%", m->name,
                  s->averaged ? " (average)" : "", m->unit, a, b, st.drop_pct);
+        Graph g;
+        g.title = title;
+        g.unit = m->unit;
+        g.kind = chart_kind(g_benches[id].suite, m->unit);
+        g.flags = GF_POINTS;
+        g.fmt_x = sustain_x;
+        g.user = s;
+        GraphLine line;
+        line.y = ys;
+        line.n = s->passes;
         ImGui::PushID((int)k);
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
-        ImGui::PlotLines("##sustain", ys, (int)s->passes, 0, overlay, (f32)st.min * 0.9f, (f32)st.max * 1.1f,
-                         ImVec2(-FLT_MIN, ImGui::GetFontSize() * 5.0f));
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) {
-            const f32 t = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x) / ImGui::GetItemRectSize().x;
-            u32 i = (u32)(t * (s->passes - 1) + 0.5f);
-            if (i >= s->passes) i = s->passes - 1;
-            format_value(a, sizeof(a), ys[i]);
-            ImGui::SetTooltip("Pass %u (ended at %.0f s): %s %s", i + 1, sustain_time(s, i), a, m->unit);
-        }
+        graph_xy("##sustain", &g, &line, 1, ImVec2(0.0f, ImGui::GetFontSize() * 7.0f));
         ImGui::PopID();
     }
 }
@@ -1120,7 +1169,7 @@ static void draw_charts() {
         ImGui::PushID((int)i);
         if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
             if (own_view) mem_chart_draw(i, r);
-            else if (r->kind == RESULT_SERIES) draw_series(r);
+            else if (r->kind == RESULT_SERIES) draw_series(r, b->suite);
             else if (r->kind == RESULT_MATRIX) draw_matrix(r);
             if (sustained) draw_sustain(i);
             ImGui::TreePop();
