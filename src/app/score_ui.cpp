@@ -346,7 +346,13 @@ void score_ui_draw() {
     f64 hi = 2000.0;
     for (u32 c = 0; c < SC_COUNT; ++c)
         if (isfinite(s->comp[c]) && s->comp[c] * 1.1 > hi) hi = s->comp[c] * 1.1;
-    const f32 name_w = fs * 9.5f, value_w = ImGui::CalcTextSize("00000").x;
+    f32 name_w = 0.0f;
+    for (u32 c = 0; c < SC_COUNT; ++c) {
+        const f32 w = ImGui::CalcTextSize(g_score_comp_names[c]).x;
+        name_w = w > name_w ? w : name_w;
+    }
+    name_w += ImGui::GetCursorPosX() + ImGui::GetTreeNodeToLabelSpacing() + fs;
+    const f32 value_w = ImGui::CalcTextSize("00000").x;
     for (u32 c = 0; c < SC_COUNT; ++c) {
         ImGui::PushID((int)c);
         u32 present, total;
@@ -502,6 +508,12 @@ void ranking_ui_draw() {
         s_su.lib_value_for = -1;
     }
     if (s_su.rank_metric >= (i32)(SP_COUNT + SC_COUNT + s_su.metric_count)) s_su.rank_metric = 0;
+    static f64 defaulted_for = -1.0;     // once per run: don't fight the user's choice
+    if (cur && cur->any && !cur->complete && s_su.rank_metric < (i32)SP_COUNT && defaulted_for != g_run.end_time) {
+        defaulted_for = g_run.end_time;
+        for (u32 c = 0; c < SC_COUNT; ++c)
+            if (isfinite(cur->comp[c])) { s_su.rank_metric = (i32)(SP_COUNT + c); break; }
+    }
 
     const f32 fs = ImGui::GetFontSize();
     ImGui::AlignTextToFramePadding();
@@ -573,7 +585,8 @@ void ranking_ui_draw() {
         if (perf > best) best = perf;
     }
     ImGui::BeginChild("##ranking", ImVec2(0, 0));
-    const f32 label_w = fs * 15.0f, value_w = fs * 7.0f;
+    const f32 avail_w = ImGui::GetContentRegionAvail().x;
+    const f32 label_w = avail_w * 0.38f < fs * 15.0f ? avail_w * 0.38f : fs * 15.0f, value_w = fs * 7.0f;
     char v[32];
     for (u32 i = 0; i < n; ++i) {
         const RankEntry* e = &entries[i];
@@ -581,8 +594,12 @@ void ranking_ui_draw() {
         ImGui::BeginGroup();
         ImGui::TextDisabled("%2u", i + 1);
         ImGui::SameLine();
+        // Long run names are clipped at the bar; the full name is on hover.
+        const ImVec2 lp = ImGui::GetCursorScreenPos();
+        ImGui::PushClipRect(lp, ImVec2(ImGui::GetWindowPos().x + label_w - fs * 0.5f, lp.y + ImGui::GetTextLineHeight()), true);
         if (e->current) ImGui::TextColored(g_pal.primary, "%s", e->label);
         else ImGui::TextUnformatted(e->label);
+        ImGui::PopClipRect();
         ImGui::SameLine(label_w);
         const f64 perf = lower_better ? 1.0 / e->value : e->value;
         const f32 w = ImGui::GetContentRegionAvail().x - value_w;
@@ -600,8 +617,11 @@ void ranking_ui_draw() {
                               lower_better ? "\nLower is better; bars show speed (inverted)." : "");
         ImGui::PopID();
     }
-    if (s_su.lib_count <= 1)
-        ImGui::TextDisabled("The library has %u run so far. Add more by dropping *.toon.txt files into library/ and "
-                            "rebuilding, or share yours (see the website).", s_su.lib_count);
+    if (s_su.lib_count <= 1) {
+        ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
+        ImGui::TextWrapped("The library has %u run so far. Add more by dropping *.toon.txt files into library/ and "
+                           "rebuilding, or share yours (see the website).", s_su.lib_count);
+        ImGui::PopStyleColor();
+    }
     ImGui::EndChild();
 }
