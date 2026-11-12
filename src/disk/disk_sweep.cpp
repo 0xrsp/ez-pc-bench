@@ -108,7 +108,7 @@ void disk_sweep_block(void*, const BenchParams* p, BenchLive* live, BenchResult*
 // ---- compressibility ----------------------------------------------------------------------------------------------
 // Writes the whole test file once (SEQ1M Q8T1) with data that is x % zeros, then reads it back once. Controllers
 // that compress (older SandForce, some enterprise drives) speed up with compressible data; most current SSDs don't.
-// The file gets the user's test data back at the end so later tests read what they expect.
+// The file gets random data back at the end so later tests read what they expect.
 
 static const u32 COMPRESS_PCT[] = { 0, 20, 40, 60, 80, 100 };
 constexpr u32 NCP = ARRAY_COUNT(COMPRESS_PCT);
@@ -152,7 +152,7 @@ void disk_sweep_compress(void*, const BenchParams* p, BenchLive* live, BenchResu
         const u32 step = i * (2 * NCP + 1) + 2 * NCP;
         static const CancelFlag never(false);
         char restore_error[96] = {};
-        if (!whole_file_pass(t, true, disk_zero_pct(), (f32)step / steps, (f32)(step + 1) / steps, &r, live, &never,
+        if (!whole_file_pass(t, true, 0, (f32)step / steps, (f32)(step + 1) / steps, &r, live, &never,
                              restore_error, sizeof(restore_error)) && ok) {
             ok = false;
             memcpy(error, restore_error, sizeof(error));

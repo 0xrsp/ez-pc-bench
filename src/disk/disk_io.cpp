@@ -398,7 +398,6 @@ bool io_run1(const DiskTarget* t, const IoSpec* spec, f64 seconds, LiveKind lk, 
     run.group_count = 1;
     run.seconds = seconds;
     run.live = lk;
-    run.zero_pct = disk_zero_pct();
     run.prog_from = from;
     run.prog_to = to;
     return io_run(t, &run, out, live, cancel, error, error_size);

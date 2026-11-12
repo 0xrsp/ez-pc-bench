@@ -1,10 +1,11 @@
 // Disk health window (CrystalDiskInfo-style): a chip per drive, then for the selected drive the status,
-// an info panel and tabs for the SMART table, self-tests, NVMe details, history and thresholds / AAM / APM.
+// an info panel and tabs for the SMART table, self-tests and NVMe details.
 // Read on open and on Refresh, never during disk tests.
 #include "app/health_ui.h"
 #include "app/theme.h"
 #include "core/bench.h"
 #include "core/disk_health.h"
+#include "core/health_store.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
@@ -12,15 +13,13 @@
 #include <windows.h>
 #include <objbase.h>
 #include <commdlg.h>
-#include <shellapi.h>
-#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-enum HealthTab : u8 { TAB_SMART, TAB_SELFTEST, TAB_NVME, TAB_HISTORY, TAB_SETTINGS, TAB_COUNT };
-static const char* const TAB_NAMES[TAB_COUNT] = { "S.M.A.R.T.", "Self-test", "NVMe details", "History", "Thresholds & features" };
+enum HealthTab : u8 { TAB_SMART, TAB_SELFTEST, TAB_NVME, TAB_COUNT };
+static const char* const TAB_NAMES[TAB_COUNT] = { "S.M.A.R.T.", "Self-test", "NVMe details" };
 
 struct HealthUi {
     DiskHealth disks[PHYSDISK_MAX];
@@ -30,15 +29,7 @@ struct HealthUi {
     HealthTab tab;
     char message[200];          // result of the last action
     f64 last_poll;
-    // History of the selected drive.
-    HealthSample hist[HEALTH_HISTORY_MAX];
-    u32 hist_count, hist_for;
-    HealthField hist_field;
-    // Confirmations.
     i32 confirm_test;           // SelfTestKind waiting for a yes, -1 = none
-    i32 confirm_feature;        // 1 = AAM, 2 = APM, -1 = none
-    u8 confirm_value;
-    int aam_value, apm_value;
     char report[256 * 1024];
 };
 static HealthUi s_ui;
@@ -49,12 +40,6 @@ static bool disk_test_running() {
 }
 
 static DiskHealth* selected() { return s_ui.sel < s_ui.count ? &s_ui.disks[s_ui.sel] : nullptr; }
-
-static void load_history() {
-    const DiskHealth* h = selected();
-    s_ui.hist_count = h && h->key[0] ? health_history_load(h->key, s_ui.hist, HEALTH_HISTORY_MAX) : 0;
-    s_ui.hist_for = s_ui.sel;
-}
 
 static void scan() {
     s_ui.count = disk_health_scan(s_ui.disks, PHYSDISK_MAX);
@@ -69,16 +54,13 @@ static void scan() {
     strftime(s_ui.read_at, sizeof(s_ui.read_at), "%H:%M:%S", &t);
     s_ui.scanned = true;
     s_ui.last_poll = timer_now();
-    load_history();
 }
 
 void health_ui_on_open() {
     if (!s_ui.options_loaded) {
         s_ui.options_loaded = true;
         s_ui.hide_serial = health_ui_option("hide_serial", false);
-        s_ui.hist_field = HF_TEMP_C;
-        s_ui.confirm_test = s_ui.confirm_feature = -1;
-        s_ui.aam_value = s_ui.apm_value = 128;
+        s_ui.confirm_test = -1;
     }
     if (!disk_test_running()) scan();
 }
@@ -159,10 +141,7 @@ static void drive_chip(u32 i) {
         snprintf(tip, sizeof(tip), "%s\n%.0f GB  \xC2\xB7  %s", h->model[0] ? h->model : h->disk.model, h->disk.size_bytes / 1e9, h->disk.bus);
         ImGui::SetTooltip("%s", tip);
     }
-    if (clicked && s_ui.sel != i) {
-        s_ui.sel = i;
-        load_history();
-    }
+    if (clicked) s_ui.sel = i;
     ImGui::PopID();
 }
 
@@ -206,8 +185,8 @@ static void draw_header(DiskHealth* h) {
     status_box("Health status", v, status_color(h->status), fs * 11.0f);
     theme_help("Good / Caution / Bad like CrystalDiskInfo. Bad: the drive itself reports a failure (SMART threshold "
                "exceeded, NVMe critical warning, spare below threshold, read-only). Caution: reallocated / pending / "
-               "uncorrectable sectors, media errors or little rated life left, using the thresholds in \"Thresholds & "
-               "features\". The percentage is the remaining rated life the drive estimates.");
+               "uncorrectable sectors, media errors or 10 % or less of the rated life left (CrystalDiskInfo's defaults). "
+               "The percentage is the remaining rated life the drive estimates.");
     ImGui::SameLine();
     char t[32] = "----";
     ImVec4 tc = g_pal.on_surface;
@@ -464,7 +443,6 @@ static void draw_selftest(DiskHealth* h) {
 
 static void draw_confirmations(DiskHealth* h) {
     if (s_ui.confirm_test >= 0) ImGui::OpenPopup("Start self-test?");
-    if (s_ui.confirm_feature >= 0) ImGui::OpenPopup("Change drive setting?");
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 30.0f, 0.0f));
@@ -486,32 +464,6 @@ static void draw_confirmations(DiskHealth* h) {
         ImGui::SameLine();
         if (theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             s_ui.confirm_test = -1;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 30.0f, 0.0f));
-    if (ImGui::BeginPopupModal("Change drive setting?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        const bool aam = s_ui.confirm_feature == 1;
-        const u8 value = s_ui.confirm_value;
-        ImGui::PushTextWrapPos(0.0f);
-        if (value) ImGui::Text("Set %s on %s to %u (0x%02X)?", aam ? "AAM" : "APM", h->model, value, value);
-        else ImGui::Text("Disable %s on %s?", aam ? "AAM" : "APM", h->model);
-        ImGui::TextDisabled("%s The drive keeps the setting until it is power-cycled; EzPcBench doesn't reapply it at boot.",
-                            aam ? "AAM trades seek speed for noise." : "APM trades performance for power: low values let the "
-                                                                       "drive park heads / spin down, which adds load cycles.");
-        ImGui::PopTextWrapPos();
-        if (theme_button_primary("Apply")) {
-            char err[160];
-            const bool ok = aam ? disk_set_aam(h, value, err, sizeof(err)) : disk_set_apm(h, value, err, sizeof(err));
-            snprintf(s_ui.message, sizeof(s_ui.message), ok ? "%s updated." : "%s change failed: %s", aam ? "AAM" : "APM", err);
-            s_ui.confirm_feature = -1;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            s_ui.confirm_feature = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -668,205 +620,6 @@ static void draw_nvme(DiskHealth* h) {
     if (h->have_nvme_health && ImGui::CollapsingHeader("SMART / Health log (raw)")) hex_dump("hlog", h->nvme_health, 512);
 }
 
-// ---- history --------------------------------------------------------------------------------------------
-
-static void plot(const HealthSample* s, u32 n, HealthField f) {
-    const f32 fs = ImGui::GetFontSize();
-    const ImVec2 avail(ImGui::GetContentRegionAvail().x, fs * 14.0f);
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton("plot", avail);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    f64 lo = 1e300, hi = -1e300;
-    i64 t0 = 0, t1 = 0;
-    u32 valid = 0;
-    for (u32 i = 0; i < n; ++i) {
-        if (!isfinite(s[i].v[f])) continue;
-        lo = s[i].v[f] < lo ? s[i].v[f] : lo;
-        hi = s[i].v[f] > hi ? s[i].v[f] : hi;
-        if (!valid) t0 = s[i].time;
-        t1 = s[i].time;
-        ++valid;
-    }
-    const f32 left = fs * 4.5f, bottom = fs * 1.6f;
-    const ImVec2 a(p0.x + left, p0.y + fs * 0.5f), b(p0.x + avail.x - fs * 0.5f, p0.y + avail.y - bottom);
-    dl->AddRect(a, b, ImGui::GetColorU32(g_pal.outline_variant));
-    if (!valid) {
-        dl->AddText(ImVec2(a.x + fs, a.y + fs), ImGui::GetColorU32(g_pal.on_surface_variant), "No values for this drive yet.");
-        return;
-    }
-    const f64 vmin = lo, vmax = hi;
-    if (hi - lo < 1e-9) { lo -= 1.0; hi += 1.0; }
-    const f64 pad = (hi - lo) * 0.08;
-    lo -= pad;
-    hi += pad;
-    if (t1 == t0) { t0 -= 3600; t1 += 3600; }
-    auto pos = [&](i64 t, f64 v) {
-        return ImVec2(a.x + (f32)((t - t0) / (f64)(t1 - t0)) * (b.x - a.x), b.y - (f32)((v - lo) / (hi - lo)) * (b.y - a.y));
-    };
-    char text[64];
-    snprintf(text, sizeof(text), "%.5g", vmax);     // labels at the max / min sample
-    dl->AddText(ImVec2(p0.x, pos(t0, vmax).y - fs * 0.5f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
-    if (vmin != vmax) {
-        snprintf(text, sizeof(text), "%.5g", vmin);
-        dl->AddText(ImVec2(p0.x, pos(t0, vmin).y - fs * 0.5f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
-    }
-    struct tm tm;
-    const time_t tt0 = (time_t)t0, tt1 = (time_t)t1;
-    localtime_s(&tm, &tt0);
-    strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
-    dl->AddText(ImVec2(a.x, b.y + fs * 0.2f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
-    localtime_s(&tm, &tt1);
-    strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
-    dl->AddText(ImVec2(b.x - ImGui::CalcTextSize(text).x, b.y + fs * 0.2f), ImGui::GetColorU32(g_pal.on_surface_variant), text);
-    const ImU32 col = ImGui::GetColorU32(g_pal.primary);
-    ImVec2 prev;
-    bool have_prev = false;
-    i32 hover = -1;
-    f32 best = fs;
-    const ImVec2 mouse = ImGui::GetIO().MousePos;
-    for (u32 i = 0; i < n; ++i) {
-        if (!isfinite(s[i].v[f])) continue;
-        const ImVec2 q = pos(s[i].time, s[i].v[f]);
-        if (have_prev) dl->AddLine(prev, q, col, 2.0f);
-        dl->AddCircleFilled(q, 3.0f, col);
-        prev = q;
-        have_prev = true;
-        if (ImGui::IsItemHovered() && fabsf(mouse.x - q.x) < best) { best = fabsf(mouse.x - q.x); hover = (i32)i; }
-    }
-    if (hover >= 0) {
-        const time_t th = (time_t)s[hover].time;
-        localtime_s(&tm, &th);
-        strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &tm);
-        ImGui::SetTooltip("%s\n%s: %.6g %s", text, HEALTH_FIELD_NAMES[f], s[hover].v[f], HEALTH_FIELD_UNITS[f]);
-    }
-}
-
-static void draw_history(DiskHealth* h) {
-    if (s_ui.hist_for != s_ui.sel) load_history();
-    if (!s_ui.hist_count) {
-        ImGui::TextDisabled("No history yet. A sample is saved each time this window reads the drive (at most hourly, and "
-                            "whenever a wear or error counter changes).");
-        return;
-    }
-    // Field picker: only fields this drive reports.
-    bool first = true;
-    for (u32 f = 0; f < HF_COUNT; ++f) {
-        bool any = false;
-        for (u32 i = 0; i < s_ui.hist_count && !any; ++i) any = isfinite(s_ui.hist[i].v[f]);
-        if (!any) continue;
-        if (!first) ImGui::SameLine(0.0f, 4.0f);
-        first = false;
-        ImGui::PushID((int)f);
-        if (theme_tab(HEALTH_FIELD_NAMES[f], s_ui.hist_field == f)) s_ui.hist_field = (HealthField)f;
-        ImGui::PopID();
-    }
-    plot(s_ui.hist, s_ui.hist_count, s_ui.hist_field);
-    ImGui::TextDisabled("%u samples  \xC2\xB7  saved in %%APPDATA%%\\ez-pc-bench\\health", s_ui.hist_count);
-    ImGui::SameLine();
-    if (theme_button("Open folder")) ShellExecuteW(nullptr, L"open", health_store_dir(), nullptr, nullptr, SW_SHOWNORMAL);
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Endurance projection");
-    theme_help("From the first and last samples in the history: no vendor TBW database needed. Needs at least a day of "
-               "history; the life estimate needs the drive's life-used value to have moved.");
-    HealthProjection pr;
-    if (!health_project(s_ui.hist, s_ui.hist_count, &pr)) {
-        ImGui::Text("Needs history spanning at least a day (now %.1f h).", pr.days * 24.0);
-        return;
-    }
-    if (isfinite(pr.written_gb_per_day))
-        ImGui::Text("Writes: %.1f GB per day over the last %.0f days (%.1f TB per year)", pr.written_gb_per_day, pr.days,
-                    pr.written_gb_per_day * 365.0 / 1000.0);
-    if (pr.life_end_time) {
-        struct tm tm;
-        const time_t t = (time_t)pr.life_end_time;
-        localtime_s(&tm, &t);
-        char date[32];
-        strftime(date, sizeof(date), "%Y-%m-%d", &tm);
-        ImGui::Text("Life used grows %.3f %% per day: 100 %% around %s at this rate", pr.life_pct_per_day, date);
-    } else if (h->life_left_pct >= 0) {
-        ImGui::Text("Life used hasn't changed over %.0f days: too little wear to project an end date yet.", pr.days);
-    }
-}
-
-// ---- thresholds and AAM / APM -------------------------------------------------------------------------------
-
-static bool threshold_row(const char* label, u32* v, u32 max, const char* help) {
-    ImGui::TableNextColumn();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
-    theme_help(help);
-    ImGui::TableNextColumn();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-    ImGui::PushID(label);
-    const u32 step = 1;
-    const bool changed = ImGui::InputScalar("##v", ImGuiDataType_U32, v, &step, nullptr, "%u");
-    ImGui::PopID();
-    if (*v > max) *v = max;
-    return changed;
-}
-
-static void draw_settings(DiskHealth* h) {
-    if (h->disk.virtual_disk || h->proto == HPROTO_NONE) {
-        ImGui::TextDisabled("Nothing to configure for this drive.");
-        return;
-    }
-    ImGui::TextDisabled("Caution thresholds for this drive (saved per drive; 0 turns a rule off)");
-    HealthThresholds t = h->thresholds;
-    bool changed = false;
-    if (ImGui::BeginTable("thr", 2, ImGuiTableFlags_SizingFixedFit)) {
-        if (h->proto == HPROTO_ATA) {
-            changed |= threshold_row("Reallocated sectors (05)", &t.reallocated, 1000000, "Caution once the raw count of reallocated "
-                                     "sectors reaches this. CrystalDiskInfo's default is 1.");
-            changed |= threshold_row("Pending sectors (C5)", &t.pending, 1000000, "Sectors the drive couldn't read and wants to "
-                                     "reallocate on the next write.");
-            changed |= threshold_row("Uncorrectable sectors (C6)", &t.uncorrectable, 1000000, "Sectors that failed an offline scan "
-                                     "or reads beyond ECC.");
-        } else {
-            changed |= threshold_row("Media errors", &t.media_errors, 1000000, "Unrecovered data integrity errors in the NVMe health log.");
-        }
-        changed |= threshold_row("Life left at or below (%)", &t.life_left_pct, 100, "Caution when the drive's remaining rated "
-                                 "endurance drops to this percentage. Drives often keep working well past it.");
-        ImGui::EndTable();
-    }
-    if (theme_button("Reset to defaults")) { t = HEALTH_THRESHOLDS_DEFAULT; changed = true; }
-    if (changed) disk_health_set_thresholds(h, &t);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::TextDisabled("Acoustic and power management (ATA)");
-    theme_help("AAM (Automatic Acoustic Management) trades seek speed for noise; APM (Advanced Power Management) lets a "
-               "drive save power by parking heads or spinning down. Mostly HDDs; changes last until the drive is "
-               "power-cycled (EzPcBench doesn't reapply them at boot, that would need a resident service).");
-    if (h->proto != HPROTO_ATA || (!h->aam_supported && !h->apm_supported)) {
-        ImGui::TextDisabled("Not supported by this drive (normal for SSDs and NVMe).");
-        return;
-    }
-    const bool can = g_sys.elevated && h->ata.tr != ATA_TR_NONE && h->ata.tr != ATA_TR_SMART_IOCTL;
-    if (!can) ImGui::TextColored(g_pal.warn, "Changing them needs administrator rights and an ATA pass-through connection.");
-    ImGui::BeginDisabled(!can);
-    if (h->aam_supported) {
-        ImGui::Text("AAM: %s, current 0x%02X, recommended 0x%02X", h->aam_enabled ? "enabled" : "disabled", h->aam_value, h->aam_recommended);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-        ImGui::SliderInt("##aam", &s_ui.aam_value, 128, 254, s_ui.aam_value < 160 ? "%d (quiet)" : s_ui.aam_value > 240 ? "%d (fast)" : "%d");
-        ImGui::SameLine();
-        if (theme_button("Apply AAM")) { s_ui.confirm_feature = 1; s_ui.confirm_value = (u8)s_ui.aam_value; }
-        ImGui::SameLine();
-        if (theme_button("Disable AAM")) { s_ui.confirm_feature = 1; s_ui.confirm_value = 0; }
-    }
-    if (h->apm_supported) {
-        ImGui::Text("APM: %s, current 0x%02X", h->apm_enabled ? "enabled" : "disabled", h->apm_value);
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
-        ImGui::SliderInt("##apm", &s_ui.apm_value, 1, 254, s_ui.apm_value < 128 ? "%d (may spin down)" : s_ui.apm_value >= 254 ? "%d (max performance)" : "%d");
-        ImGui::SameLine();
-        if (theme_button("Apply APM")) { s_ui.confirm_feature = 2; s_ui.confirm_value = (u8)s_ui.apm_value; }
-        ImGui::SameLine();
-        if (theme_button("Disable APM")) { s_ui.confirm_feature = 2; s_ui.confirm_value = 0; }
-    }
-    ImGui::EndDisabled();
-}
-
 // ---- frame ----------------------------------------------------------------------------------------------
 
 void health_ui_draw() {
@@ -936,8 +689,6 @@ void health_ui_draw() {
         case TAB_SMART: draw_smart(h); break;
         case TAB_SELFTEST: draw_selftest(h); break;
         case TAB_NVME: draw_nvme(h); break;
-        case TAB_HISTORY: draw_history(h); break;
-        case TAB_SETTINGS: draw_settings(h); break;
         default: break;
     }
     draw_confirmations(h);

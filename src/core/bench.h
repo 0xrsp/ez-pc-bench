@@ -27,26 +27,15 @@ struct BenchResult {
 
 // Disk suite options beyond the CrystalDiskMark basics (src/disk/, docs/notes/disk-bench.md).
 enum DiskMode : u8 { DISK_MODE_RW, DISK_MODE_READ, DISK_MODE_WRITE, DISK_MODE_RW_MIX };
-enum DiskData : u8 { DISK_DATA_RANDOM, DISK_DATA_ZERO };            // test data: incompressible or all 0x00
 enum DiskUnit : u8 { DISK_UNIT_MBS, DISK_UNIT_GBS, DISK_UNIT_IOPS, DISK_UNIT_US };   // GUI display only
-constexpr u8 DISK_ROW_RW = 255;     // DiskRow::read_pct: separate read and write passes (follows DiskOptions::mode)
-struct DiskRow {                    // user-defined test row, e.g. "RND4K Q32T4 R70"
-    u32 block;                      // bytes; 0 = row not used
-    u16 qd, threads;
-    u8 read_pct;                    // DISK_ROW_RW, or 0..100 % reads in one mixed pass (100 = read only)
-    bool random;
-};
-constexpr u32 DISK_CUSTOM_ROWS = 4;
 struct DiskOptions {
     u8 mode = DISK_MODE_RW;         // which passes the CrystalDiskMark rows run
     u8 mix_read_pct = 70;           // DISK_MODE_RW_MIX: reads in the mixed pass
-    u8 data = DISK_DATA_RANDOM;
     u8 unit = DISK_UNIT_MBS;
     bool buffered = false;          // through the OS file cache (e.g. network shares)
     u32 interval_ms = 0;            // pause before each disk test after the first (CrystalDiskMark "Interval")
     u32 sustained_gib = 64;         // cap of the sustained-write test (also at most 80 % of the free space)
     wchar_t folder[260] = {};       // test in this folder instead of on the drive letters ("" = drives)
-    DiskRow custom[DISK_CUSTOM_ROWS] = {};
 };
 
 struct BenchParams {

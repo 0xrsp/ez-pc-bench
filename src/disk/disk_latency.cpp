@@ -152,7 +152,6 @@ void disk_lat_load(void*, const BenchParams* p, BenchLive* live, BenchResult* ou
             run.group_count = 2;
             run.seconds = seconds;
             run.live = LIVE_LAT_US;
-            run.zero_pct = disk_zero_pct();
             run.prog_from = base + step * (1 + k);
             run.prog_to = base + step * (2 + k);
             if (!io_run(t, &run, r, live, cancel, error, sizeof(error))) {

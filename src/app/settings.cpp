@@ -127,14 +127,13 @@ void settings_load(BenchParams* p, bool* selected) {
         s_file.adv_sensors = adv_enabled();
         p->sustain_s = read_u32(L"sustain_s", p->sustain_s, 0, MAX_SUSTAIN_S);
 
-        // Disk options (DiskOptions, disk/disk.h); rows that don't parse are left empty.
+        // Disk options (DiskOptions, disk/disk.h).
         DiskOptions* o = &p->disk;
         if (read_str(L"disk_mode", w, ARRAY_COUNT(w))) {
             WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
             disk_mode_parse(name, &o->mode);
         }
         o->mix_read_pct = (u8)read_u32(L"disk_mix_read_pct", o->mix_read_pct, 0, 100);
-        if (read_str(L"disk_data", w, ARRAY_COUNT(w))) o->data = !_wcsicmp(w, L"zero") ? DISK_DATA_ZERO : DISK_DATA_RANDOM;
         if (read_str(L"disk_unit", w, ARRAY_COUNT(w)))
             for (u32 i = 0; i < ARRAY_COUNT(DISK_UNIT_NAMES); ++i)
                 if (!_wcsicmp(w, DISK_UNIT_NAMES[i])) o->unit = (u8)i;
@@ -142,13 +141,6 @@ void settings_load(BenchParams* p, bool* selected) {
         o->interval_ms = read_u32(L"disk_interval_ms", o->interval_ms, 0, 600000);
         o->sustained_gib = read_u32(L"disk_sustained_gib", o->sustained_gib, 1, 65536);
         read_str(L"disk_folder", o->folder, ARRAY_COUNT(o->folder));
-        for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
-            wchar_t key[16];
-            swprintf(key, ARRAY_COUNT(key), L"disk_custom%u", i + 1);
-            if (!read_str(key, w, ARRAY_COUNT(w))) continue;
-            WideCharToMultiByte(CP_UTF8, 0, w, -1, name, sizeof(name), nullptr, nullptr);
-            if (!disk_row_parse(name, &o->custom[i])) o->custom[i] = {};
-        }
 
         // [tests] id=0|1; ids this build doesn't know are ignored, missing ids keep the registry default.
         static wchar_t buf[32768];
@@ -175,17 +167,9 @@ static void capture(Snapshot* s, const BenchParams* p, const bool* selected) {
 }
 
 static bool disk_same(const DiskOptions* x, const DiskOptions* y) {
-    if (x->mode != y->mode || x->mix_read_pct != y->mix_read_pct || x->data != y->data || x->unit != y->unit ||
-        x->buffered != y->buffered || x->interval_ms != y->interval_ms || x->sustained_gib != y->sustained_gib ||
-        wcscmp(x->folder, y->folder) != 0)
-        return false;
-    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
-        const DiskRow *a = &x->custom[i], *b = &y->custom[i];
-        if (a->block != b->block || a->qd != b->qd || a->threads != b->threads || a->read_pct != b->read_pct ||
-            a->random != b->random)
-            return false;
-    }
-    return true;
+    return x->mode == y->mode && x->mix_read_pct == y->mix_read_pct && x->unit == y->unit &&
+           x->buffered == y->buffered && x->interval_ms == y->interval_ms && x->sustained_gib == y->sustained_gib &&
+           wcscmp(x->folder, y->folder) == 0;
 }
 
 static bool same(const Snapshot* a, const Snapshot* b) {
@@ -266,19 +250,11 @@ static void write_all(const Snapshot* cur) {
     MultiByteToWideChar(CP_UTF8, 0, disk_mode_name(o->mode), -1, mode, ARRAY_COUNT(mode));
     sec_add(&s, L"disk_mode=%s", mode);
     sec_add(&s, L"disk_mix_read_pct=%u", (u32)o->mix_read_pct);
-    sec_add(&s, L"disk_data=%s", o->data == DISK_DATA_ZERO ? L"zero" : L"random");
     sec_add(&s, L"disk_unit=%s", DISK_UNIT_NAMES[o->unit < ARRAY_COUNT(DISK_UNIT_NAMES) ? o->unit : 0]);
     sec_add(&s, L"disk_buffered=%u", o->buffered ? 1u : 0u);
     sec_add(&s, L"disk_interval_ms=%u", o->interval_ms);
     sec_add(&s, L"disk_sustained_gib=%u", o->sustained_gib);
     sec_add(&s, L"disk_folder=%s", o->folder);
-    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
-        char row[48];
-        wchar_t wrow[48];
-        disk_row_format(&o->custom[i], row, sizeof(row));
-        MultiByteToWideChar(CP_UTF8, 0, row, -1, wrow, ARRAY_COUNT(wrow));
-        sec_add(&s, L"disk_custom%u=%s", i + 1, wrow);
-    }
     buf[s.len] = 0;
     WritePrivateProfileSectionW(L"settings", buf, s_path);
 

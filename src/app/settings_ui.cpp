@@ -6,7 +6,6 @@
 #include "app/ui.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
-#include "disk/disk.h"
 #include "imgui.h"
 #include "imgui_internal.h"     // TableGetHoveredRow
 #include <windows.h>
@@ -89,13 +88,6 @@ static void draw_disk_options(BenchParams* p) {
     int mix = o->mix_read_pct;
     if (ImGui::SliderInt("##dmix", &mix, 0, 100, "%d %% reads")) o->mix_read_pct = (u8)mix;
 
-    static const char* const datas[] = { "Random (incompressible)", "All zeros (0x00)" };
-    row("Test data", "What the test file and the writes contain. Random data can't be compressed, which is what real files "
-                     "mostly look like. All zeros shows whether the drive's controller compresses or deduplicates data: "
-                     "such drives get much faster with it (most current consumer SSDs don't).");
-    int data = o->data;
-    if (ImGui::Combo("##ddata", &data, datas, (int)ARRAY_COUNT(datas))) o->data = (u8)data;
-
     static const char* const units[] = { "MB/s", "GB/s", "IOPS", "\xC2\xB5s (latency)" };
     row("Disk results shown as", "Which number the test tree shows for each disk test: throughput in MB/s or GB/s, IOPS, or "
                                  "the average latency in microseconds. GB/s also converts MB/s values in the results "
@@ -143,38 +135,6 @@ static void draw_disk_options(BenchParams* p) {
             if (ImGui::Selectable(label, o->sustained_gib == caps[i])) o->sustained_gib = caps[i];
         }
         ImGui::EndCombo();
-    }
-}
-
-// Text fields for the four user-defined rows (disk.custom1..4).
-static void draw_disk_rows(BenchParams* p) {
-    static char text[DISK_CUSTOM_ROWS][48];
-    static bool valid[DISK_CUSTOM_ROWS], init;
-    if (!init) {
-        for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
-            disk_row_format(&p->disk.custom[i], text[i], sizeof(text[i]));
-            valid[i] = true;
-        }
-        init = true;
-    }
-    const char* help = "A test row of your own, run by the Disk > Custom tests in the main window (tick them there). Format: "
-                       "SEQ or RND, block size, queue depth and threads, optionally R and the share of reads: "
-                       "\"RND4K Q32T4\" runs a read pass and a write pass like the built-in rows, \"RND4K Q32T4 R70\" one "
-                       "mixed pass with 70 % reads, R100 reads only, R0 writes only. Sizes 512 B to 64M, QD 1-256, "
-                       "threads 1-64. Empty = row unused.";
-    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
-        char label[16];
-        snprintf(label, sizeof(label), "Row %u", i + 1);
-        row(label, help);
-        ImGui::PushID((int)i);
-        if (!valid[i]) ImGui::PushStyleColor(ImGuiCol_Text, g_pal.error);
-        if (ImGui::InputTextWithHint("##row", "e.g. RND4K Q32T4 R70", text[i], sizeof(text[i]))) {
-            DiskRow r;
-            valid[i] = disk_row_parse(text[i], &r);
-            if (valid[i]) p->disk.custom[i] = r;
-        }
-        if (!valid[i]) ImGui::PopStyleColor();
-        ImGui::PopID();
     }
 }
 
@@ -303,11 +263,6 @@ void settings_ui_draw() {
         end_group();
     }
 
-    if (begin_group("Custom disk tests")) {
-        draw_disk_rows(p);
-        end_group();
-    }
-
     if (begin_group("Sensors")) {
         row("Advanced sensors (PawnIO)", adv_ui_settings_help());
         adv_ui_settings_control();
@@ -329,11 +284,10 @@ void settings_ui_draw() {
         p->disk_write_through = d.disk_write_through;
         p->repeat = d.repeat;
         p->sustain_s = d.sustain_s;
-        // Disk options; the folder target and the custom rows stay (they are definitions, not tuning).
+        // Disk options; the folder target stays (it is a definition, not tuning).
         const DiskOptions keep = p->disk;
         p->disk = d.disk;
         wcscpy_s(p->disk.folder, keep.folder);
-        memcpy(p->disk.custom, keep.custom, sizeof(keep.custom));
     }
     theme_help("Restores the benchmark, GPU and disk settings above to their defaults. The theme and the GPU / disks "
                "picked in the main window stay as they are.");

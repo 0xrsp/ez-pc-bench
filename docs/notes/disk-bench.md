@@ -3,6 +3,12 @@
 What was built for the disk suite on top of the CrystalDiskMark-style M3 tests, how it is wired, and what was
 measured. Status per FUTURE item at the end.
 
+**Removed 2026-11-11 (trim):** the custom tests `disk.custom1`-`disk.custom4` (rows, settings, `--disk-custom`, TOON
+`disk_custom`), the CDM disk profiles (GUI combo, `--disk-profile`) and the test-data option (`disk_data`,
+`--disk-data`; every test now writes random, incompressible data) were removed. The compressibility sweep stays.
+Settings files may still hold `disk_data` / `disk_custom1..4`; they are ignored. Parts below that describe the
+removed features are marked.
+
 ## Files
 
 `src/disk/disk_bench.cpp` was split:
@@ -10,10 +16,10 @@ measured. Status per FUTURE item at the end.
 | File | Contents |
 |---|---|
 | `disk_internal.h` | Shared types: `DiskTarget` / `DiskSuite`, latency histogram (`LatHist`), I/O engine (`IoSpec`, `IoRun`, `IoResult`), metric helpers |
-| `disk.h` | Public helpers for GUI / CLI: CDM profiles, custom-row text format, display units, confirm notes, TOON params |
+| `disk.h` | Public helpers for GUI / CLI: mode names, display units, confirm notes, TOON params (CDM profiles, custom-row text format: Removed 2026-11-11 (trim)) |
 | `disk_suite.cpp` | Suite init / shutdown, test file per drive or in a folder, work folder, name interning (`dname`), temperature, interval |
 | `disk_io.cpp` | Histogram + percentiles, the overlapped I/O engine, `add_io_metrics` |
-| `disk_cdm.cpp` | CDM rows (Default / NVMe), custom rows, profiles, row parser, units, confirm notes, TOON params |
+| `disk_cdm.cpp` | CDM rows (Default / NVMe), units, confirm notes, TOON params (custom rows, profiles, row parser: Removed 2026-11-11 (trim)) |
 | `disk_latency.cpp` | QD1 read / write / write+flush / FUA, latency distribution series, latency under load, wake-up latency |
 | `disk_nvme.cpp/.h` | NVMe Identify Controller power states (entry / exit latencies) |
 | `disk_sweep.cpp` | Queue-depth, block-size and compressibility sweeps |
@@ -45,7 +51,7 @@ Default selection gained only cheap tests (marked *): QD1 latency (reads, ~200 M
 | `disk.sweep.block` | series | ATTO-style: sequential QD4, 512 B .. 64 MiB, read and write MB/s |
 | `disk.sweep.compress` | series | Whole-file SEQ1M Q8 write then read with 0/20/40/60/80/100 % zeros; restores the test data afterwards |
 | `disk.sweep.qd` | series | RND4K IOPS, avg and p99 latency at QD 1..256 (one thread to QD32, then 32 per thread) |
-| `disk.custom1..4` | values | User rows (skipped while empty); the row spec is part of the metric names |
+| `disk.custom1..4` | values | Removed 2026-11-11 (trim). Was: user rows (skipped while empty); the row spec was part of the metric names |
 | `disk.lat.read` *, `disk.lat.write` * | values | QD1 4K random, avg / percentiles / IOPS |
 | `disk.lat.flush` * | values | QD1 4K write + `FlushFileBuffers` per write, and 4K write with FUA (`FILE_FLAG_WRITE_THROUGH`) |
 | `disk.lat.hist` | series | QD1 4K read / write latency distribution: % of I/Os per bucket, 4 buckets per octave, fixed 61 points (≤ 3.2 µs .. ≥ 105 ms) |
@@ -64,27 +70,27 @@ Charts tab now draws one plot per line and shows one-point lines as text (`ui.cp
 
 ## Settings, CLI, TOON
 
-New `BenchParams::disk` (`DiskOptions`, core/bench.h): mode, mix read %, test data, display unit, buffered, interval,
-sustained cap, folder, 4 custom rows.
+New `BenchParams::disk` (`DiskOptions`, core/bench.h): mode, mix read %, display unit, buffered, interval,
+sustained cap, folder (test data and 4 custom rows: Removed 2026-11-11 (trim)).
 
 | ini key (`[settings]`) | CLI | TOON `params:` |
 |---|---|---|
 | `disk_mode=rw\|read\|write\|mix` | `--disk-mode` | `disk_mode` |
 | `disk_mix_read_pct=70` | `--disk-mix` | `disk_mix_read_pct` |
-| `disk_data=random\|zero` | `--disk-data` | `disk_data` |
+| `disk_data=random\|zero` | `--disk-data` | `disk_data` (Removed 2026-11-11 (trim)) |
 | `disk_unit=MB/s\|GB/s\|IOPS\|us` | (GUI only) | - |
 | `disk_buffered=0\|1` | `--disk-buffered` | `disk_buffered` |
 | `disk_interval_ms` | `--disk-interval` | `disk_interval_ms` |
 | `disk_sustained_gib=64` | `--sustained-gib` | `disk_sustained_gib` |
 | `disk_folder=` | `--disk-folder` | `disk_folder` (only when set) |
-| `disk_custom1..4=RND4K Q32T4 R70` | `--disk-custom "row;row"` | `disk_custom[N]` (only when set) |
+| `disk_custom1..4=RND4K Q32T4 R70` | `--disk-custom "row;row"` | `disk_custom[N]` (Removed 2026-11-11 (trim)) |
 
-Also: `--disk-profile default|nvme|peak|realworld|demo` (adds that profile's tests to the selection), `--yes`
-(without it the CLI drops `BENCH_CONFIRM` tests with a note). GUI: profile combo after the drive chips, a "folder"
-marker when a folder target is set, Settings > Disk rows for all options, "Custom disk tests" group, and a
-confirmation dialog before a run that includes `BENCH_CONFIRM` tests.
+Also: `--yes` (without it the CLI drops `BENCH_CONFIRM` tests with a note). GUI: a "folder" marker when a folder
+target is set, Settings > Disk rows for all options, and a confirmation dialog before a run that includes
+`BENCH_CONFIRM` tests. Removed 2026-11-11 (trim): `--disk-profile default|nvme|peak|realworld|demo`, the GUI profile combo after
+the drive chips and the "Custom disk tests" settings group.
 
-Custom row text: `<SEQ|RND><size>[K|M] Q<qd>T<threads> [R<read %>]`; spaces, commas or `_` separate the parts.
+Custom row text (Removed 2026-11-11 (trim)): `<SEQ|RND><size>[K|M] Q<qd>T<threads> [R<read %>]`; spaces, commas or `_` separate the parts.
 Without `R` the row runs read and write passes like the built-in rows; `R100` read only, `R0` write only, else one
 mixed pass.
 
@@ -106,7 +112,7 @@ mixed pass.
   current Windows `DeleteFileW` uses POSIX semantics and unlinks a file that is open with share-delete, so a second
   instance's stale-file cleanup removed `C:\ezbench\ezbench.tmp` and its folder under a running test (seen during
   verification: "cannot open test file (error 3)").
-- CDM profiles are test selections (like run presets), not a setting: the combo shows the profile the disk part of
+- Removed 2026-11-11 (trim). CDM profiles were test selections (like run presets), not a setting: the combo shows the profile the disk part of
   the tree matches. Peak = SEQ1M Q8T1 + RND4K Q32T16, Real World = SEQ1M Q1T1 + RND4K Q1T1, Demo = SEQ1M Q8T1.
 - Display unit (MB/s / GB/s / IOPS / µs) only changes the GUI tree summary and MB/s -> GB/s in the results table;
   result files always hold every number.
@@ -134,7 +140,7 @@ come from the clean run 5 (median of 2).
 | Block sweep, seq Q4 write | 29 MB/s @512 B, 160 @4K, 3.4 GB/s @64K, ~5.2–5.3 GB/s @1–16 MiB, 2.5 / 1.7 GB/s @32 / 64 MiB |
 | Compressibility | no effect: reads 6.95–7.06 GB/s at 0–100 % zeros; writes 4.6–7.0 GB/s, just noise (CV up to 38 % between 2 runs) |
 | RND4K Q1T1 mix 70/30 | 82.8 MB/s, 20.2K IOPS, p50 54 µs (reads 16.6K / writes 47.8K IOPS separately) |
-| Custom `RND4K Q8T2 R70` | 904 MB/s, 221K IOPS, p50 56 µs, p99 150 µs |
+| Custom `RND4K Q8T2 R70` (Removed 2026-11-11 (trim)) | 904 MB/s, 221K IOPS, p50 56 µs, p99 150 µs |
 | Latency under load (run 2, may be disturbed) | QD1 read idle p50 82 / p99 131 µs; next to SEQ1M Q8 writes (5.35 GB/s) p50 150 / p99 678 / p99.9 3789 µs; next to RND4K Q32 writes (268 MB/s) p50 69 / p99 182 µs |
 | Wake-up (run 2, may be disturbed) | active p50 75 µs; after 1 s idle median 1.67 ms (max 10.1 ms), 5 s 0.20 ms, 30 s 0.26 ms. Identify Controller (no admin needed): PS3 exit 9 ms / entry 4.5 ms, PS4 exit 44 ms / entry 4.5 ms |
 | Sustained write, 2 GiB | average 4974 MB/s, points 5–7 GB/s with dips to 1.4–2 GB/s, 53 °C throughout, no cache drop within 2 GiB (expected: the SLC cache is far larger) |
@@ -153,9 +159,9 @@ Other facts:
 ## Status of the FUTURE.md items
 
 §2:
-- [x] P1 CDM profiles (Default, NVMe SSD, Peak, Real World, Demo) and Read / Write / Read+Write (+Mix) modes.
-- [x] P1 Mixed test (mode "mix", 70/30 adjustable) and 4 user-defined rows.
-- [x] P1 Test data random vs 0x00 (`--disk-data zero` verified on a folder target).
+- [x] P1 Read / Write / Read+Write (+Mix) modes. CDM profiles (Default, NVMe SSD, Peak, Real World, Demo): Removed 2026-11-11 (trim).
+- [x] P1 Mixed test (mode "mix", 70/30 adjustable). 4 user-defined rows: Removed 2026-11-11 (trim).
+- [ ] P1 Test data random vs 0x00: Removed 2026-11-11 (trim) (always random).
 - [x] P1 Sustained write / SLC cache with drive temperature; verified at 2 GiB only (per the brief), so the cache-drop
   detection has not seen a real cache exhaustion yet.
 - [x] P2 Queue-depth sweep (QD 1..256) and block-size sweep (512 B..64 MiB).
