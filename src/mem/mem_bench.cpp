@@ -17,6 +17,25 @@ static constexpr u64 ARENA_MIN = 256 * MiB;
 
 static MemState s_mem;
 
+// Keep the arena resident while the suite runs: under memory pressure from other processes Windows trims the
+// working set and random-access latency turns into soft page faults (a 1 GiB chase read 1.4 us instead of
+// ~120 ns with ~8 GB free and many busy processes). A soft minimum (no hard limit) needs no special rights.
+static SIZE_T s_ws_min, s_ws_max;
+static DWORD s_ws_flags;
+static bool s_ws_raised;
+
+static void ws_raise(u64 bytes) {
+    if (!GetProcessWorkingSetSizeEx(GetCurrentProcess(), &s_ws_min, &s_ws_max, &s_ws_flags)) return;
+    const SIZE_T want = s_ws_min + (SIZE_T)bytes + 64 * MiB;   // + pointer-chase permutations
+    const SIZE_T max = s_ws_max > want + 64 * MiB ? s_ws_max : want + 64 * MiB;
+    s_ws_raised = SetProcessWorkingSetSizeEx(GetCurrentProcess(), want, max, s_ws_flags) != 0;
+}
+
+static void ws_restore() {
+    if (s_ws_raised) SetProcessWorkingSetSizeEx(GetCurrentProcess(), s_ws_min, s_ws_max, s_ws_flags);
+    s_ws_raised = false;
+}
+
 bool mem_init(const BenchParams*, void** state, char* error, u32 error_size) {
     topo_init();
     pool_init();
@@ -29,8 +48,10 @@ bool mem_init(const BenchParams*, void** state, char* error, u32 error_size) {
         snprintf(error, error_size, "not enough free RAM (%llu MiB available)", ms.ullAvailPhys / MiB);
         return false;
     }
+    ws_raise(bytes);
     s_mem.arena = (u8*)big_alloc(bytes);
     if (!s_mem.arena) {
+        ws_restore();
         snprintf(error, error_size, "failed to allocate %llu MiB", bytes / MiB);
         return false;
     }
@@ -41,6 +62,7 @@ bool mem_init(const BenchParams*, void** state, char* error, u32 error_size) {
 
 void mem_shutdown(void* state) {
     MemState* m = (MemState*)state;
+    ws_restore();
     big_free(m->arena);
     m->arena = nullptr;
     m->bytes = 0;
