@@ -6,4 +6,5 @@
 //                     file size, passes and interval).
 
 void settings_ui_draw();
+void settings_ui_open_theme_combo();    // dev (--open-theme-combo): theme dropdown opens itself (screenshots)
 void bench_settings_ui_draw();

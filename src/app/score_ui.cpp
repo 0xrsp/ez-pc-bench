@@ -323,8 +323,10 @@ void score_ui_draw() {
         ImGui::PushID((int)c);
         u32 present, total;
         score_inputs_of((ScoreComp)c, &present, &total, s);
+        theme_header_push(false);
         const bool open = ImGui::TreeNodeEx("##comp", ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap,
                                             "%s", g_score_comp_names[c]);
+        theme_header_pop();
         const bool hovered = ImGui::IsItemHovered();
         ImGui::SameLine(name_w);
         const f32 bar_w = ImGui::GetContentRegionAvail().x - value_w - fs * 6.0f;

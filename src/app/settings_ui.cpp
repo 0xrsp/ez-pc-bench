@@ -9,7 +9,7 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "imgui.h"
-#include "imgui_internal.h"     // TableGetHoveredRow
+#include "imgui_internal.h"     // TableGetHoveredRow, OpenPopupEx (dev: --open-theme-combo)
 #include <windows.h>
 #include <stdio.h>
 
@@ -41,8 +41,6 @@ static void finish_row() {
                          ImGui::TableGetHoveredRow() == ImGui::TableGetRowIndex() && !ImGui::IsAnyItemActive() &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
     if (hovered) {
-        const ImVec4 t = g_pal.on_surface;
-        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(t.x, t.y, t.z, 0.05f)));
         if (s_hover_id != id) { s_hover_id = id; s_hover_since = ImGui::GetTime(); }
         if (ImGui::GetTime() - s_hover_since > 0.25) {
             ImGui::BeginTooltip();
@@ -75,10 +73,18 @@ static void row(const char* label, const char* help) {
     ImGui::SetNextItemWidth(-FLT_MIN);
 }
 
+static u32 s_open_theme_combo;   // dev (--open-theme-combo): frame counter until the theme dropdown opens itself
+
+void settings_ui_open_theme_combo() { s_open_theme_combo = 1; }
+
 // Theme dropdown: a color swatch before each name; the named schemes below a separator.
 static void theme_combo() {
     const ThemeMode cur = theme_mode();
     const f32 h = ImGui::GetTextLineHeight(), gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    if (s_open_theme_combo && ++s_open_theme_combo == 4) {
+        ImGui::OpenPopupEx(ImHashStr("##ComboPopup", 0, ImGui::GetID("##theme")));
+        s_open_theme_combo = 0;
+    }
     if (ImGui::BeginCombo("##theme", "", ImGuiComboFlags_HeightLargest)) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, h * 0.35f));
         for (u32 i = 0; i < theme_count(); ++i) {
@@ -88,7 +94,10 @@ static void theme_combo() {
             if (ImGui::Selectable("##t", t == cur)) theme_set_mode(t);
             if (t == cur) ImGui::SetItemDefaultFocus();
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImVec2 p = ImGui::GetItemRectMin();
+            // The item rect includes half the item spacing on each side: center swatch and name vertically in it,
+            // start them where a plain Selectable's text would.
+            const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+            const ImVec2 p(r0.x + floorf(ImGui::GetStyle().ItemSpacing.x * 0.5f), floorf((r0.y + r1.y - h) * 0.5f));
             const f32 w = theme_swatch(dl, p, h, t);
             dl->AddText(ImVec2(p.x + w + gap, p.y), ImGui::GetColorU32(ImGuiCol_Text), theme_name(t));
             ImGui::PopID();

@@ -632,6 +632,14 @@ void theme_help(const char* text) {
     ImGui::EndTooltip();
 }
 
+void theme_header_push(bool framed) {
+    const ImVec4 c = framed ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4(0, 0, 0, 0);
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, c);
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, c);
+}
+
+void theme_header_pop() { ImGui::PopStyleColor(2); }
+
 // Group box: an auto-height child without its own border; the frame is drawn on the parent's draw list after
 // the child ends (its height is known then), with a gap in the top line where the title sits. The parent's draw
 // list renders below the child, and the child has no background, so frame and title stay visible.

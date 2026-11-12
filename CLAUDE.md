@@ -80,7 +80,8 @@ keep it updated (decision log, open questions, measured facts).
   `sensors`; `bench` = Benchmark settings) (opens that tool window), `--tab results|charts|score|ranking`, `--charts`
   (= `--tab charts`), `--sustain <minutes>`, `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor
   overlay), `--sensor-filter <text>` (Sensors search box), `--sensor-view overview|sensors|log|<device>` (Sensors tab or
-  Overview device, e.g. `cpu`, `gpu0`), `--open-gpu-combo` (GPU combo popup open, for screenshots),
+  Overview device, e.g. `cpu`, `gpu0`), `--open-gpu-combo` / `--open-theme-combo` (GPU combo / Settings theme dropdown open, for
+  screenshots; the latter with `--tool settings`),
   `--stability-run <ids> [seconds]` (`--dev --inject` adds the error self-test), `--check-update` (run the update
   check in a non-`dist` build: always offers the latest release), `--no-update` (skip it in a `dist` build;
   `--dev` skips it too), `--cpu-baseline` (act as if the CPU had no AVX / FMA / AVX-512: those tests greyed out).

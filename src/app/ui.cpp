@@ -41,6 +41,9 @@ struct UiState {
 static UiState s_ui;
 
 static bool suite_visible(u32 suite) { return suite != SUITE_SMOKE || s_ui.dev; }
+// Tests this CPU can't run count as unselected, but their saved choice is kept (the ini may come from another PC,
+// or a --cpu-baseline session), so selection changes never write to them.
+static bool is_selected(u32 i) { return s_ui.selected[i] && !bench_unsupported(i); }
 
 void ui_set_dev(bool dev) { s_ui.dev = dev; }
 
@@ -61,7 +64,6 @@ void ui_init() {
     for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
     s_ui.params.gpu_adapter = sysinfo_default_gpu();
     settings_load(&s_ui.params, s_ui.selected);
-    for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] &= !bench_unsupported(i);     // e.g. ini from another PC
 }
 
 void ui_shutdown() { settings_flush(&s_ui.params, s_ui.selected); }
@@ -86,7 +88,7 @@ void ui_select_only(const char* ids) {
             match = n && strncmp(id, p, n) == 0 && (id[n] == 0 || id[n] == '.');
             p += n + (end ? 1 : 0);
         }
-        s_ui.selected[i] = match && !bench_unsupported(i);
+        s_ui.selected[i] = match;
     }
 }
 
@@ -105,7 +107,7 @@ void ui_start_run() {
     bool run[MAX_BENCHES];      // hidden suites never run, whatever the saved selection says
     bool heavy = false;
     for (u32 i = 0; i < g_bench_count; ++i) {
-        run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
+        run[i] = is_selected(i) && suite_visible(g_benches[i].suite);
         heavy |= run[i] && (g_benches[i].flags & BENCH_CONFIRM);
     }
     if (heavy && !s_confirm.confirmed) {
@@ -128,7 +130,7 @@ static void draw_confirm_dialog() {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted("The selection includes tests that write a lot of data or run for a long time:");
     for (u32 i = 0; i < g_bench_count; ++i) {
-        if (!s_ui.selected[i] || !(g_benches[i].flags & BENCH_CONFIRM) || !suite_visible(g_benches[i].suite)) continue;
+        if (!is_selected(i) || !(g_benches[i].flags & BENCH_CONFIRM) || !suite_visible(g_benches[i].suite)) continue;
         char note[256];
         disk_confirm_note(&s_ui.params, i, note, sizeof(note));
         ImGui::Spacing();
@@ -289,7 +291,9 @@ static bool system_header_row() {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::PushFont(g_fonts.medium, 0.0f);
+        theme_header_push(true);
         open = ImGui::CollapsingHeader("System");
+        theme_header_pop();
         ImGui::PopFont();
         ImGui::TableNextColumn();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + lead);
@@ -649,7 +653,7 @@ static void draw_targets() {
 static void draw_toolbar() {
     const bool running = runner_is_running();
     u32 selected = 0;
-    for (u32 i = 0; i < g_bench_count; ++i) selected += s_ui.selected[i] && suite_visible(g_benches[i].suite);
+    for (u32 i = 0; i < g_bench_count; ++i) selected += is_selected(i) && suite_visible(g_benches[i].suite);
 
     ImGui::BeginDisabled(running || selected == 0);
     if (theme_button_primary("Run")) ui_start_run();
@@ -667,7 +671,8 @@ static void draw_toolbar() {
     ImGui::SameLine();
     ImGui::BeginDisabled(running);
     if (theme_button("All"))
-        for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = suite_visible(g_benches[i].suite) && !bench_unsupported(i);
+        for (u32 i = 0; i < g_bench_count; ++i)
+            if (!bench_unsupported(i)) s_ui.selected[i] = suite_visible(g_benches[i].suite);
     ImGui::SameLine();
     if (theme_button("None")) for (u32 i = 0; i < g_bench_count; ++i) s_ui.selected[i] = false;
     ImGui::EndDisabled();
@@ -713,7 +718,7 @@ static void draw_test_row(u32 id, bool running) {
     // Selection is frozen during a run, but the tree stays at full contrast (clicks are ignored).
     // Tests this CPU can't run (missing instructions) are greyed out and never selectable.
     const char* unsupported = bench_unsupported(id);
-    bool sel = s_ui.selected[id] && !unsupported;
+    bool sel = is_selected(id);
     ImGui::BeginDisabled(unsupported != nullptr);
     if (theme_checkbox(b->name, &sel) && !running && !unsupported) s_ui.selected[id] = sel;
     ImGui::EndDisabled();
@@ -764,7 +769,7 @@ static void draw_tree() {
         for (u32 i = 0; i < g_bench_count; ++i) {
             if (g_benches[i].suite != s) continue;
             total += !bench_unsupported(i);
-            sel += s_ui.selected[i];
+            sel += is_selected(i);
             BenchStatus st = status_of(i);
             in_run += st != ST_NOT_RUN;
             done += st != ST_NOT_RUN && st != ST_PENDING && st != ST_RUNNING;
@@ -773,9 +778,11 @@ static void draw_tree() {
 
         ImGui::PushID((int)s);
         ImGui::PushFont(g_fonts.medium, 0.0f);
+        theme_header_push(true);
         const bool open = ImGui::TreeNodeEx("##suite", (sel ? ImGuiTreeNodeFlags_DefaultOpen : 0) | ImGuiTreeNodeFlags_Framed |
                                                            ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth,
                                             "%s", g_suites[s].name);
+        theme_header_pop();
         ImGui::PopFont();
         const f32 header_h = ImGui::GetItemRectSize().y;
         ImGui::SameLine(s_status_x);
@@ -784,7 +791,7 @@ static void draw_tree() {
         bool all = sel == total;
         if (theme_checkbox("##all", &all, sel > 0 && sel < total) && !running)     // dash when partly selected
             for (u32 i = 0; i < g_bench_count; ++i)
-                if (g_benches[i].suite == s) s_ui.selected[i] = all && !bench_unsupported(i);
+                if (g_benches[i].suite == s && !bench_unsupported(i)) s_ui.selected[i] = all;
         ImGui::SameLine();
         if (running && in_run) ImGui::TextDisabled("%u/%u done", done, in_run);
         else ImGui::TextDisabled("%u/%u selected", sel, total);
@@ -802,11 +809,13 @@ static void draw_tree() {
                     for (u32 k = i; k < g_bench_count && g_benches[k].suite == s && !strcmp(g_benches[k].group, group); ++k) {
                         ++gtotal;
                         gsupported += !bench_unsupported(k);
-                        gsel += s_ui.selected[k];
+                        gsel += is_selected(k);
                     }
                     ImGui::AlignTextToFramePadding();
+                    theme_header_push(false);
                     group_open = ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth |
                                                               ImGuiTreeNodeFlags_AllowOverlap);
+                    theme_header_pop();
                     const f32 row_h = ImGui::GetItemRectSize().y;
                     ImGui::SameLine(s_status_x);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (row_h - theme_checkbox_height()) * 0.5f);
@@ -814,7 +823,8 @@ static void draw_tree() {
                     ImGui::PushID(group);
                     ImGui::BeginDisabled(gsupported == 0);      // the whole group needs instructions this CPU lacks
                     if (theme_checkbox("##group", &gall, gsel > 0 && gsel < gsupported) && !running)
-                        for (u32 k = i; k < i + gtotal; ++k) s_ui.selected[k] = gall && !bench_unsupported(k);
+                        for (u32 k = i; k < i + gtotal; ++k)
+                            if (!bench_unsupported(k)) s_ui.selected[k] = gall;
                     ImGui::EndDisabled();
                     ImGui::PopID();
                 }
@@ -1261,7 +1271,10 @@ static void draw_charts() {
         any = true;
         const BenchDesc* b = &g_benches[i];
         ImGui::PushID((int)i);
-        if (ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name)) {
+        theme_header_push(false);
+        const bool chart_open = ImGui::TreeNodeEx("##chart", ImGuiTreeNodeFlags_DefaultOpen, "%s / %s", g_suites[b->suite].name, b->name);
+        theme_header_pop();
+        if (chart_open) {
             if (own_view) mem_chart_draw(i, r);
             else if (r->kind == RESULT_SERIES) draw_series(r, b->suite);
             else if (r->kind == RESULT_MATRIX) draw_matrix(r);

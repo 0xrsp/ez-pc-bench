@@ -51,7 +51,8 @@ static bool preset_selects(const RunPreset* pr, u32 bench) {
 }
 
 void preset_apply(const RunPreset* pr, BenchParams* p, bool* selected) {
-    for (u32 i = 0; i < g_bench_count; ++i) selected[i] = preset_selects(pr, i);
+    for (u32 i = 0; i < g_bench_count; ++i)     // tests this CPU can't run keep their saved choice (GUI ini)
+        if (!bench_unsupported(i)) selected[i] = preset_selects(pr, i);
     p->duration_ms = pr->duration_ms;
     p->repeat = pr->repeat;
     p->disk_passes = pr->disk_passes;
@@ -67,7 +68,7 @@ const RunPreset* preset_match(const BenchParams* p, const bool* selected) {
             continue;
         bool same = true;
         for (u32 i = 0; i < g_bench_count && same; ++i)
-            same = g_benches[i].suite == SUITE_SMOKE || selected[i] == preset_selects(pr, i);
+            same = g_benches[i].suite == SUITE_SMOKE || bench_unsupported(i) || selected[i] == preset_selects(pr, i);
         if (same) return pr;
     }
     return nullptr;

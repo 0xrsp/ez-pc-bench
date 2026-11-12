@@ -80,6 +80,11 @@ bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h,
                        bool primary = false);
 // Wrapped tooltip for the item just drawn (also when it is disabled), after a short hover delay.
 void theme_help(const char* text);
+// Rows don't light up on hover: wrap a TreeNode / CollapsingHeader call in these. `framed` (CollapsingHeader,
+// ImGuiTreeNodeFlags_Framed) keeps its fill, other tree nodes draw no background. Dropdown and list items
+// (Selectable) keep their hover highlight: it shows what a click picks.
+void theme_header_push(bool framed);
+void theme_header_pop();
 
 // Titled, outlined section that groups related controls (settings groups, tool-window sections): a 1 px frame
 // with the title on its top line. Height fits the content; width = `width` (default: the full available width).

@@ -474,6 +474,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
         if (wcsstr(cmdline, L"--charts")) ui_show_charts();
         if (wcsstr(cmdline, L"--dev")) ui_set_dev(true);          // show the smoke-test suite
         if (wcsstr(cmdline, L"--open-gpu-combo")) ui_open_gpu_combo();  // dev: GPU combo popup open (screenshots)
+        if (wcsstr(cmdline, L"--open-theme-combo")) settings_ui_open_theme_combo();     // dev: same, Settings > Theme
         if (const wchar_t* t = wcsstr(cmdline, L"--tab ")) {       // dev: open the output panel on this tab
             char name[16] = {};
             for (u32 n = 0, i = 6; t[i] && t[i] != L' ' && n + 1 < sizeof(name); ++i) name[n++] = (char)t[i];

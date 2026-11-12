@@ -254,11 +254,10 @@ static bool group_row(const char* title) {
     ImGui::TableSetColumnIndex(0);
     ImGui::PushFont(g_fonts.medium, 0.0f);
     if (s_cu.set_open >= 0) ImGui::SetNextItemOpen(s_cu.set_open != 0);
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.06f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.10f));
+    theme_header_push(false);
     const bool open = ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAllColumns |
                                                    ImGuiTreeNodeFlags_NoTreePushOnOpen);
-    ImGui::PopStyleColor(2);
+    theme_header_pop();
     ImGui::PopFont();
     return open;
 }

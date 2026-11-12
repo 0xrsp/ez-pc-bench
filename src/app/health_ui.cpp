@@ -481,6 +481,13 @@ static void draw_confirmations(DiskHealth* h) {
 
 // ---- NVMe details ---------------------------------------------------------------------------------------
 
+static bool raw_header(const char* label) {
+    theme_header_push(true);
+    const bool open = ImGui::CollapsingHeader(label);
+    theme_header_pop();
+    return open;
+}
+
 static void hex_dump(const char* id, const u8* data, u32 size) {
     const f32 h = ImGui::GetTextLineHeightWithSpacing() * 14.0f;
     ImGui::BeginChild(id, ImVec2(0.0f, h), ImGuiChildFlags_Borders);
@@ -626,9 +633,9 @@ static void draw_nvme(DiskHealth* h) {
         }
     }
     theme_group_end();
-    if (ImGui::CollapsingHeader("Identify Controller (raw)")) hex_dump("idc", h->nvme_id, 4096);
-    if (h->have_nvme_ns && ImGui::CollapsingHeader("Identify Namespace 1 (raw)")) hex_dump("idn", h->nvme_ns, 4096);
-    if (h->have_nvme_health && ImGui::CollapsingHeader("SMART / Health log (raw)")) hex_dump("hlog", h->nvme_health, 512);
+    if (raw_header("Identify Controller (raw)")) hex_dump("idc", h->nvme_id, 4096);
+    if (h->have_nvme_ns && raw_header("Identify Namespace 1 (raw)")) hex_dump("idn", h->nvme_ns, 4096);
+    if (h->have_nvme_health && raw_header("SMART / Health log (raw)")) hex_dump("hlog", h->nvme_health, 512);
 }
 
 // ---- frame ----------------------------------------------------------------------------------------------
