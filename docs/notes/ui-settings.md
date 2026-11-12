@@ -78,6 +78,10 @@ Flow (`adv_ui.cpp`, worker thread; the UI thread only reads an atomic state):
 6. Errors are shown in the error color under the button (download HRESULT, rejected signature, administrator
    rights refused, couldn't start); the button stays for a retry.
 
+2026-11-12: between the signature check and starting the installer, the worker also downloads the signed
+PawnIO modules (state *Downloading the PawnIO modules*), and with the driver installed but the modules missing
+the row shows a **Download modules** button instead. Details: docs/notes/pawnio.md §10.
+
 **Network access:** this is the app's first and only network access, and it only happens on that explicit
 click. Nothing is contacted at startup or in the background. The row's help text says so.
 

@@ -5,6 +5,8 @@ Stream: FUTURE.md §8 (all) + §4 "SPD and current timings". Researched and writ
 `PawnIO` service, no `\Device\PawnIO`, no uninstall entry, no `%ProgramFiles%\PawnIO`), and installing a
 driver is the user's decision. Everything is written to fail closed: without PawnIO the app behaves exactly as
 before (checked: CLI `--adv-report` says "not installed", Settings shows "Not installed", runs unchanged).
+Update 2026-11-12: PawnIO 2.2.0.0 is now installed on the development machine (the user's install;
+`--adv-report` without elevation: "needs administrator rights"). Still nothing has run elevated against it.
 
 ## 1. License verdict
 
@@ -28,8 +30,10 @@ and shipping the signed module `.bin` files is allowed under LGPL-2.1 with the u
   `LibreHardwareMonitorLib/Resources/PawnIo/{*.bin, COPYING, README}`, README: "Signed PawnIO modules from
   the official repository, belonging to the 0.2.11 release"). They run inside the driver, not linked into our
   process; shipping them as separate files keeps them trivially replaceable.
-- **Not done in this stream**: no module `.bin` is committed (downloading and vendoring third-party binaries is
-  the lead's call). See §6 for how to add them.
+- **How we get them** (2026-11-12, §10): not committed, not embedded. The app downloads the official release
+  zip on the user's click, unpacks the modules it loads **unmodified** plus `COPYING` (the LGPL-2.1 text) and
+  writes a `README.txt` naming the release, its source and the zip's SHA-256, all in one per-user folder. So the
+  object code always sits next to its license text and source pointer, and stays trivially replaceable.
 - Not legal advice; based on the license texts above as of 2026-11-11.
 
 ## 2. HVCI (memory integrity)
@@ -95,8 +99,10 @@ Module functions we call (all reads; never `ioctl_write_*`, `ioctl_send_smu_comm
 ## 5. Design
 
 Files (all new except the hooks listed below):
-- `src/core/pawnio.{h,cpp}` — detection, blob lookup (RCDATA `PAWNIO_<NAME>` or `<exe>\pawnio\<Name>.bin`),
-  open/load, call, bus mutexes.
+- `src/core/pawnio.{h,cpp}` — detection, blob loading (path from `pawnio_modules.h`), open/load, call, bus
+  mutexes.
+- `src/core/pawnio_modules.{h,cpp}` — module version / hash constants, lookup folders, the download (§10).
+- `src/core/unzip.{h,cpp}` — in-memory ZIP reader + inflater + CRC-32 (§10).
 - `src/core/adv_sensors.{h,cpp}` — public API (below), status, the Settings switch, the one sampling thread,
   snapshots, CLI report. `adv_internal.h` shares the handles with:
 - `src/core/adv_cpu.cpp` — AMD Tctl/Tdie, CCDs, SVI2, RAPL, PM table, APERF/MPERF, clock stretching; Intel
@@ -124,8 +130,8 @@ Polling rules (FUTURE §8 P2), enforced in `adv_sensors.cpp`:
   or busy answer stops all SMBus use for the session (EC-owned bus on laptops).
 
 Hooks in shared files (small, additive):
-- `CMakeLists.txt`: 6 new core sources, `src/app/adv_ui.cpp`, generated `pawnio_modules.rc` in both exes
-  (embeds `third_party/pawnio/*.bin` when present; empty otherwise).
+- `CMakeLists.txt`: 8 new core sources, `src/app/adv_ui.cpp`, `urlmon` for the core (the modules download).
+  The generated `pawnio_modules.rc` (embedding `third_party/pawnio/*.bin`) was removed on 2026-11-12 (§10).
 - `src/core/monitor.{h,cpp}`: `adv_start()` / `adv_stop()` in `monitor_begin` / `monitor_end`; `cpu_temp` =
   `adv_cpu_temp(2.5)` → `TestEnv::cpu_temp_max` and the existing `ENV_CPU_HOT` flag now fill in with PawnIO.
 - `src/core/results.cpp`: `memdetail_write_toon(f, 2)` → `system.ram.timings` / `system.ram.spd[...]`
@@ -140,14 +146,12 @@ Hooks in shared files (small, additive):
 
 ## 6. Enabling it for a test (user / lead steps; nothing automatic)
 
-1. The user installs PawnIO from https://pawnio.eu (official installer), reboots if asked.
-2. Download `release_0_2_11.zip` (or newer) from
-   https://github.com/namazso/PawnIO.Modules/releases and put `AMDFamily17.bin`, `RyzenSMU.bin`,
-   `SmbusPIIX4.bin` (Intel: `IntelMSR.bin`, `SmbusI801.bin`) either into `third_party/pawnio/` (re-run CMake:
-   embedded) or into `build/release/pawnio/` next to the exes. If shipped, add the COPYING (LGPL-2.1) and a
-   README naming the release.
-3. Elevated: `build/release/ez-pc-bench-cli.exe --adv-report` (status, one sample, DIMM sensors, SPD, timings,
-   and a raw dump of the PM table for mapping Hawk Point's layout), then the GUI Sensors window.
+1. The user clicks Settings > Advanced sensors > **Download & install** (official installer + the modules), or
+   installs PawnIO from https://pawnio.eu and then clicks **Download modules** (or runs
+   `ez-pc-bench-cli.exe --pawnio-modules`). Reboot if the installer asks.
+2. Elevated: `build/release/ez-pc-bench-cli.exe --adv-report` (status, where each module file was found, one
+   sample, DIMM sensors, SPD, timings, and a raw dump of the PM table for mapping Hawk Point's layout), then the
+   GUI Sensors window.
 
 ## 7. Register sources (cited in the code, not copied)
 
@@ -174,7 +178,7 @@ Hooks in shared files (small, additive):
 | Item | State |
 |---|---|
 | §8 P1 licenses / HVCI / anti-cheat | **Done** (this file). |
-| §8 P1 integration (detect, Settings row with installer link, plain DeviceIoControl, works without it) | **Done**, untested against the driver. The row's "Copy link" became a "Download & install" button (2026-11-11, docs/notes/ui-settings.md §4): official installer from the PawnIO.Setup latest release, signature checked (namazso), started on that click only; the app's only network access. |
+| §8 P1 integration (detect, Settings row with installer link, plain DeviceIoControl, works without it) | **Done**, untested against the driver. The row's "Copy link" became a "Download & install" button (2026-11-11, docs/notes/ui-settings.md §4): official installer from the PawnIO.Setup latest release, signature checked (namazso), started on that click only; the app's only network access. Since 2026-11-12 it also downloads the signed modules; "Download modules" when only they are missing (§10). |
 | §8 P1 AMD Zen: Tctl/Tdie, per-CCD, package power (RAPL), effective clock (APERF/MPERF), SVI telemetry | **Done (code)**, untested. SVI2 only for Zen 1-3; Zen 4+ is SVI3 (not decoded): voltage comes from the PM table where mapped. |
 | §8 P1 AMD PM table per-core temps / clocks | **Partial**: framework + layouts for Raven, Renoir, Cezanne, Strix Point / Halo, Matisse, Vermeer, Raphael, Granite Ridge. **Phoenix / Hawk Point (this PC, 0x4C000x): only Tctl + PPT are publicly mapped**; `--adv-report` dumps the table to map per-core fields once PawnIO is on this PC. |
 | §8 P1 Intel: core / package temps, RAPL, effective clock, limit reasons | **Done (code)**, untested. Limit reasons from the THERM_STATUS "status" bits (current state); the perf-limit-reason MSRs (0x64F / 0x6B0 / 0x6B1) aren't on IntelMSR's read allow-list. |
@@ -190,8 +194,78 @@ Hooks in shared files (small, additive):
 
 1. **SPD page selection** (one SMBus write to the hub's MR11 per page, restored afterwards; what HWiNFO,
    CPU-Z, ZenTimings and Linux `spd5118` do) would unlock XMP / EXPO, DDR5 ranks / manufacturing data. Allow it?
-2. **Ship the module blobs?** LGPL-2.1 allows it (§1). Embedded (`third_party/pawnio/`) or a `pawnio\` folder
-   next to the exe (easier to swap, closer to LGPL's spirit). Either needs COPYING + a README with the release.
+2. ~~Ship the module blobs?~~ Decided 2026-11-12: downloaded per user on a click (§10), not shipped.
 3. Hawk Point PM table: map per-core fields from an `--adv-report` dump once PawnIO is installed here.
 4. Stability tester: use `adv_cpu_temp()`; decide whether SMBus DIMM polling may run during stress tests
    (currently only "no benchmark running" is checked via `runner_is_running()`).
+
+## 10. Module download (2026-11-12)
+
+**Version constant**: `src/core/pawnio_modules.h`, `PAWNIO_MODULES_VERSION` (`"0.2.11"`) and, next to it,
+`PAWNIO_MODULES_SHA256` (SHA-256 of that release's zip). Bump both together (CLAUDE.md note); the URL is
+built from the version: `https://github.com/namazso/PawnIO.Modules/releases/download/<v>/release_<v with _>.zip`.
+To get the new hash: `curl.exe -sSLO <url>` then `Get-FileHash release_x_y_z.zip` (lowercase it). Check the zip
+still has every module in `PawnModuleId` (`pawnio.h`) and `COPYING`, else the download fails with "isn't in
+the modules zip".
+
+**Folder**: `%LOCALAPPDATA%\ez-pc-bench\pawnio\<version>\` (per user, always writable; next to the exe may be
+`Program Files`). Contents after a download: `AMDFamily17.bin`, `RyzenSMU.bin`, `IntelMSR.bin`, `SmbusPIIX4.bin`,
+`SmbusI801.bin` (all five, whatever the CPU, so a moved install or a CPU swap needs nothing new), `COPYING`,
+`README.txt` (release, source, URL, zip SHA-256, license). Old version folders aren't cleaned up (≈ 200 KB).
+An elevated app reads the folder of the user it runs as (normally the same user; with over-the-shoulder
+elevation, the admin account's folder, and the download writes there too, so it stays consistent).
+
+**Lookup, per module** (`pawnio_module_path`): the download folder, then `<exe folder>\pawnio\<Name>.bin`
+(portable copies, or a lead-shipped folder later). A file counts only with a sane size (1 KB to 1 MB).
+**No embedded modules any more**: the RCDATA path never carried anything (no `.bin` was ever committed), it
+needed a CMake generation step, and an exe with embedded LGPL blobs would have to carry the license text too.
+`ADV_NO_MODULES` now means "a module this CPU needs (AMD: AMDFamily17, RyzenSMU, SmbusPIIX4; Intel: IntelMSR,
+SmbusI801) isn't found", checked before anything is opened.
+
+**Flow**:
+- Settings **Download & install** (driver not installed): installer download + signature check as before
+  (docs/notes/ui-settings.md §4), then the modules (state "Downloading the PawnIO modules...", skipped if the
+  folder already has them), then the installer runs. A module failure doesn't block the install; the outcome
+  line then says "PawnIO installed, but its modules weren't downloaded: <reason>" and the row shows the button
+  below.
+- Driver installed, modules missing: the Settings row is the on / off switch + one **Download modules** button
+  (same worker, progress text, error line in the error colour); the Sensors window's PawnIO section shows one
+  sentence and the same button instead of the old "module files missing" text. On success `adv_redetect()`
+  reopens everything, so the sensors start without restarting the app.
+- CLI: `--pawnio-modules` (download, print the result, exit 0 / 1). `--adv-report` lists every module file
+  with the path it was found at, or "missing" plus the URL and target folder.
+- Network: these buttons and the CLI flag are the only network access, all explicit.
+
+**Extraction: our own ~250-line reader** (`core/unzip.cpp`: end-of-central-directory + central directory
+lookup, stored / deflate members, CRC-32), not `tar.exe` or the Shell:
+- the zip is downloaded into memory (`URLOpenBlockingStreamW`, 4 MB cap; 0.2.11 is 69 582 bytes), hashed, and
+  only the 6 needed members are inflated straight into the target files: nothing else from the archive touches
+  the disk, no temp folder, no external process;
+- `tar.exe` (bsdtar) exists only from Windows 10 1803 and could be missing / replaced on stripped images, needs a
+  process + exit-code dance and writes before we can validate; `IShellDispatch::CopyHere` is asynchronous, can
+  show UI and conflict dialogs, and has no reliable completion signal;
+- deflate is small and fully specified (RFC 1951); the decoder follows zlib's reference `puff.c` design.
+Each member is validated: present in the zip, uncompressed size in range (modules 1 KB to 1 MB, `COPYING` 1 to
+256 KB), inflates to exactly that size, CRC-32 matches; written as `<name>.tmp` then renamed, then the whole set
+is re-checked (`pawnio_modules_downloaded`).
+
+**Integrity** (what protects against a tampered zip or module):
+1. HTTPS from github.com (URLMon validates the certificate; GitHub redirects to its release-asset host).
+2. **Pinned SHA-256** of the zip, checked before anything is unpacked: a different zip (compromised release,
+   mirror, proxy, cache) is rejected with "doesn't match the expected SHA-256; nothing was unpacked". This also
+   means our inflater only ever processes those exact, known bytes.
+3. CRC-32 per member (catches our own bugs / disk corruption, not an attacker).
+4. **The driver verifies each module's signature** when it's loaded (`IOCTL_PIO_LOAD_BINARY`, official build):
+   a modified `.bin` dropped into the per-user or exe folder is refused by the driver, so the user-writable
+   folder can't be used to run unsigned code in the kernel.
+
+**Verified** (2026-11-12, this PC; PawnIO 2.2.0.0 installed, not elevated):
+- `ez-pc-bench-cli --pawnio-modules`: downloaded and unpacked AMDFamily17.bin 10 652, RyzenSMU.bin 50 764,
+  IntelMSR.bin 5 324, SmbusPIIX4.bin 42 404, SmbusI801.bin 55 540, COPYING 27 032 bytes, README.txt; every
+  file byte-identical to Python's `zipfile` extraction of the same zip. `--adv-report` then listed each path.
+- The GUI worker (temporary, uncommitted stub forcing "driver present"): "Download modules" button, the
+  progress text, a forced 404 (error line), and a real download followed by the redetect.
+- The inflater on a test zip (stored members, fixed / dynamic / stored deflate blocks, empty and 2.3 MB members)
+  and ~20 000 corrupted / truncated reads: all members correct, no crash.
+- The downloaded folder was deleted afterwards so the user's hand test exercises the button.
+- **Not tested**: loading the modules into the driver (needs elevation), the install + modules path end to end.
