@@ -15,6 +15,7 @@
 #include "core/sysinfo_ext.h"
 #include "core/timer.h"
 #include "stability/stability.h"
+#include "disk/disk.h"
 #include "imgui.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -85,6 +86,12 @@ void ui_select_only(const char* ids) {
     }
 }
 
+// Tests flagged BENCH_CONFIRM (they write a lot or run for hours) only start after a confirmation dialog.
+static struct {
+    bool open_request;
+    bool confirmed;
+} s_confirm;
+
 void ui_start_run() {
     s_ui.status_msg[0] = 0;
     if (stab_is_running()) {     // never two heavy loads at once
@@ -92,8 +99,53 @@ void ui_start_run() {
         return;
     }
     bool run[MAX_BENCHES];      // hidden suites never run, whatever the saved selection says
-    for (u32 i = 0; i < g_bench_count; ++i) run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
+    bool heavy = false;
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        run[i] = s_ui.selected[i] && suite_visible(g_benches[i].suite);
+        heavy |= run[i] && (g_benches[i].flags & BENCH_CONFIRM);
+    }
+    if (heavy && !s_confirm.confirmed) {
+        s_confirm.open_request = true;
+        return;
+    }
+    s_confirm.confirmed = false;
     runner_start(run, &s_ui.params);
+}
+
+static void draw_confirm_dialog() {
+    if (s_confirm.open_request) {
+        s_confirm.open_request = false;
+        ImGui::OpenPopup("Run heavy tests?");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 36.0f, 0.0f));
+    if (!ImGui::BeginPopupModal("Run heavy tests?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted("The selection includes tests that write a lot of data or run for a long time:");
+    for (u32 i = 0; i < g_bench_count; ++i) {
+        if (!s_ui.selected[i] || !(g_benches[i].flags & BENCH_CONFIRM) || !suite_visible(g_benches[i].suite)) continue;
+        char note[256];
+        disk_confirm_note(&s_ui.params, i, note, sizeof(note));
+        ImGui::Spacing();
+        ImGui::PushFont(g_fonts.medium, 0.0f);
+        ImGui::Text("%s / %s", g_suites[g_benches[i].suite].name, g_benches[i].name);
+        ImGui::PopFont();
+        ImGui::TextDisabled("%s", note);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    const bool run = theme_button_primary("Run");
+    ImGui::SameLine();
+    const bool cancel = theme_button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (run) {
+        ImGui::CloseCurrentPopup();
+        s_confirm.confirmed = true;
+        ui_start_run();
+    } else if (cancel) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void ui_apply_style(f32 scale) { theme_apply_style(scale); }
@@ -118,7 +170,14 @@ static void result_summary(u32 id, char* buf, u32 size) {
     buf[0] = 0;
     if (r->count == 0) return;
     const Metric* m = res_metrics(r);
-    if (r->kind == RESULT_VALUES) {
+    if (r->kind == RESULT_VALUES && g_benches[id].suite == SUITE_DISK) {
+        const u8 unit = s_ui.params.disk.unit;
+        const Metric* pick = &m[disk_unit_pick(unit, r)];
+        const char* shown;
+        char v[32];
+        format_value(v, sizeof(v), disk_unit_value(unit, pick->unit, pick->value, &shown));
+        snprintf(buf, size, "%s %s", v, shown);
+    } else if (r->kind == RESULT_VALUES) {
         char v[32], fps[32];
         format_value(v, sizeof(v), m[0].value);
         format_frame_fps(fps, sizeof(fps), m[0].name, m[0].unit, m[0].value);
@@ -426,6 +485,27 @@ static void draw_targets() {
             ImGui::SetTooltip("%s", desc);
         }
     }
+    if (p->disk.folder[0]) {
+        ImGui::SameLine();
+        ImGui::TextColored(COL_WARN, "folder");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The disk suite tests in the folder set in Settings > Disk, not on these drives.");
+    }
+    // CrystalDiskMark profile: shows the profile the disk test selection matches, "Custom" otherwise.
+    ImGui::SameLine(0.0f, ImGui::GetFontSize());
+    ImGui::TextDisabled("Disk profile");
+    ImGui::SameLine();
+    const DiskProfile* dp = disk_profile_match(s_ui.selected);
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Real World").x + ImGui::GetFrameHeight() * 2.0f);
+    if (ImGui::BeginCombo("##dprofile", dp ? dp->name : "Custom")) {
+        for (u32 i = 0; i < g_disk_profile_count; ++i) {
+            if (ImGui::Selectable(g_disk_profiles[i].name, dp == &g_disk_profiles[i])) disk_profile_apply(&g_disk_profiles[i], s_ui.selected);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_disk_profiles[i].desc);
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##dprofile"))
+        ImGui::SetTooltip("%s", dp ? dp->desc : "Disk profile (CrystalDiskMark): picks the disk tests in the tree. Your "
+                                                "selection matches none of them.");
     ImGui::EndDisabled();
 }
 
@@ -800,7 +880,9 @@ static void draw_results() {
             }
             ImGui::TextUnformatted(label);
             ImGui::TableNextColumn();
-            format_value(v, sizeof(v), m[k].value);
+            const char* unit = m[k].unit;
+            format_value(v, sizeof(v), b->suite == SUITE_DISK ? disk_unit_value(s_ui.params.disk.unit, m[k].unit, m[k].value, &unit)
+                                                              : m[k].value);
             char fps[32];
             theme_push_numbers();
             if (format_frame_fps(fps, sizeof(fps), m[k].name, m[k].unit, m[k].value)) {
@@ -818,7 +900,7 @@ static void draw_results() {
             ImGui::PopFont();
             spread_tooltip(&res_spread(r)[k], m[k].unit);
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", m[k].unit);
+            ImGui::TextDisabled("%s", unit);
         }
     }
     ImGui::EndTable();
@@ -826,21 +908,34 @@ static void draw_results() {
 
 // ---- charts: series plots and matrix grids ----------------------------------------------
 
-// One plot per metric name (a series can hold several, e.g. "Read" and "Write" per thread count).
+// A series can hold several named lines (e.g. "Read" and "Write" per thread count, interleaved or not, or
+// "C: Read" / "C: Write" per drive): one plot per name. Names with a single point are summary values and are
+// shown as text.
 static void draw_series_one(const BenchResult* r, const char* name);
 
 static void draw_series(const BenchResult* r) {
     const Metric* m = res_metrics(r);
-    const char* names[8];
-    u32 count = 0;
+    const char* names[32];
+    u32 points[32] = {}, first[32] = {}, count = 0;
     for (u32 k = 0; k < r->count; ++k) {
-        bool seen = false;
-        for (u32 i = 0; i < count && !seen; ++i) seen = !strcmp(names[i], m[k].name);
-        if (!seen && count < ARRAY_COUNT(names)) names[count++] = m[k].name;
+        u32 i = 0;
+        while (i < count && strcmp(names[i], m[k].name) != 0) ++i;
+        if (i == count) {
+            if (count == ARRAY_COUNT(names)) continue;
+            names[count] = m[k].name;
+            first[count++] = k;
+        }
+        ++points[i];
     }
     for (u32 i = 0; i < count; ++i) {
         ImGui::PushID((int)i);
-        draw_series_one(r, count > 1 ? names[i] : nullptr);
+        if (points[i] == 1 && count > 1) {
+            char v[32];
+            format_value(v, sizeof(v), m[first[i]].value);
+            ImGui::TextDisabled("%s: %s %s", names[i], v, m[first[i]].unit);
+        } else {
+            draw_series_one(r, count > 1 ? names[i] : nullptr);
+        }
         ImGui::PopID();
     }
 }
@@ -993,6 +1088,7 @@ void ui_draw() {
     draw_targets();
     draw_toolbar();
     draw_save_dialog();
+    draw_confirm_dialog();
     ImGui::Spacing();
 
     // Invisible but draggable column divider: tables cache border colors in BeginTable, so push around it only.

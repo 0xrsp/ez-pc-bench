@@ -22,6 +22,7 @@
 #include "core/sysinfo.h"
 #include "core/toon.h"
 #include "core/sysinfo_ext.h"
+#include "disk/disk.h"
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,16 @@ static void print_usage() {
         "  --list-sensors         List the sensor channel ids with their current values\n"
         "  --sysinfo [base]       Print the full system report (queries Vulkan / D3D12 on every GPU, which\n"
         "                         wakes a sleeping laptop GPU); with a path, also write <base>.txt / .toon.txt\n"
+        "  --disk-profile <name>  Select a CrystalDiskMark profile's disk tests: default, nvme, peak, realworld, demo\n"
+        "  --disk-mode <mode>     Disk rows run rw (read + write, default), read, write or mix (adds a mixed pass)\n"
+        "  --disk-mix <read %%>   Reads in the mixed pass (default 70)\n"
+        "  --disk-data <kind>     Test data: random (default) or zero (all 0x00, shows controller compression)\n"
+        "  --disk-folder <path>   Test in this folder instead of on drive letters (network share, USB stick...)\n"
+        "  --disk-buffered        Disk I/O through the OS file cache (default: unbuffered)\n"
+        "  --disk-interval <ms>   Pause before each disk test (lets the drive cool down)\n"
+        "  --disk-custom <rows>   Rows for disk.custom1-4, ';'-separated, e.g. \"RND4K Q32T4 R70;SEQ1M Q8T1\"\n"
+        "  --sustained-gib <n>    Cap of the sustained-write test (default 64)\n"
+        "  --yes                  Allow tests that write a lot or run very long (disk.sustained.write, disk.raw.scan)\n"
         "  --elevate              Relaunch as administrator in a new console\n"
         "  --adv-report           Print the PawnIO advanced sensors (status, one sample, SPD, timings, PM table)\n"
         "  --no-adv-sensors       Don't use PawnIO even if it is installed\n"
@@ -423,7 +434,7 @@ int wmain(int argc, wchar_t** argv) {
 
     bool selected[MAX_BENCHES] = {};
     bool any_run = false, from_preset = false, list = false, pause = false, elevate = false, health = false,
-         hide_serial = false, adv_report = false;
+         hide_serial = false, adv_report = false, yes = false;
     const wchar_t* out_path = nullptr;
     const wchar_t* compare_path = nullptr;
     const wchar_t* sensor_log = nullptr;
@@ -472,6 +483,43 @@ int wmain(int argc, wchar_t** argv) {
         else if (!wcscmp(a, L"--score-write")) score_write = true;
         else if (!wcscmp(a, L"--no-history")) no_history = true;
         else if (!wcscmp(a, L"--html") && has_val) html_path = argv[++i];
+        else if (!wcscmp(a, L"--yes")) yes = true;
+        else if (!wcscmp(a, L"--disk-buffered")) params.disk.buffered = true;
+        else if (!wcscmp(a, L"--disk-profile") && has_val) {
+            const DiskProfile* dp = disk_profile_find(val);
+            if (!dp) { fprintf(stderr, "unknown disk profile '%s' (default, nvme, peak, realworld, demo)\n", val); return 3; }
+            if (from_preset) memset(selected, 0, sizeof(selected));
+            from_preset = false;
+            any_run = true;
+            bool prof[MAX_BENCHES] = {};
+            disk_profile_apply(dp, prof);
+            for (u32 k = 0; k < g_bench_count; ++k) selected[k] |= prof[k];
+            ++i;
+        }
+        else if (!wcscmp(a, L"--disk-mode") && has_val) {
+            if (!disk_mode_parse(val, &params.disk.mode)) { fprintf(stderr, "unknown disk mode '%s' (rw, read, write, mix)\n", val); return 3; }
+            ++i;
+        }
+        else if (!wcscmp(a, L"--disk-mix") && has_val) { const int v = atoi(val); params.disk.mix_read_pct = (u8)(v < 0 ? 0 : v > 100 ? 100 : v); ++i; }
+        else if (!wcscmp(a, L"--disk-data") && has_val) {
+            if (!_stricmp(val, "zero")) params.disk.data = DISK_DATA_ZERO;
+            else if (!_stricmp(val, "random")) params.disk.data = DISK_DATA_RANDOM;
+            else { fprintf(stderr, "unknown disk data '%s' (random, zero)\n", val); return 3; }
+            ++i;
+        }
+        else if (!wcscmp(a, L"--disk-folder") && has_val) wcsncpy_s(params.disk.folder, argv[++i], _TRUNCATE);
+        else if (!wcscmp(a, L"--disk-interval") && has_val) { params.disk.interval_ms = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--sustained-gib") && has_val) { params.disk.sustained_gib = (u32)atoi(val); ++i; }
+        else if (!wcscmp(a, L"--disk-custom") && has_val) {
+            char* ctx = nullptr;
+            u32 n = 0;
+            for (char* tok = strtok_s(val, ";", &ctx); tok && n < DISK_CUSTOM_ROWS; tok = strtok_s(nullptr, ";", &ctx), ++n)
+                if (!disk_row_parse(tok, &params.disk.custom[n])) {
+                    fprintf(stderr, "bad custom disk row '%s' (e.g. RND4K Q32T4 R70)\n", tok);
+                    return 3;
+                }
+            ++i;
+        }
         else if (!wcscmp(a, L"--run") && has_val) { if (from_preset) memset(selected, 0, sizeof(selected)); from_preset = false; any_run = true; if (!select_patterns(val, selected)) return 3; ++i; }
         else if (!wcscmp(a, L"--out") && has_val) out_path = argv[++i];
         else if (!wcscmp(a, L"--compare") && has_val) compare_path = argv[++i];
@@ -576,6 +624,13 @@ int wmain(int argc, wchar_t** argv) {
 
     if (!any_run)
         for (u32 i = 0; i < g_bench_count; ++i) selected[i] = !(g_benches[i].flags & BENCH_DEFAULT_OFF);
+    for (u32 i = 0; i < g_bench_count && !yes; ++i) {
+        if (!selected[i] || !(g_benches[i].flags & BENCH_CONFIRM)) continue;
+        char note[256];
+        disk_confirm_note(&params, i, note, sizeof(note));
+        fprintf(stderr, "skipping %s: %s Add --yes to run it.\n", g_benches[i].cli_id, note);
+        selected[i] = false;
+    }
 
     if (compare_path) {
         char err[160];

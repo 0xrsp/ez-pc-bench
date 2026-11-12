@@ -6,8 +6,10 @@
 #include "app/ui.h"
 #include "core/runner.h"
 #include "core/sysinfo.h"
+#include "disk/disk.h"
 #include "imgui.h"
 #include "imgui_internal.h"     // TableGetHoveredRow
+#include <windows.h>
 #include <stdio.h>
 
 static bool begin_group(const char* title) {
@@ -69,6 +71,111 @@ static void row(const char* label, const char* help) {
     ImGui::TextUnformatted(label);
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+// Disk options beyond file size / passes / write-through (DiskOptions in core/bench.h).
+static void draw_disk_options(BenchParams* p) {
+    DiskOptions* o = &p->disk;
+    static const char* const modes[] = { "Read + write", "Read only", "Write only", "Read + write + mix" };
+    row("Read / write passes", "Which passes the CrystalDiskMark-style rows run, like CrystalDiskMark's Read&Write / Read / "
+                               "Write / +Mix menu. Read only never writes to the drive (after the test file is created). "
+                               "+ mix adds a mixed pass with the read share below, e.g. 70 % reads / 30 % writes. Also "
+                               "applies to the sweeps and the latency distribution.");
+    int mode = o->mode;
+    if (ImGui::Combo("##dmode", &mode, modes, (int)ARRAY_COUNT(modes))) o->mode = (u8)mode;
+
+    row("Mixed pass: reads", "Share of reads in the mixed pass (Read + write + mix). Each request is a read or a write at "
+                             "random with this ratio, like CrystalDiskMark's Mix (default 70 %).");
+    int mix = o->mix_read_pct;
+    if (ImGui::SliderInt("##dmix", &mix, 0, 100, "%d %% reads")) o->mix_read_pct = (u8)mix;
+
+    static const char* const datas[] = { "Random (incompressible)", "All zeros (0x00)" };
+    row("Test data", "What the test file and the writes contain. Random data can't be compressed, which is what real files "
+                     "mostly look like. All zeros shows whether the drive's controller compresses or deduplicates data: "
+                     "such drives get much faster with it (most current consumer SSDs don't).");
+    int data = o->data;
+    if (ImGui::Combo("##ddata", &data, datas, (int)ARRAY_COUNT(datas))) o->data = (u8)data;
+
+    static const char* const units[] = { "MB/s", "GB/s", "IOPS", "\xC2\xB5s (latency)" };
+    row("Disk results shown as", "Which number the test tree shows for each disk test: throughput in MB/s or GB/s, IOPS, or "
+                                 "the average latency in microseconds. GB/s also converts MB/s values in the results "
+                                 "table. Saved results always contain all of them.");
+    int unit = o->unit;
+    if (ImGui::Combo("##dunit", &unit, units, (int)ARRAY_COUNT(units))) o->unit = (u8)unit;
+
+    static const u32 intervals[] = { 0, 1, 3, 5, 10, 30, 60, 180, 300, 600 };
+    row("Interval between tests", "Pause before each disk test so the drive can cool down and finish background work "
+                                  "(CrystalDiskMark's Interval). Laptop SSDs throttle when hot; a pause makes later tests "
+                                  "comparable with earlier ones. 0 = none (default).");
+    char label[32];
+    snprintf(label, sizeof(label), o->interval_ms ? "%u s" : "none", o->interval_ms / 1000);
+    if (ImGui::BeginCombo("##dint", label)) {
+        for (u32 i = 0; i < ARRAY_COUNT(intervals); ++i) {
+            snprintf(label, sizeof(label), intervals[i] ? "%u s" : "none", intervals[i]);
+            if (ImGui::Selectable(label, o->interval_ms == intervals[i] * 1000)) o->interval_ms = intervals[i] * 1000;
+        }
+        ImGui::EndCombo();
+    }
+
+    row("Test in folder", "Run the disk suite in this folder instead of on the drive letters picked in the main window: a "
+                          "network share (\\\\server\\share), a USB stick, a mounted VHD or a RAM disk. Metrics are then named "
+                          "\"Folder: ...\". The raw-device tests use the drive letter of the folder's volume, if it has "
+                          "one. Empty = test the drives (default).");
+    static char folder[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, o->folder, -1, folder, sizeof(folder), nullptr, nullptr);
+    if (ImGui::InputTextWithHint("##dfolder", "off: the drives picked in the main window", folder, sizeof(folder)))
+        MultiByteToWideChar(CP_UTF8, 0, folder, -1, o->folder, (int)ARRAY_COUNT(o->folder));
+
+    row("Buffered I/O", "Go through the Windows file cache instead of bypassing it. Off (default) measures the drive itself, "
+                        "like CrystalDiskMark. On shows what programs see when they read files they used recently (served "
+                        "from RAM), and is needed for some network shares that refuse unbuffered I/O.");
+    theme_checkbox("##dbuf", &o->buffered);
+
+    static const u32 caps[] = { 2, 8, 16, 32, 64, 128, 256, 512, 1024 };
+    row("Sustained write: amount", "How much the Sustained write (SLC cache) test writes per drive, capped at 80 % of the free "
+                                   "space. To find where the SLC cache runs out it has to write more than the cache holds: "
+                                   "on an empty 1 TB SSD that can be 100 GB or more. The test is off by default and asks "
+                                   "before it runs. Default 64 GiB.");
+    snprintf(label, sizeof(label), "%u GiB", o->sustained_gib);
+    if (ImGui::BeginCombo("##dsus", label)) {
+        for (u32 i = 0; i < ARRAY_COUNT(caps); ++i) {
+            snprintf(label, sizeof(label), "%u GiB", caps[i]);
+            if (ImGui::Selectable(label, o->sustained_gib == caps[i])) o->sustained_gib = caps[i];
+        }
+        ImGui::EndCombo();
+    }
+}
+
+// Text fields for the four user-defined rows (disk.custom1..4).
+static void draw_disk_rows(BenchParams* p) {
+    static char text[DISK_CUSTOM_ROWS][48];
+    static bool valid[DISK_CUSTOM_ROWS], init;
+    if (!init) {
+        for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
+            disk_row_format(&p->disk.custom[i], text[i], sizeof(text[i]));
+            valid[i] = true;
+        }
+        init = true;
+    }
+    const char* help = "A test row of your own, run by the Disk > Custom tests in the main window (tick them there). Format: "
+                       "SEQ or RND, block size, queue depth and threads, optionally R and the share of reads: "
+                       "\"RND4K Q32T4\" runs a read pass and a write pass like the built-in rows, \"RND4K Q32T4 R70\" one "
+                       "mixed pass with 70 % reads, R100 reads only, R0 writes only. Sizes 512 B to 64M, QD 1-256, "
+                       "threads 1-64. Empty = row unused.";
+    for (u32 i = 0; i < DISK_CUSTOM_ROWS; ++i) {
+        char label[16];
+        snprintf(label, sizeof(label), "Row %u", i + 1);
+        row(label, help);
+        ImGui::PushID((int)i);
+        if (!valid[i]) ImGui::PushStyleColor(ImGuiCol_Text, g_pal.error);
+        if (ImGui::InputTextWithHint("##row", "e.g. RND4K Q32T4 R70", text[i], sizeof(text[i]))) {
+            DiskRow r;
+            valid[i] = disk_row_parse(text[i], &r);
+            if (valid[i]) p->disk.custom[i] = r;
+        }
+        if (!valid[i]) ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
 }
 
 void settings_ui_draw() {
@@ -192,6 +299,12 @@ void settings_ui_draw() {
                               "speed; most drives are much slower this way. Off by default, like most benchmarks.";
         row("Write-through (FUA)", wt_help);
         theme_checkbox("##wt", &p->disk_write_through);
+        draw_disk_options(p);
+        end_group();
+    }
+
+    if (begin_group("Custom disk tests")) {
+        draw_disk_rows(p);
         end_group();
     }
 
@@ -216,6 +329,11 @@ void settings_ui_draw() {
         p->disk_write_through = d.disk_write_through;
         p->repeat = d.repeat;
         p->sustain_s = d.sustain_s;
+        // Disk options; the folder target and the custom rows stay (they are definitions, not tuning).
+        const DiskOptions keep = p->disk;
+        p->disk = d.disk;
+        wcscpy_s(p->disk.folder, keep.folder);
+        memcpy(p->disk.custom, keep.custom, sizeof(keep.custom));
     }
     theme_help("Restores the benchmark, GPU and disk settings above to their defaults. The theme and the GPU / disks "
                "picked in the main window stay as they are.");
