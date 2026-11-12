@@ -104,16 +104,14 @@ static void draw_kv_block(u32 first, u32 end) {
     ImGui::EndTable();
 }
 
+// A table in its own group box, titled with the table's name.
 static void draw_table(u32 header, u32 end) {
     const RepItem* h = &s_rep.items[header];
     const u32 cols = h->cells - 1u < 16u ? h->cells - 1u : 16u;
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(rep_cell(&s_rep, h, 0));
-    ImGui::PopFont();
-    if (!cols) return;
-    const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg;
     ImGui::PushID((int)header);
-    if (ImGui::BeginTable("t", (int)cols, flags)) {
+    theme_group_begin(rep_cell(&s_rep, h, 0));
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg;
+    if (cols && ImGui::BeginTable("t", (int)cols, flags)) {
         for (u32 c = 0; c < cols; ++c) ImGui::TableSetupColumn(rep_cell(&s_rep, h, c + 1));
         ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_surface_variant);
         ImGui::TableHeadersRow();
@@ -127,8 +125,8 @@ static void draw_table(u32 header, u32 end) {
         }
         ImGui::EndTable();
     }
+    theme_group_end();
     ImGui::PopID();
-    ImGui::Spacing();
 }
 
 static void draw_section(u32 sec) {
@@ -137,13 +135,18 @@ static void draw_section(u32 sec) {
     ImGui::PopFont();
     ImGui::Spacing();
     u32 i = sec + 1;
+    bool first_kv = true;
     while (i < s_rep.count && s_rep.items[i].kind != REP_SECTION) {
         const RepKind k = s_rep.items[i].kind;
         u32 end = i + 1;
-        if (k == REP_KV) {
+        if (k == REP_KV) {      // key / value lines: a group box ("General" for the section's first block)
             while (end < s_rep.count && s_rep.items[end].kind == REP_KV) ++end;
+            ImGui::PushID((int)i);
+            theme_group_begin(first_kv ? "General" : "");
             draw_kv_block(i, end);
-            ImGui::Spacing();
+            theme_group_end();
+            ImGui::PopID();
+            first_kv = false;
         } else if (k == REP_TABLE) {
             while (end < s_rep.count && s_rep.items[end].kind == REP_ROW) ++end;
             draw_table(i, end);
@@ -171,7 +174,13 @@ void system_ui_draw() {
     for (u32 i = 0; i < s_rep.count; ++i) {
         if (s_rep.items[i].kind != REP_SECTION) continue;
         ImGui::PushID((int)i);
-        if (ImGui::Selectable(rep_cell(&s_rep, &s_rep.items[i], 0), s_section == i)) s_section = i;
+        const bool sel = s_section == i;
+        if (sel) {
+            ImGui::PushStyleColor(ImGuiCol_Header, g_pal.secondary_container);
+            ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_secondary_container);
+        }
+        if (ImGui::Selectable(rep_cell(&s_rep, &s_rep.items[i], 0), sel)) s_section = i;
+        if (sel) ImGui::PopStyleColor(2);
         ImGui::PopID();
     }
     theme_end_panel();
