@@ -5,6 +5,7 @@
 #include "core/elevation.h"
 #include "core/timer.h"
 #include <winioctl.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -103,7 +104,7 @@ void disk_raw_span(void*, const BenchParams* p, BenchLive* live, BenchResult* ou
             run.prog_from = run.prog_to = base + span * 0.8f * z / SPAN_ZONES;
             ok = io_run(&rd.t, &run, &r, live, cancel, error, sizeof(error));
             mbs[z] = io_mbps(&r);
-            pos[z] = off / 1e9;
+            pos[z] = floor(off / 1e6 + 0.5) / 1000.0;     // GB, 3 decimals
             live_sample(live, mbs[z]);
         }
         // Access time: QD1 4K reads at random positions over the whole disk; burst: 64 KiB reads within 1 MiB.
@@ -128,7 +129,7 @@ void disk_raw_span(void*, const BenchParams* p, BenchLive* live, BenchResult* ou
             hi = mbs[z] > hi ? mbs[z] : hi;
             sum += mbs[z];
         }
-        const f64 end = rd.size / 1e9;
+        const f64 end = floor(rd.size / 1e6 + 0.5) / 1000.0;
         res_add(out, dname("%s Minimum", t->label), "MB/s", lo, end);
         res_add(out, dname("%s Average", t->label), "MB/s", sum / SPAN_ZONES, end);
         res_add(out, dname("%s Maximum", t->label), "MB/s", hi, end);
