@@ -104,6 +104,22 @@ void score_ui_tooltip(const ScoreResult* s, const char* title) {
 
 // ---- About the score -------------------------------------------------------------------------------------
 
+static void about_group_begin(const char* title) {
+    theme_group_begin(title);
+    ImGui::PushTextWrapPos(0.0f);       // wrap at the box's edge
+}
+
+static void about_group_end() {
+    ImGui::PopTextWrapPos();
+    theme_group_end();
+}
+
+// Bullet with wrapped text (ImGui::BulletText doesn't wrap); continuation lines line up with the first.
+static void bullet(const char* text) {
+    ImGui::Bullet();
+    ImGui::TextUnformatted(text);
+}
+
 void score_ui_about(bool* request) {
     if (*request) {
         *request = false;
@@ -124,32 +140,25 @@ void score_ui_about(bool* request) {
         "those raw numbers by the published formula below, so any saved results file gets one, and always shown with "
         "its breakdown. Scores of different versions are never compared.");
     ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("Formula");
-    ImGui::PopFont();
-    ImGui::BulletText("Each input is a ratio to the reference machine: value / reference, or reference / value when lower "
-                      "is better (latency, frame time). > 1 means faster.");
-    ImGui::BulletText("Component = 1000 x weighted geometric mean of its input ratios. The reference machine scores "
-                      "exactly 1000; 2000 = twice as fast on that mix.");
-    ImGui::BulletText("Overall = 1000 x weighted geometric mean of the component ratios, only when every input is "
-                      "present (otherwise: component scores only, computed from the inputs that ran).");
-    ImGui::BulletText("GPU inputs take the better of Vulkan and D3D12, so the API choice doesn't matter. Storage uses C: "
-                      "when it was tested, else the first tested drive.");
+    about_group_begin("Formula");
+    bullet("Each input is a ratio to the reference machine: value / reference, or reference / value when lower "
+           "is better (latency, frame time). > 1 means faster.");
+    bullet("Component = 1000 x weighted geometric mean of its input ratios. The reference machine scores "
+           "exactly 1000; 2000 = twice as fast on that mix.");
+    bullet("Overall = 1000 x weighted geometric mean of the component ratios, only when every input is "
+           "present (otherwise: component scores only, computed from the inputs that ran).");
+    bullet("GPU inputs take the better of Vulkan and D3D12, so the API choice doesn't matter. Storage uses C: "
+           "when it was tested, else the first tested drive.");
     ImGui::Spacing();
     ImGui::Text("Reference machine (= 1000): %s", g_score.reference_desc);
     ImGui::TextDisabled("Reference run: library/%s.toon.txt (frozen for this version)", g_score.reference);
-    ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("How indicative is it?");
-    ImGui::PopFont();
+    about_group_end();
+    about_group_begin("How indicative is it?");
     ImGui::TextColored(g_pal.warn, "%s", g_score.calibration);
     ImGui::TextUnformatted("Correlation with real-task timings: not measured yet. Until then the score is labelled "
                            "preliminary.");
-    ImGui::Spacing();
-
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("Overall (component weights, %)");
-    ImGui::PopFont();
+    about_group_end();
+    about_group_begin("Overall (component weights, %)");
     if (ImGui::BeginTable("##weights", SC_COUNT, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH)) {
         for (u32 c = 0; c < SC_COUNT; ++c) ImGui::TableSetupColumn(g_score_comp_names[c]);
         ImGui::TableHeadersRow();
@@ -160,10 +169,8 @@ void score_ui_about(bool* request) {
         }
         ImGui::EndTable();
     }
-    ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("Inputs");
-    ImGui::PopFont();
+    about_group_end();
+    about_group_begin("Inputs");
     if (ImGui::BeginTable("##inputs_all", 6, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_BordersInnerH)) {
         ImGui::TableSetupColumn("Component");
         ImGui::TableSetupColumn("Input");
@@ -192,12 +199,10 @@ void score_ui_about(bool* request) {
         }
         ImGui::EndTable();
     }
-    ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted("Validity flags (shown next to the score, never hidden)");
-    ImGui::PopFont();
-    for (u32 i = 0; i < SF_COUNT; ++i) ImGui::BulletText("%s", g_score_flag_desc[i]);
-    ImGui::Spacing();
+    about_group_end();
+    about_group_begin("Validity flags (shown next to the score, never hidden)");
+    for (u32 i = 0; i < SF_COUNT; ++i) bullet(g_score_flag_desc[i]);
+    about_group_end();
     ImGui::TextDisabled("Details: docs/notes/score-results.md in the source repository.");
     (void)fs;
     ImGui::PopTextWrapPos();
