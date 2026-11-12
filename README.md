@@ -73,8 +73,8 @@ in [docs/PLAN.md](docs/PLAN.md) §11.
 - [ ] **Score calibration:** results and real-task timings from other machines, so the weights can be
   fitted and the "preliminary" label dropped; then score v2 with the new CPU and disk-latency tests.
 - [ ] **Stability:** GPU tests on Vulkan, VRAM test on every GPU in one run, saved stability settings.
-- [ ] **PawnIO:** XMP / EXPO profiles (needs one SPD write), shipping the module files, the Hawk Point
-  PM table, Intel memory timings, desktop-board fans and voltages.
+- [ ] **PawnIO:** XMP / EXPO profiles (needs one SPD write), the Hawk Point PM table, Intel memory
+  timings, desktop-board fans and voltages.
 - [ ] **GPU:** memory type and bus width, ray-tracing pipelines (DXR 1.0), present-timing stats on Vulkan.
 - [ ] **App:** keyboard navigation, localization; support for more hardware (processor groups, NUMA,
   ARM64), update check and tray mode wait on decisions in FUTURE.md §0.
