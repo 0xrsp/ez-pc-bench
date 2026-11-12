@@ -581,13 +581,15 @@ void theme_group_begin(const char* title, f32 width, const char* help) {
         ImGui::EndTooltip();
     }
 
-    // The frame's top line runs through the middle of the title; the content starts below the title.
-    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + floorf(line_h * 0.5f)));
+    // The frame's top line runs through the middle of the title; the content starts below the title. Without a
+    // title ("##id") the frame starts at the cursor.
+    const f32 head = title_w > 0.0f ? floorf(line_h * 0.5f) : 0.0f;
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + head));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(fs * 0.8f, fs * 0.6f));
     ImGui::BeginChild(title[0] ? title : "##group", ImVec2(width, 0.0f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ceilf(line_h * 0.5f) - fs * 0.15f);
+    if (head > 0.0f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ceilf(line_h * 0.5f) - fs * 0.15f);
 }
 
 void theme_group_end() {
