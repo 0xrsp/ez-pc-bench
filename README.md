@@ -16,7 +16,8 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   resize, JSON and text parsing, FFT, n-body, ray-box / ray-triangle, CRC32C, xxHash, AES-GCM, ChaCha20,
   int8 / BF16 dot products and π to a million digits. Single-threaded and all threads; every test checks
   its own output. Also a core-to-core latency matrix, thread scaling, a per-core pass, P / E core results
-  on hybrid CPUs, and instruction-latency / branch / code-size probes.
+  on hybrid CPUs, and instruction-latency / branch / code-size probes. AVX2 / AVX-512 tests run only on
+  CPUs that have them (greyed out otherwise); hot loops have AVX2 and baseline versions.
 - [x] **Memory:** read, write, copy and triad bandwidth, an AIDA64-style L1 / L2 / L3 / DRAM grid, latency
   from 4 KiB to 1 GiB, latency under load, read/write mixes, thread scaling and cache bandwidth sweeps.
 - [x] **GPU (Vulkan + D3D12):** both APIs run the same shaders, so their numbers compare directly
@@ -63,7 +64,8 @@ that run the same tests. Website: <https://0xrsp.github.io/ez-pc-bench/>.
   colored by what they measure: load, clock, power, temperature, memory, latency, disk.
 - [x] Color themes: plain Light and Dark (or follow Windows) plus Solarized Dark / Light, Monokai, Dracula,
   Nord, Gruvbox Dark, One Dark, Catppuccin Mocha / Latte and GitHub Light.
-- [x] GUI and CLI with the same tests; settings saved automatically.
+- [x] GUI and CLI with the same tests; settings saved automatically; the GUI updates itself from GitHub
+  releases (checked at start, hash-verified, one click).
 
 ### To do
 
@@ -84,7 +86,8 @@ in [docs/PLAN.md](docs/PLAN.md) §11.
 
 Get `ez-pc-bench.exe` (GUI) and/or `ez-pc-bench-cli.exe` from
 [Releases](https://github.com/0xrsp/ez-pc-bench/releases). You need Windows
-10/11 x64, a CPU with AVX2, and a GPU driver with Vulkan support (it installs `vulkan-1.dll`). The GPU
+10/11 x64 (any CPU with SSE4.2 and POPCNT, i.e. x86-64-v2; AVX2 / AVX-512 only for the tests that use them)
+and a GPU driver with Vulkan support (it installs `vulkan-1.dll`). The GPU
 tests need D3D12 and Vulkan 1.3. The GUI checks for a newer release on startup and shows an **Update
 available** button at the top right when there is one (`--no-update` skips the check).
 
