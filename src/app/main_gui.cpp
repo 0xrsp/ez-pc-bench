@@ -12,6 +12,7 @@
 #include "app/system_ui.h"
 #include "app/theme.h"
 #include "app/ui.h"
+#include "app/updater.h"
 #include "core/adv_sensors.h"
 #include "core/elevation.h"
 #include "core/runner.h"
@@ -414,6 +415,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     runner_init();
     ui_init();
     adv_init();     // PawnIO advanced sensors, after the settings (their on / off switch) are loaded
+    // Update check (app/updater.h): `dist` builds only and never with --dev / --no-update; --check-update forces
+    // it (testing: a local build never matches the release, so it always offers the update).
+    const bool flag_dev = cmdline && (wcsstr(cmdline, L"--dev") || wcsstr(cmdline, L"--no-update"));
+    updater_init((cmdline && wcsstr(cmdline, L"--check-update")) || (EZB_UPDATER && !flag_dev));
 
     s_dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, wnd_proc, 0, 0, inst, app_icon(inst, false), LoadCursorW(nullptr, IDC_ARROW),
@@ -582,5 +587,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
     destroy_device();
     DestroyWindow(hwnd);
     UnregisterClassW(wc.lpszClassName, inst);
+    updater_relaunch();     // after an update: start the new exe now that settings are saved
     return 0;
 }

@@ -14,10 +14,12 @@
       }
     },
     { "name": "debug",   "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+    { "name": "release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
+    { "name": "dist",    "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "EZB_UPDATER": "ON" } }
   ],
   "buildPresets": [
     { "name": "debug",   "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" }
+    { "name": "release", "configurePreset": "release" },
+    { "name": "dist",    "configurePreset": "dist" }
   ]
 }

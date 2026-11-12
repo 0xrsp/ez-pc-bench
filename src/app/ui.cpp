@@ -4,6 +4,7 @@
 #include "app/mem_charts.h"
 #include "app/settings.h"
 #include "app/theme.h"
+#include "app/updater.h"
 #include "core/elevation.h"
 #include "core/history.h"
 #include "core/monitor.h"
@@ -252,13 +253,28 @@ static const ToolButton s_tool_buttons[] = {
                                          "advanced sensors. The run settings presets change are next to Run." },
 };
 
+// Update button (app/updater.h) at the right end of the tool row, only while there is an update.
+static bool s_update_open;
+
+static const char* update_label() {
+    switch (updater_state()) {
+        case UPD_AVAILABLE: return "Update available";
+        case UPD_DOWNLOADING: return "Updating...";
+        case UPD_READY: return "Restarting...";
+        case UPD_FAILED: return "Update failed";
+        default: return nullptr;
+    }
+}
+
 // "System" header with the tool buttons beside it: a 2-column row so the header ends where the buttons start.
 static bool system_header_row() {
     const f32 h = ImGui::GetFrameHeight(), gap = ImGui::GetStyle().ItemSpacing.x * 0.6f;
     const f32 lead = ImGui::GetFontSize() * 2.0f;           // space between the header and the first button
+    const char* update = update_label();
     f32 buttons_w = lead;
     for (u32 i = 0; i < ARRAY_COUNT(s_tool_buttons); ++i)
         buttons_w += theme_icon_button_width(s_tool_buttons[i].label, h) + (i ? gap : 0.0f);
+    if (update) buttons_w += gap + theme_icon_button_width(update, h);
     bool open = false;
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0.0f, 0.0f));
     if (ImGui::BeginTable("##system_row", 2)) {
@@ -277,6 +293,12 @@ static bool system_header_row() {
             ImGui::PushID((int)b->tool);
             if (theme_icon_button("##tool", b->icon, b->label, h, b->tip)) ui_request_tool(b->tool);
             ImGui::PopID();
+        }
+        if (update) {
+            ImGui::SameLine(0.0f, gap);
+            if (theme_icon_button("##update", ICON_DOWNLOAD, update, h, "A newer ez-pc-bench.exe is published on GitHub.",
+                                  true))
+                s_update_open = true;
         }
         ImGui::EndTable();
     }
@@ -325,6 +347,61 @@ static void draw_sysinfo() {
              s->power.has_battery ? "" : " (no battery)", s->power.scheme_name, power_mode_name(s->power.mode));
     ImGui::Unindent(ImGui::GetStyle().FramePadding.x);
     ImGui::Spacing();
+}
+
+// Release notes and the install button. The new exe replaces this one; the app then shuts down normally
+// (settings saved) and main_gui starts it. Never while a benchmark or stability test runs.
+static void draw_update_dialog() {
+    const UpdateState st = updater_state();
+    const bool busy = runner_is_running() || stab_is_running();
+    if (st == UPD_READY && !busy) s_ui.quit = true;
+    if (s_update_open) {
+        s_update_open = false;
+        ImGui::OpenPopup("Update");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 36.0f, 0.0f));
+    if (!ImGui::BeginPopupModal("Update", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    const UpdateInfo* u = updater_info();
+    ImGui::PushFont(g_fonts.medium, 0.0f);
+    ImGui::TextUnformatted(u->name[0] ? u->name : u->tag);
+    ImGui::PopFont();
+    ImGui::TextDisabled("%s  \xC2\xB7  published %.10s  \xC2\xB7  %.1f MiB", u->tag, u->published, u->size / (f64)MiB);
+    if (u->notes[0]) {
+        ImGui::Spacing();
+        ImGui::BeginChild("##notes", ImVec2(0.0f, ImGui::GetFontSize() * 10.0f), ImGuiChildFlags_Borders);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(u->notes);
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    }
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Downloads the new ez-pc-bench.exe, checks it against the SHA-256 GitHub publishes for it, "
+                        "replaces this exe and restarts. Settings and results stay.");
+    if (st == UPD_DOWNLOADING) {
+        theme_progress(updater_progress(), ImGui::GetFontSize() * 0.35f);
+        ImGui::TextDisabled("Downloading... %.0f%%", updater_progress() * 100.0f);
+    } else if (st == UPD_READY && busy) {
+        ImGui::TextColored(COL_WARN, "Installed. Restarts when the running test finishes.");
+    } else if (st == UPD_FAILED) {
+        ImGui::TextColored(COL_WARN, "%s", updater_error());
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::BeginDisabled(busy || (st != UPD_AVAILABLE && st != UPD_FAILED));
+    if (theme_button_primary(st == UPD_FAILED ? "Retry" : "Update and restart")) updater_install();
+    ImGui::EndDisabled();
+    if (busy) theme_help("Finish or cancel the running test first.");
+    ImGui::SameLine();
+    if (theme_button("Release page") && !strncmp(u->html_url, "https://github.com/", 19))
+        ShellExecuteA(nullptr, "open", u->html_url, nullptr, nullptr, SW_SHOWNORMAL);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(st == UPD_DOWNLOADING);
+    if (theme_button("Later") || (st != UPD_DOWNLOADING && ImGui::IsKeyPressed(ImGuiKey_Escape))) ImGui::CloseCurrentPopup();
+    ImGui::EndDisabled();
+    ImGui::EndPopup();
 }
 
 // ---- toolbar --------------------------------------------------------------------
@@ -1149,6 +1226,7 @@ void ui_draw() {
     draw_toolbar();
     draw_save_dialog();
     draw_confirm_dialog();
+    draw_update_dialog();
     ImGui::Spacing();
 
     // Invisible but draggable column divider: tables cache border colors in BeginTable, so push around it only.

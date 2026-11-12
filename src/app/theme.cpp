@@ -464,6 +464,16 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
             }
             break;
         }
+        case ICON_DOWNLOAD: {   // arrow down onto a tray
+            dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r * 0.35f), col, line);
+            const ImVec2 head[] = { ImVec2(c.x - r * 0.5f, c.y - r * 0.12f), ImVec2(c.x, c.y + r * 0.38f),
+                                    ImVec2(c.x + r * 0.5f, c.y - r * 0.12f) };
+            dl->AddPolyline(head, 3, col, line);
+            const ImVec2 tray[] = { ImVec2(c.x - r, c.y + r * 0.3f), ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y + r),
+                                    ImVec2(c.x + r, c.y + r * 0.3f) };
+            dl->AddPolyline(tray, 4, col, line);
+            break;
+        }
     }
 }
 
@@ -472,15 +482,16 @@ f32 theme_icon_button_width(const char* label, f32 h) {
     return h * 0.42f + h * 0.55f + h * 0.28f + ImGui::CalcTextSize(label).x + h * 0.5f;
 }
 
-bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip) {
+bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip, bool primary) {
     const f32 w = theme_icon_button_width(label, h);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-    const ImVec4 base = g_pal.container_highest;
-    const ImVec4 tint = g_pal.on_surface;
+    const ImVec4 base = primary ? g_pal.primary : g_pal.container_highest;
+    const ImVec4 tint = primary ? g_pal.on_primary : g_pal.on_surface;
     const ImVec4 bg = held ? mix(base, tint, 0.12f) : hovered ? mix(base, tint, 0.08f) : base;
-    const ImU32 bg32 = ImGui::GetColorU32(bg), fg = ImGui::GetColorU32(hovered ? g_pal.on_surface : g_pal.on_surface_variant);
+    const ImU32 bg32 = ImGui::GetColorU32(bg);
+    const ImU32 fg = ImGui::GetColorU32(primary ? g_pal.on_primary : hovered ? g_pal.on_surface : g_pal.on_surface_variant);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg32, h * 0.5f);
     const f32 icon_r = h * 0.275f;

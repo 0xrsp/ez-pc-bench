@@ -627,8 +627,8 @@ were ~130 GB) — use 1 pass and a shorter duration for frequent runs.
 Waiting on the user (2026-11-11):
 - **FUTURE.md §0 hardware scope**: which machines beyond this laptop (Intel hybrid, multi-CCD / X3D,
   > 64 LPs, NUMA, non-AVX2, ARM64), and test hardware or volunteers. §12 hardware generality and ARM64 wait.
-- **§0 network**: may anything else talk to the network (update check, email alerts)? The only network
-  access today is the PawnIO "Download & install" button (user request, click-only, §12 trim).
+- **§0 network**: may anything else talk to the network (email alerts, leaderboard)? Network access today:
+  the PawnIO "Download & install" button (click-only) and the startup update check (`dist` builds, §12).
 - **§0 resident mode**: may the GUI stay resident (tray, health / temperature alerts)?
 - **PawnIO SPD page select**: allow one SMBus write to the SPD hub's page register (MR11 on SPD5118, SPA0 /
   SPA1 on DDR4), restored afterwards, to read XMP / EXPO and the DDR5 manufacturing data? (HWiNFO, CPU-Z,
@@ -643,6 +643,19 @@ Waiting on the user (2026-11-11):
 
 ## 12. Decision log
 
+- 2026-11-12 (auto-update, user request): the GUI checks for updates on startup.
+  - Background thread, `GET https://api.github.com/repos/0xrsp/ez-pc-bench/releases/latest` (WinHTTP, system
+    proxy). Parsed with `core/json.*` (flat node array, no allocations). The `ez-pc-bench.exe` asset's `digest`
+    (`sha256:...`, GitHub fills it for uploads since 2025) is compared with the running exe's SHA-256; older
+    assets without one are downloaded and hashed. Different hash = update; any failure (offline, rate limit,
+    no asset) = no button, nothing else changes.
+  - "Update available" is the last button of the top-right tool row; it opens the release notes and "Update and
+    restart" (disabled while a benchmark or stability test runs). Install: download (size, `MZ` and SHA-256
+    checked), write `<exe>.new`, rename the running exe to `<exe>.old`, move `.new` into place (rolled back on
+    failure), shut down normally (settings saved), start the new exe (`--no-elevate` if not elevated). Every
+    start deletes leftover `.old` / `.new`.
+  - Only in `dist` builds (CMake option `EZB_UPDATER`, preset `dist` = release + updater): dev builds never
+    match the published exe. `--dev` / `--no-update` skip it; `--check-update` forces it for testing.
 - 2026-11-11 (trim): features cut, UI reworked (details in [notes/](notes/), marked "Removed 2026-11-11 (trim)"):
   - Disk health: History and "Thresholds & features" tabs gone (health samples, plots, endurance projection,
     per-drive thresholds, AAM / APM). Fixed CrystalDiskInfo-style Caution limits: any reallocated / pending /

@@ -17,7 +17,10 @@ keep it updated (decision log, open questions, measured facts).
 ## Releases
 
 - GitHub releases (`gh release create vX.Y.Z`): upload `ez-pc-bench.exe` and `ez-pc-bench-cli.exe` as
-  separate assets so each can be downloaded on its own. No zip. Build fresh from the tagged commit first.
+  separate assets so each can be downloaded on its own. No zip. Build fresh from the tagged commit first,
+  with the `dist` preset (`cmake --preset dist`, `cmake --build --preset dist -- -j 6`): release + the GUI's
+  auto-update check (`EZB_UPDATER`, src/app/updater.h). The GUI compares its own SHA-256 with the
+  `ez-pc-bench.exe` asset of `releases/latest`, so that asset must be exactly the exe from `build/dist`.
 
 ## Website
 
@@ -68,7 +71,9 @@ keep it updated (decision log, open questions, measured facts).
   `sensors`; `bench` = Benchmark settings) (opens that tool window), `--tab results|charts|score|ranking`, `--charts`
   (= `--tab charts`), `--sustain <minutes>`, `--gpu-present offscreen|windowed|fullscreen`, `--overlay` (sensor
   overlay), `--sensor-filter <text>` (Sensors search box), `--open-gpu-combo` (GPU combo popup open, for screenshots),
-  `--stability-run <ids> [seconds]` (`--dev --inject` adds the error self-test). Session only, never saved to the ini.
+  `--stability-run <ids> [seconds]` (`--dev --inject` adds the error self-test), `--check-update` (run the update
+  check in a non-`dist` build: always offers the latest release), `--no-update` (skip it in a `dist` build;
+  `--dev` skips it too). Session only, never saved to the ini.
   Keep the build warning-free.
 - Don't rewrite source files through PowerShell `Get-Content`/`Set-Content`: it reads UTF-8 as ANSI and garbles
   non-ASCII characters. Use the Edit tool or `[IO.File]::ReadAllText/WriteAllText`, and prefer `\xC2\xB5`-style

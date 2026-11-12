@@ -77,7 +77,7 @@ in [docs/PLAN.md](docs/PLAN.md) §11.
   PM table, Intel memory timings, desktop-board fans and voltages.
 - [ ] **GPU:** memory type and bus width, ray-tracing pipelines (DXR 1.0), present-timing stats on Vulkan.
 - [ ] **App:** keyboard navigation, localization; support for more hardware (processor groups, NUMA,
-  ARM64), update check and tray mode wait on decisions in FUTURE.md §0.
+  ARM64), tray mode waits on a decision in FUTURE.md §0.
 - [ ] **Later:** a Cinebench-style CPU render and a Heaven-style heavy GPU scene.
 
 ## Download
@@ -85,7 +85,8 @@ in [docs/PLAN.md](docs/PLAN.md) §11.
 Get `ez-pc-bench.exe` (GUI) and/or `ez-pc-bench-cli.exe` from
 [Releases](https://github.com/0xrsp/ez-pc-bench/releases). You need Windows
 10/11 x64, a CPU with AVX2, and a GPU driver with Vulkan support (it installs `vulkan-1.dll`). The GPU
-tests need D3D12 and Vulkan 1.3.
+tests need D3D12 and Vulkan 1.3. The GUI checks for a newer release on startup and shows an **Update
+available** button at the top right when there is one (`--no-update` skips the check).
 
 ## Build
 

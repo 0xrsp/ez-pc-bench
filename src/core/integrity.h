@@ -13,5 +13,6 @@ bool integrity_append(const wchar_t* path);     // after the file is written and
 enum IntegrityState : i8 { INTEGRITY_NONE = -1, INTEGRITY_EDITED = 0, INTEGRITY_OK = 1 };
 IntegrityState integrity_check(const char* data, u32 size);
 const char* integrity_name(IntegrityState s);   // "not signed", "edited", "intact"
-// SHA-256 of the running exe as 64 hex digits (computed once).
+// SHA-256 of the running exe as 64 hex digits (computed once; call from the UI thread first).
 const char* integrity_exe_sha256();
+void integrity_sha256(const void* data, u64 size, char hex[65]);   // "" on failure
