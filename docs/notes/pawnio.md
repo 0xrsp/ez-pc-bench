@@ -54,7 +54,8 @@ Verdict: very likely compatible, **untested here** (this PC: memory integrity of
   declared "solved" 2026-05-24.
 - **Vanguard, EasyAntiCheat, BattlEye, EA Javelin**: no reports of blocks found (the FanControl discussion asked;
   no answers).
-- Consequence for us: opt-in only, never installed by us. Our Settings switch closes our handles, but the
+- Consequence for us: opt-in only, never installed without the user's click (Settings > Download & install runs
+  the official installer, which asks to install). Our Settings switch closes our handles, but the
   driver stays loaded as long as PawnIO is installed (PnP device, `SERVICE_DEMAND_START` started by its device),
   so a user who must satisfy an anti-cheat has to uninstall PawnIO, not just switch us off. The Settings help
   text says the driver is the user's to install.
@@ -173,7 +174,7 @@ Hooks in shared files (small, additive):
 | Item | State |
 |---|---|
 | §8 P1 licenses / HVCI / anti-cheat | **Done** (this file). |
-| §8 P1 integration (detect, Settings row with installer link, plain DeviceIoControl, works without it) | **Done**, untested against the driver. Link is text + "Copy link" (no network calls). |
+| §8 P1 integration (detect, Settings row with installer link, plain DeviceIoControl, works without it) | **Done**, untested against the driver. The row's "Copy link" became a "Download & install" button (2026-11-11, docs/notes/ui-settings.md §4): official installer from the PawnIO.Setup latest release, signature checked (namazso), started on that click only; the app's only network access. |
 | §8 P1 AMD Zen: Tctl/Tdie, per-CCD, package power (RAPL), effective clock (APERF/MPERF), SVI telemetry | **Done (code)**, untested. SVI2 only for Zen 1-3; Zen 4+ is SVI3 (not decoded): voltage comes from the PM table where mapped. |
 | §8 P1 AMD PM table per-core temps / clocks | **Partial**: framework + layouts for Raven, Renoir, Cezanne, Strix Point / Halo, Matisse, Vermeer, Raphael, Granite Ridge. **Phoenix / Hawk Point (this PC, 0x4C000x): only Tctl + PPT are publicly mapped**; `--adv-report` dumps the table to map per-core fields once PawnIO is on this PC. |
 | §8 P1 Intel: core / package temps, RAPL, effective clock, limit reasons | **Done (code)**, untested. Limit reasons from the THERM_STATUS "status" bits (current state); the perf-limit-reason MSRs (0x64F / 0x6B0 / 0x6B1) aren't on IntelMSR's read allow-list. |
