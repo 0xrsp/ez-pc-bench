@@ -11,7 +11,6 @@
 #include "core/runner.h"
 #include "core/sysinfo.h"
 #include "core/timer.h"
-#include "core/toon.h"
 #include <windows.h>
 #include <pdh.h>
 #include <pdhmsg.h>
@@ -307,7 +306,22 @@ static void publish_cpu(const Reading* rd) {
     }
 }
 
-static void cpu_channels() {
+// EMI rails: the CPU ones (package, cores) go in the CPU group, the rest (graphics, DRAM, platform) in Power.
+static void emi_channels(const EmiReader* emi, bool cpu) {
+    char id[40], name[96], label[24];
+    for (u32 i = 0; i < emi->channel_count; ++i) {
+        const EmiChannel* e = &emi->ch[i];
+        if (e->cpu != cpu) continue;
+        snprintf(id, sizeof(id), "emi.%s", e->id);
+        snprintf(name, sizeof(name), "%s power", e->name);
+        const bool core = e->order >= 100 && e->order < 900;
+        if (core) snprintf(label, sizeof(label), "Core %u", e->order - 100);
+        else snprintf(label, sizeof(label), "%s", e->name);
+        ch_put(id, name, label, "W", cpu ? CHG_CPU : CHG_POWER, core ? CHF_DETAIL : 0, 2, e->watts);
+    }
+}
+
+static void cpu_channels(const EmiReader* emi) {
     const CpuLive* c = &s_cpu;
     const bool ok = c->lps > 0;
     ch_put("cpu.load", "CPU load", "CPU load", "%", CHG_CPU, 0, 1, ok ? c->avg_util : NAN);
@@ -315,6 +329,7 @@ static void cpu_channels() {
     f32 hi = NAN;
     for (u32 i = 0; i < c->lps; ++i) hi = !isnan(c->mhz[i]) && !(c->mhz[i] <= hi) ? c->mhz[i] : hi;
     ch_put("cpu.max_mhz", "CPU clock, fastest core", "CPU max clock", "MHz", CHG_CPU, 0, 0, hi);
+    emi_channels(emi, true);
     char id[40], name[96];
     // Before the first full sample the LP count comes from sysinfo, so the channel order is the same every run.
     const u32 lps = ok ? c->lps : g_sys.cpu.threads < HW_MAX_LPS ? g_sys.cpu.threads : HW_MAX_LPS;
@@ -377,15 +392,7 @@ static void power_channels(const Sources* src) {
             ch_put(id, name, label, DEG_C, CHG_TEMP, 0, 1, s->temp_c);
         }
     }
-    for (u32 i = 0; i < src->emi.channel_count; ++i) {
-        const EmiChannel* e = &src->emi.ch[i];
-        snprintf(id, sizeof(id), "emi.%s", e->id);
-        snprintf(name, sizeof(name), "%s power", e->name);
-        const bool core = e->order >= 100 && e->order < 900;
-        if (core) snprintf(label, sizeof(label), "Core %u", e->order - 100);
-        else snprintf(label, sizeof(label), "%s", e->name);
-        ch_put(id, name, label, "W", CHG_POWER, core ? CHF_DETAIL : 0, 2, e->watts);
-    }
+    emi_channels(&src->emi, false);
 }
 
 // ---- publishing (s_lock held) -------------------------------------------------------------------------
@@ -470,6 +477,8 @@ static void publish_power(const Sources* src) {
     for (u32 i = 0; i < p->rail_count; ++i) {
         memcpy(p->rail_name[i], src->emi.ch[i].name, sizeof(p->rail_name[i]));
         memcpy(p->rail_raw[i], src->emi.ch[i].raw, sizeof(p->rail_raw[i]));
+        p->rail_cpu[i] = src->emi.ch[i].cpu;
+        snprintf(p->rail_id[i], sizeof(p->rail_id[i]), "emi.%s", src->emi.ch[i].id);
         p->rail_w[i] = src->emi.ch[i].watts;
     }
     memcpy(p->emi_status, src->emi.status, sizeof(p->emi_status));
@@ -486,7 +495,7 @@ static void hist_push(f32* hist, u32* count, f32 v) {
 static void publish(const Sources* src, const Reading* rd) {
     s_cursor = 0;
     publish_cpu(rd);
-    cpu_channels();
+    cpu_channels(&src->emi);
     for (u32 i = 0; i < s_gpu_count; ++i) {
         GpuLive* g = &s_gpus[i];
         g->r = rd->gpu[i];
@@ -515,17 +524,15 @@ static void publish(const Sources* src, const Reading* rd) {
 
 struct LogState {
     bool active, header_done;
-    SensorLogFormat format;
     u32 interval_ms;
     char patterns[512];
-    wchar_t path[MAX_PATH], tmp_path[MAX_PATH + 16];
-    FILE* f;                    // CSV file, or the TOON rows temp file
+    wchar_t path[MAX_PATH];
+    FILE* f;
     u32 cols[CH_MAX], ncols;
     u32 rows;
     f64 t0, next_row, last_row;
     f32 slowest_ms;             // slowest sample while logging, and where its time went
     char slowest[128];
-    char stamp[32];             // local time of the first row (ISO 8601)
     char error[160];
 };
 static LogState s_log;
@@ -552,11 +559,6 @@ bool sensors_channel_matches(const SensorChannel* c, const char* patterns) {
     return false;
 }
 
-static f64 round_to(f64 v, u32 decimals) {
-    const f64 m = pow(10.0, (f64)decimals);
-    return round(v * m) / m;
-}
-
 static void csv_field(FILE* f, const char* s) {
     if (!strpbrk(s, ",\"\n")) { fputs(s, f); return; }
     fputc('"', f);
@@ -573,7 +575,6 @@ static void log_header() {
     for (u32 i = 0; i < s_ch_count; ++i)
         if (sensors_channel_matches(&s_ch[i], s_log.patterns)) s_log.cols[s_log.ncols++] = i;
     s_log.header_done = true;
-    if (s_log.format != SLOG_CSV) return;
     fputs("Time,Seconds", s_log.f);
     for (u32 k = 0; k < s_log.ncols; ++k) {
         const SensorChannel* c = &s_ch[s_log.cols[k]];
@@ -604,29 +605,17 @@ static void log_tick(const Reading* rd) {
         if (!s_log.rows) {
             s_log.t0 = now;
             s_log.next_row = now;
-            snprintf(s_log.stamp, sizeof(s_log.stamp), "%04u-%02u-%02uT%02u:%02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour,
-                     st.wMinute, st.wSecond);
         }
         if (!s_log.header_done) log_header();
         const f64 t = now - s_log.t0;
-        if (s_log.format == SLOG_CSV) {
-            fprintf(s_log.f, "%04u-%02u-%02u %02u:%02u:%02u.%03u,%.3f", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
-                    st.wSecond, st.wMilliseconds, t);
-            for (u32 k = 0; k < s_log.ncols; ++k) {
-                const SensorChannel* c = &s_ch[s_log.cols[k]];
-                if (c->valid) fprintf(s_log.f, ",%.*f", c->decimals, c->value);
-                else fputc(',', s_log.f);
-            }
-            fputc('\n', s_log.f);
-        } else {
-            ToonRow row = toon_row(s_log.f, 1);
-            toon_cell_num(&row, round_to(t, 3));
-            for (u32 k = 0; k < s_log.ncols; ++k) {
-                const SensorChannel* c = &s_ch[s_log.cols[k]];
-                toon_cell_num(&row, c->valid ? round_to(c->value, c->decimals) : NAN);
-            }
-            toon_row_end(&row);
+        fprintf(s_log.f, "%04u-%02u-%02u %02u:%02u:%02u.%03u,%.3f", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+                st.wSecond, st.wMilliseconds, t);
+        for (u32 k = 0; k < s_log.ncols; ++k) {
+            const SensorChannel* c = &s_ch[s_log.cols[k]];
+            if (c->valid) fprintf(s_log.f, ",%.*f", c->decimals, c->value);
+            else fputc(',', s_log.f);
         }
+        fputc('\n', s_log.f);
         if (fflush(s_log.f) != 0 && !s_log.error[0]) snprintf(s_log.error, sizeof(s_log.error), "Writing the log failed (disk full?).");
         ++s_log.rows;
         s_log.last_row = now;
@@ -636,65 +625,14 @@ static void log_tick(const Reading* rd) {
     ReleaseSRWLockExclusive(&s_log_lock);
 }
 
-// TOON: header + channels table + samples header, then the rows from the temp file. s_log_lock held.
-static void log_finish_toon() {
-    if (s_log.f) fclose(s_log.f);
-    s_log.f = nullptr;
-    FILE* out = _wfopen(s_log.path, L"wb");
-    FILE* in = _wfopen(s_log.tmp_path, L"rb");
-    if (!out) {
-        snprintf(s_log.error, sizeof(s_log.error), "Can't write the log file; the rows are kept in the .rows.tmp file.");
-        if (in) fclose(in);
-        return;
-    }
-    AcquireSRWLockShared(&s_lock);
-    if (!s_log.header_done) log_header();
-    toon_str(out, 0, "app", "ez-pc-bench");
-    toon_num(out, 0, "format", 1);
-    toon_str(out, 0, "kind", "sensor-log");
-    toon_str(out, 0, "timestamp", s_log.stamp[0] ? s_log.stamp : "");
-    toon_num(out, 0, "interval_ms", s_log.interval_ms);
-    toon_str(out, 0, "cpu", g_sys.cpu.brand);
-    toon_table(out, 0, "channels", s_log.ncols, "id,name,unit");
-    static char fields[CH_MAX * 42 + 8];
-    u32 n = snprintf(fields, sizeof(fields), "t");
-    for (u32 k = 0; k < s_log.ncols; ++k) {
-        const SensorChannel* c = &s_ch[s_log.cols[k]];
-        ToonRow row = toon_row(out, 1);
-        toon_cell_str(&row, c->id);
-        toon_cell_str(&row, c->name);
-        toon_cell_str(&row, c->unit);
-        toon_row_end(&row);
-        n += snprintf(fields + n, sizeof(fields) - n, ",%s", c->id);
-    }
-    ReleaseSRWLockShared(&s_lock);
-    toon_table(out, 0, "samples", s_log.rows, fields);
-    if (in) {
-        static char buf[65536];
-        size_t got;
-        while ((got = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, got, out);
-        fclose(in);
-    }
-    const bool ok = fclose(out) == 0;
-    if (ok) DeleteFileW(s_log.tmp_path);
-    else snprintf(s_log.error, sizeof(s_log.error), "Writing the log failed; the rows are kept in the .rows.tmp file.");
-}
-
-bool sensors_log_start(const wchar_t* path, SensorLogFormat format, u32 interval_ms, const char* patterns, char* err,
-                       u32 err_size) {
+bool sensors_log_start(const wchar_t* path, u32 interval_ms, const char* patterns, char* err, u32 err_size) {
     sensors_log_stop();
     LogState l = {};
-    l.format = format;
     l.interval_ms = interval_ms < 100 ? 100 : interval_ms;
     snprintf(l.patterns, sizeof(l.patterns), "%s", patterns ? patterns : "");
     wcsncpy_s(l.path, path, _TRUNCATE);
-    if (format == SLOG_TOON) {
-        swprintf(l.tmp_path, ARRAY_COUNT(l.tmp_path), L"%s.rows.tmp", path);
-        l.f = _wfopen(l.tmp_path, L"wb");
-    } else {
-        l.f = _wfopen(path, L"wb");
-        if (l.f) fputs("\xEF\xBB\xBF", l.f);     // UTF-8 BOM: Excel otherwise reads the file as ANSI
-    }
+    l.f = _wfopen(path, L"wb");
+    if (l.f) fputs("\xEF\xBB\xBF", l.f);     // UTF-8 BOM: Excel otherwise reads the file as ANSI
     if (!l.f) {
         snprintf(err, err_size, "Can't create the log file (errno %d).", errno);
         return false;
@@ -717,8 +655,8 @@ void sensors_log_stop() {
     AcquireSRWLockExclusive(&s_log_lock);
     const bool was = s_log.active;
     if (was) {
-        if (s_log.format == SLOG_TOON) log_finish_toon();
-        else if (s_log.f) fclose(s_log.f);
+        if (s_log.f && fclose(s_log.f) != 0 && !s_log.error[0])
+            snprintf(s_log.error, sizeof(s_log.error), "Writing the log failed (disk full?).");
         s_log.f = nullptr;
         s_log.active = false;
     }
@@ -735,7 +673,6 @@ void sensors_log_status(SensorLogStatus* out) {
     memset(out, 0, sizeof(*out));
     AcquireSRWLockShared(&s_log_lock);
     out->active = s_log.active;
-    out->format = s_log.format;
     out->rows = s_log.rows;
     out->columns = s_log.ncols;
     out->interval_ms = s_log.interval_ms;

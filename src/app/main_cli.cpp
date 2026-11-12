@@ -57,8 +57,8 @@ static void print_usage() {
         "  --no-history           Don't save this run to results\\history\\ next to the exe\n"
         "  --write-through        Disk writes with FILE_FLAG_WRITE_THROUGH\n"
         "  --health [--hide-serial]  Print the disk health report of every drive and exit\n"
-        "  --log-sensors <file>   Log sensors (clocks, load, temperatures, battery, power rails) to a .csv or\n"
-        "                         .toon.txt file; alone for --seconds, with --run / --preset during the run\n"
+        "  --log-sensors <file>   Log sensors (clocks, load, temperatures, battery, power rails) to a CSV file\n"
+        "                         (any name); alone for --seconds, with --run / --preset during the run\n"
         "  --interval <ms>        Sensor log interval (default 1000, minimum 100)\n"
         "  --seconds <n>          Length of a sensor log without a run (default 60; Ctrl+C stops early)\n"
         "                         or of a frame capture (default 20)\n"
@@ -341,11 +341,10 @@ static int list_sensors() {
     return 0;
 }
 
+// Always CSV, under the name as given (also when it doesn't end in .csv).
 static bool start_sensor_log(const wchar_t* path, u32 interval_ms, const char* patterns) {
-    const size_t len = wcslen(path);
-    const bool csv = len >= 4 && !_wcsicmp(path + len - 4, L".csv");
     char err[160];
-    if (!sensors_log_start(path, csv ? SLOG_CSV : SLOG_TOON, interval_ms, patterns, err, sizeof(err))) {
+    if (!sensors_log_start(path, interval_ms, patterns, err, sizeof(err))) {
         fwprintf(stderr, L"Cannot log to %s: ", path);
         fprintf(stderr, "%s\n", err);
         return false;

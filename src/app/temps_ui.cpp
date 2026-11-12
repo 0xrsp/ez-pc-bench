@@ -1,11 +1,12 @@
 // Sensors window, three tabs:
-//   Overview          live CPU clock / load per logical processor, GPU clocks / load / VRAM / power / PCIe link,
-//                     battery and power rails, then temperatures in one table per group (CPU / system, GPUs,
-//                     drives) with min / max since the window opened and a two-minute sparkline.
+//   Overview          live CPU clock / load per logical processor and CPU power rails, GPU clocks / load / VRAM /
+//                     power / PCIe link, battery and other power rails, then temperatures in one table per group
+//                     (CPU / system, GPUs, drives) with min / max since the window opened and a two-minute sparkline.
 //   Sensors           every channel (core/sensors.h) with now / min / max / avg (resettable) and a graph;
 //                     pick channels for the log and the "Picked" view, tick channels for the overlay.
-//   Log and overlay   sensor log to CSV / TOON at a chosen interval; the on-screen overlay.
-// Picks, overlay channels and log / overlay options persist in settings.ini [sensors].
+//   Log and overlay   sensor log to CSV at a chosen interval; the on-screen overlay.
+// A search box filters the first two tabs (not saved). Picks, overlay channels and log / overlay options
+// persist in settings.ini [sensors].
 #include "app/temps_ui.h"
 #include "app/adv_ui.h"
 #include "app/overlay.h"
@@ -31,12 +32,11 @@ struct Prefs {
     char picked[4096];          // comma-separated channel ids
     char osd[2048];             // overlay channel ids, in display order
     u32 interval;               // index into INTERVALS_MS
-    SensorLogFormat format;
     OverlayCorner corner;
     u32 tab;
     bool picked_only, detail;
 };
-static Prefs s_prefs = { "", "", 2, SLOG_CSV, OVL_TOP_RIGHT, 0, false, false };
+static Prefs s_prefs = { "", "", 2, OVL_TOP_RIGHT, 0, false, false };
 static bool s_prefs_loaded;
 
 static void pref_read_str(const wchar_t* ini, const wchar_t* key, char* out, u32 size) {
@@ -58,7 +58,6 @@ static void prefs_load() {
     pref_read_str(ini, L"picked", s_prefs.picked, sizeof(s_prefs.picked));
     pref_read_str(ini, L"overlay", s_prefs.osd, sizeof(s_prefs.osd));
     s_prefs.interval = pref_read_u32(ini, L"log_interval", 2, ARRAY_COUNT(INTERVALS_MS) - 1);
-    s_prefs.format = (SensorLogFormat)pref_read_u32(ini, L"log_format", SLOG_CSV, SLOG_TOON);
     s_prefs.corner = (OverlayCorner)pref_read_u32(ini, L"overlay_corner", OVL_TOP_RIGHT, OVL_CORNER_COUNT - 1);
     s_prefs.tab = pref_read_u32(ini, L"tab", 0, 2);
     s_prefs.picked_only = pref_read_u32(ini, L"picked_only", 0, 1) != 0;
@@ -73,8 +72,9 @@ static void prefs_save() {
     WritePrivateProfileStringW(L"sensors", L"picked", w, ini);
     MultiByteToWideChar(CP_UTF8, 0, s_prefs.osd, -1, w, ARRAY_COUNT(w));
     WritePrivateProfileStringW(L"sensors", L"overlay", w, ini);
+    WritePrivateProfileStringW(L"sensors", L"log_format", nullptr, ini);    // gone (the log is always CSV)
     const struct { const wchar_t* key; u32 v; } nums[] = {
-        { L"log_interval", s_prefs.interval }, { L"log_format", s_prefs.format }, { L"overlay_corner", s_prefs.corner },
+        { L"log_interval", s_prefs.interval }, { L"overlay_corner", s_prefs.corner },
         { L"tab", s_prefs.tab }, { L"picked_only", s_prefs.picked_only }, { L"per_core", s_prefs.detail },
     };
     for (u32 i = 0; i < ARRAY_COUNT(nums); ++i) {
@@ -120,6 +120,72 @@ void temps_ui_show_overlay() {
 static CpuLive s_cpu;
 static GpuLive s_gpus[8];
 static PowerLive s_power;
+static SensorChannel s_ch[CH_MAX];
+static u32 s_ch_count;
+
+// ---- search filter (Overview and Sensors tabs; not saved) ---------------------------------------------------
+
+static char s_filter[128];
+
+void temps_ui_set_filter(const wchar_t* text) {
+    WideCharToMultiByte(CP_UTF8, 0, text, -1, s_filter, sizeof(s_filter), nullptr, nullptr);
+}
+
+static bool filtering() {
+    for (const char* p = s_filter; *p; ++p)
+        if (*p != ' ') return true;
+    return false;
+}
+
+static bool has_text(const char* s, const char* word, size_t n) {     // case-insensitive substring
+    for (; *s; ++s)
+        if (!_strnicmp(s, word, n)) return true;
+    return false;
+}
+
+// True when every space-separated word of the filter is in one of `texts` (empty filter: always true).
+static bool filter_hit(const char* const* texts, u32 count) {
+    for (const char* p = s_filter; *p;) {
+        while (*p == ' ') ++p;
+        const char* e = p;
+        while (*e && *e != ' ') ++e;
+        bool found = e == p;
+        for (u32 i = 0; i < count && !found; ++i) found = texts[i] && has_text(texts[i], p, (size_t)(e - p));
+        if (!found) return false;
+        p = e;
+    }
+    return true;
+}
+
+// A channel matches on its name, id or group name ("CPU", "Graphics", "Temperatures", "Power").
+static bool channel_hit(const SensorChannel* c) {
+    const char* t[] = { c->name, c->id, g_channel_group_names[c->group] };
+    return filter_hit(t, ARRAY_COUNT(t));
+}
+
+static const SensorChannel* channel_by_id(const char* id) {
+    for (u32 i = 0; i < s_ch_count; ++i)
+        if (!strcmp(s_ch[i].id, id)) return &s_ch[i];
+    return nullptr;
+}
+
+static bool id_hit(const char* id) {
+    if (!filtering()) return true;
+    const SensorChannel* c = channel_by_id(id);
+    return c && channel_hit(c);
+}
+
+static void draw_filter() {
+    const f32 fs = ImGui::GetFontSize();
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_F)) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(fs * 13.0f);
+    ImGui::InputTextWithHint("##filter", "Search sensors", s_filter, sizeof(s_filter), ImGuiInputTextFlags_EscapeClearsAll);
+    theme_help("Shows only the sensors whose name or id contains every word typed (Ctrl+F; Esc clears).");
+    if (!s_filter[0]) return;
+    ImGui::SameLine(0.0f, 4.0f);
+    if (theme_tab("\xC3\x97##clear", false)) s_filter[0] = 0;
+    theme_help("Clear the search.");
+}
 
 static void title(const char* t) {
     ImGui::Spacing();
@@ -167,52 +233,122 @@ static void spark(const f32* v, u32 n, ImVec2 size, bool pct) {
         ImGui::SetTooltip("Range shown: %.1f \xE2\x80\x93 %.1f", lo, hi);
 }
 
-// ---- Overview: live clocks and load ---------------------------------------------------------------------
+// ---- Overview: live clocks, load and CPU power ----------------------------------------------------------
+// Each draw_* returns whether it drew anything (with a search active, sections without a match are skipped).
 
-static void draw_cpu_live() {
+static const char* const RAILS_HELP = "Energy Metering Interface: power rails the platform exposes to Windows (here "
+                                      "RAPL-style energy counters). Averaged over the last second.";
+
+static bool core_rail(u32 i) { return !strncmp(s_power.rail_name[i], "CPU core ", 9); }
+
+static void rail_text(u32 i) {
+    theme_push_numbers();
+    if (isnan(s_power.rail_w[i])) ImGui::Text("%s \xE2\x80\x94", s_power.rail_name[i]);
+    else ImGui::Text("%s %.1f W", s_power.rail_name[i], s_power.rail_w[i]);
+    ImGui::PopFont();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Energy meter channel \"%s\" (%s)", s_power.rail_raw[i], s_power.rail_id[i]);
+}
+
+// Spacing between items on one line; the first item starts the line.
+static void next_item(bool* first) {
+    if (!*first) ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+    *first = false;
+}
+
+static bool lp_hit(u32 i) {
+    char a[16], b[16];
+    snprintf(a, sizeof(a), "lp%u.mhz", i);
+    snprintf(b, sizeof(b), "lp%u.load", i);
+    return id_hit(a) || id_hit(b);
+}
+
+// Per-core power rails in a grid: "Core 3  2.15 W".
+static void draw_core_rails() {
+    if (!ImGui::BeginTable("##rails", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) return;
+    for (u32 i = 0; i < s_power.rail_count; ++i) {
+        if (!s_power.rail_cpu[i] || !core_rail(i) || !id_hit(s_power.rail_id[i])) continue;
+        ImGui::TableNextColumn();
+        theme_push_numbers();
+        ImGui::TextDisabled("Core %s", s_power.rail_name[i] + 9);
+        ImGui::SameLine();
+        if (isnan(s_power.rail_w[i])) dash();
+        else ImGui::Text("%.2f W", s_power.rail_w[i]);
+        ImGui::PopFont();
+    }
+    ImGui::EndTable();
+}
+
+static bool draw_cpu_live() {
     const CpuLive* c = &s_cpu;
-    title("CPU clock and load");
+    const bool summary = id_hit("cpu.load") || id_hit("cpu.busy_mhz") || id_hit("cpu.max_mhz");
+    u32 lps = 0, rails = 0, cores = 0, all_rails = 0;
+    for (u32 i = 0; i < c->lps; ++i) lps += lp_hit(i);
+    for (u32 i = 0; i < s_power.rail_count; ++i) {
+        if (!s_power.rail_cpu[i]) continue;
+        ++all_rails;
+        if (id_hit(s_power.rail_id[i])) ++(core_rail(i) ? cores : rails);
+    }
+    if (!summary && !lps && !rails && !cores) return false;
+    title(all_rails ? "CPU clock, load and power" : "CPU clock and load");
     if (!c->lps) {
         ImGui::TextDisabled("Reading\xE2\x80\xA6");
-        return;
+        return true;
     }
-    theme_push_numbers();
-    ImGui::Text("Load %.0f%%", c->avg_util);
-    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
-    if (!isnan(c->busy_mhz)) ImGui::Text("Busy cores %.2f GHz", c->busy_mhz / 1000.0f);
-    else ImGui::TextDisabled("No core busy");
-    ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
-    if (!isnan(c->max_mhz)) ImGui::TextDisabled("Highest seen %.2f GHz", c->max_mhz / 1000.0f);
-    ImGui::PopFont();
-    theme_help("Effective clock per logical processor (Windows' APERF/MPERF-based \"% Processor Performance\" x the "
-               "nominal clock) and its load over the last second. Idle cores report parked clocks; \"Busy cores\" "
-               "averages only the ones at least half busy. Under full load these readings can lag by a second.");
+    bool first = true;
+    if (summary) {
+        next_item(&first);
+        theme_push_numbers();
+        ImGui::Text("Load %.0f%%", c->avg_util);
+        ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+        if (!isnan(c->busy_mhz)) ImGui::Text("Busy cores %.2f GHz", c->busy_mhz / 1000.0f);
+        else ImGui::TextDisabled("No core busy");
+        ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+        if (!isnan(c->max_mhz)) ImGui::TextDisabled("Highest seen %.2f GHz", c->max_mhz / 1000.0f);
+        ImGui::PopFont();
+        theme_help("Effective clock per logical processor (Windows' APERF/MPERF-based \"% Processor Performance\" x the "
+                   "nominal clock) and its load over the last second. Idle cores report parked clocks; \"Busy cores\" "
+                   "averages only the ones at least half busy. Under full load these readings can lag by a second.");
+    }
+    for (u32 i = 0; i < s_power.rail_count; ++i) {      // package / all-cores rails on the same line
+        if (!s_power.rail_cpu[i] || core_rail(i) || !id_hit(s_power.rail_id[i])) continue;
+        next_item(&first);
+        rail_text(i);
+    }
+    if (rails) theme_help(RAILS_HELP);
 
     // Grid of logical processors: "12  4.71 GHz" over a thin load bar.
     const u32 cols = 4;
     const ImGuiTableFlags flags = ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX;
-    if (!ImGui::BeginTable("##lps", (int)cols, flags)) return;
-    const f32 bar_h = ImGui::GetFontSize() * 0.25f;
-    for (u32 i = 0; i < c->lps; ++i) {
-        ImGui::TableNextColumn();
-        ImGui::AlignTextToFramePadding();   // same baseline in every column (the bars below set the row's)
-        theme_push_numbers();
-        ImGui::TextDisabled("%2u", i);
-        ImGui::SameLine();
-        ghz_text(c->mhz[i]);
-        ImGui::SameLine();
-        ImGui::TextDisabled("%3.0f%%", c->util[i]);
-        ImGui::PopFont();
-        theme_progress(c->util[i] / 100.0f, bar_h, ImGui::GetContentRegionAvail().x * 0.92f);
+    if (lps && ImGui::BeginTable("##lps", (int)cols, flags)) {
+        const f32 bar_h = ImGui::GetFontSize() * 0.25f;
+        for (u32 i = 0; i < c->lps; ++i) {
+            if (!lp_hit(i)) continue;
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();   // same baseline in every column (the bars below set the row's)
+            theme_push_numbers();
+            ImGui::TextDisabled("%2u", i);
+            ImGui::SameLine();
+            ghz_text(c->mhz[i]);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%3.0f%%", c->util[i]);
+            ImGui::PopFont();
+            theme_progress(c->util[i] / 100.0f, bar_h, ImGui::GetContentRegionAvail().x * 0.92f);
+        }
+        ImGui::EndTable();
     }
-    ImGui::EndTable();
-    if (c->hist_count > 1) {
+    if (cores) {
+        ImGui::TextDisabled("Power per core");
+        theme_help(RAILS_HELP);
+        draw_core_rails();
+    }
+    if (summary && c->hist_count > 1) {
         ImGui::PushStyleColor(ImGuiCol_PlotLines, g_pal.primary);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container);
         ImGui::PlotLines("##cpuload", c->util_hist, (int)c->hist_count, 0, "Load, last 2 minutes", 0.0f, 100.0f,
                          ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 2.5f));
         ImGui::PopStyleColor(2);
     }
+    return true;
 }
 
 static const char* pcie_rate(u8 gen) {
@@ -222,11 +358,23 @@ static const char* pcie_rate(u8 gen) {
     }
 }
 
-static void draw_gpu_live(u32 n) {
-    if (!n) return;
+static bool gpu_hit(u32 i) {
+    static const char* const keys[] = { "core_mhz", "mem_mhz", "load", "vram_mib", "power_pct", "fan_rpm" };
+    char id[40];
+    for (u32 k = 0; k < ARRAY_COUNT(keys); ++k) {
+        snprintf(id, sizeof(id), "gpu%u.%s", i, keys[k]);
+        if (id_hit(id)) return true;
+    }
+    return false;
+}
+
+static bool draw_gpu_live(u32 n) {
+    u32 shown = 0;
+    for (u32 i = 0; i < n; ++i) shown += gpu_hit(i);
+    if (!shown) return false;
     title("Graphics clocks and load");
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable("##gpus", 7, flags)) return;
+    if (!ImGui::BeginTable("##gpus", 7, flags)) return true;
     ImGui::TableSetupColumn("GPU", ImGuiTableColumnFlags_WidthStretch, 2.2f);
     ImGui::TableSetupColumn("Core", ImGuiTableColumnFlags_WidthStretch, 1.1f);
     ImGui::TableSetupColumn("Memory", ImGuiTableColumnFlags_WidthStretch, 1.1f);
@@ -238,6 +386,7 @@ static void draw_gpu_live(u32 n) {
     ImGui::TableHeadersRow();
     ImGui::PopStyleColor();
     for (u32 i = 0; i < n; ++i) {
+        if (!gpu_hit(i)) continue;
         const GpuLive* g = &s_gpus[i];
         const GpuReading* r = &g->r;
         ImGui::PushID((int)i);
@@ -286,9 +435,10 @@ static void draw_gpu_live(u32 n) {
     ImGui::EndTable();
     ImGui::TextDisabled("Clocks the driver doesn't report show \xE2\x80\x94 (e.g. a laptop GPU that is asleep). Power is "
                         "the share of the GPU's power limit.");
+    return true;
 }
 
-// ---- Overview: battery and power rails ------------------------------------------------------------------
+// ---- Overview: battery and the other power rails --------------------------------------------------------
 
 static void draw_battery(const BatteryInfo* b) {
     const BatteryStatus* s = &b->status;
@@ -340,48 +490,47 @@ static void draw_battery(const BatteryInfo* b) {
     }
 }
 
-static void draw_power() {
-    if (!s_power.read) return;
+static bool battery_hit(u32 b) {
+    static const char* const keys[] = { "rate_w", "voltage_v", "charge_pct", "remaining_wh", "temp" };
+    char id[40];
+    for (u32 k = 0; k < ARRAY_COUNT(keys); ++k) {
+        if (s_power.battery_count > 1) snprintf(id, sizeof(id), "bat%u.%s", b, keys[k]);
+        else snprintf(id, sizeof(id), "bat.%s", keys[k]);
+        if (id_hit(id)) return true;
+    }
+    return false;
+}
+
+// Battery, then the rails that aren't the CPU's (graphics, DRAM, platform; the CPU ones are in the CPU section).
+static bool draw_power() {
+    if (!s_power.read) return false;
+    const bool filter = filtering();
+    u32 bats = 0, rails = 0;
+    for (u32 i = 0; i < s_power.battery_count; ++i) bats += battery_hit(i);
+    for (u32 i = 0; i < s_power.rail_count; ++i) rails += !s_power.rail_cpu[i] && id_hit(s_power.rail_id[i]);
+    if (filter && !bats && !rails) return false;
     title("Power");
-    if (!s_power.battery_count) ImGui::TextDisabled("No battery.");
+    if (!s_power.battery_count && !filter) ImGui::TextDisabled("No battery.");
     for (u32 i = 0; i < s_power.battery_count; ++i) {
+        if (!battery_hit(i)) continue;
         ImGui::PushID((int)i);
         draw_battery(&s_power.battery[i]);
         ImGui::PopID();
     }
-    ImGui::Spacing();
-    if (!s_power.rail_count) {
+    if (!s_power.rail_count && !filter) {
+        ImGui::Spacing();
         ImGui::TextDisabled("Power rails: %s", s_power.emi_status[0] ? s_power.emi_status : "none.");
-        return;
     }
-    // Package / domain rails on one line, then per-core rails in a grid.
-    theme_push_numbers();
+    if (!rails) return true;
+    ImGui::Spacing();
     bool first = true;
-    u32 cores = 0;
     for (u32 i = 0; i < s_power.rail_count; ++i) {
-        if (!strncmp(s_power.rail_name[i], "CPU core ", 9)) { ++cores; continue; }
-        if (!first) ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
-        first = false;
-        if (isnan(s_power.rail_w[i])) ImGui::Text("%s \xE2\x80\x94", s_power.rail_name[i]);
-        else ImGui::Text("%s %.1f W", s_power.rail_name[i], s_power.rail_w[i]);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Energy meter channel \"%s\"", s_power.rail_raw[i]);
+        if (s_power.rail_cpu[i] || !id_hit(s_power.rail_id[i])) continue;
+        next_item(&first);
+        rail_text(i);
     }
-    ImGui::PopFont();
-    if (!first) theme_help("Energy Metering Interface: power rails the platform exposes to Windows (here RAPL-style "
-                           "energy counters). Averaged over the last second.");
-    if (cores && ImGui::BeginTable("##rails", 4, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
-        for (u32 i = 0; i < s_power.rail_count; ++i) {
-            if (strncmp(s_power.rail_name[i], "CPU core ", 9) != 0) continue;
-            ImGui::TableNextColumn();
-            theme_push_numbers();
-            ImGui::TextDisabled("Core %s", s_power.rail_name[i] + 9);
-            ImGui::SameLine();
-            if (isnan(s_power.rail_w[i])) dash();
-            else ImGui::Text("%.2f W", s_power.rail_w[i]);
-            ImGui::PopFont();
-        }
-        ImGui::EndTable();
-    }
+    theme_help(RAILS_HELP);
+    return true;
 }
 
 // ---- Overview: temperatures -----------------------------------------------------------------------------
@@ -398,13 +547,25 @@ static void temp_text(f32 c, ImVec4 col) {
     ImGui::PopFont();
 }
 
-static void draw_group(SensorGroup g, const char* group_title, u32 n) {
+// The reading's channel ("temp.tz01", "gpu0.temp", "disk1.temp": named "<reading>" or "<reading> temperature").
+static bool reading_hit(const SensorReading* s) {
+    if (!filtering()) return true;
+    char with[128];
+    snprintf(with, sizeof(with), "%s temperature", s->name);
+    for (u32 i = 0; i < s_ch_count; ++i)
+        if (s_ch[i].group == CHG_TEMP && (!strcmp(s_ch[i].name, s->name) || !strcmp(s_ch[i].name, with)))
+            return channel_hit(&s_ch[i]);
+    const char* t[] = { s->name, s->detail, g_channel_group_names[CHG_TEMP] };
+    return filter_hit(t, ARRAY_COUNT(t));
+}
+
+static bool draw_group(SensorGroup g, const char* group_title, u32 n) {
     u32 count = 0;
-    for (u32 i = 0; i < n; ++i) count += s_read[i].group == g;
-    if (!count) return;
+    for (u32 i = 0; i < n; ++i) count += s_read[i].group == g && reading_hit(&s_read[i]);
+    if (!count) return false;
     title(group_title);
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
-    if (!ImGui::BeginTable(group_title, 5, flags)) return;
+    if (!ImGui::BeginTable(group_title, 5, flags)) return true;
     const f32 fs = ImGui::GetFontSize();
     ImGui::TableSetupColumn("Sensor", ImGuiTableColumnFlags_WidthStretch, 2.4f);
     ImGui::TableSetupColumn("Now", ImGuiTableColumnFlags_WidthFixed, fs * 5.5f);
@@ -417,7 +578,7 @@ static void draw_group(SensorGroup g, const char* group_title, u32 n) {
     const f32 line = ImGui::GetTextLineHeight();
     for (u32 i = 0; i < n; ++i) {
         const SensorReading* s = &s_read[i];
-        if (s->group != g) continue;
+        if (s->group != g || !reading_hit(s)) continue;
         ImGui::PushID((int)i);
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -450,23 +611,38 @@ static void draw_group(SensorGroup g, const char* group_title, u32 n) {
         ImGui::PopID();
     }
     ImGui::EndTable();
+    return true;
 }
 
 static void draw_overview(u32 n, f64 age) {
-    if (n == 0) {
+    const bool filter = filtering();
+    if (n == 0 && !filter) {
         ImGui::Spacing();
         ImGui::TextDisabled(age < 0.0 ? "Reading sensors\xE2\x80\xA6" : "No temperature sensors found.");
     }
     const u32 gpus = sensors_live(&s_cpu, s_gpus);
     sensors_power(&s_power);
-    draw_cpu_live();
-    draw_gpu_live(gpus);
-    draw_power();
+    s_ch_count = sensors_channels(s_ch, CH_MAX);
+    bool any = draw_cpu_live();
+    any |= draw_gpu_live(gpus);
+    any |= draw_power();
     ImGui::Spacing();
-    draw_group(SG_CPU, "Temperatures: CPU and system", n);
-    draw_group(SG_GPU, "Temperatures: graphics", n);
-    draw_group(SG_DISK, "Temperatures: drives", n);
-    adv_ui_draw_sensors();
+    any |= draw_group(SG_CPU, "Temperatures: CPU and system", n);
+    any |= draw_group(SG_GPU, "Temperatures: graphics", n);
+    any |= draw_group(SG_DISK, "Temperatures: drives", n);
+    // The PawnIO section (adv_ui) isn't filtered row by row: shown when the search matches what it reads.
+    static const char* const adv[] = { "Advanced sensors PawnIO", "CPU temperatures power voltages", "memory RAM DIMM SPD" };
+    if (!filter || filter_hit(adv, ARRAY_COUNT(adv))) {
+        adv_ui_draw_sensors();
+        any = true;
+    }
+    if (filter) {
+        if (!any) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("No sensor matches \"%s\".", s_filter);
+        }
+        return;
+    }
 
     ImGui::Spacing();
     ImGui::Spacing();
@@ -480,7 +656,6 @@ static void draw_overview(u32 n, f64 age) {
 
 // ---- Sensors tab: every channel -------------------------------------------------------------------------
 
-static SensorChannel s_ch[CH_MAX];
 static f32 s_hist[CH_HISTORY];
 
 static void value_text(const SensorChannel* c, f32 v, bool dim) {
@@ -489,9 +664,15 @@ static void value_text(const SensorChannel* c, f32 v, bool dim) {
     ImGui::TextColored(col, "%.*f %s", c->decimals > 2 ? 2 : c->decimals, v, c->unit);
 }
 
+// In the list: picked ("Picked" view) or not per-core unless asked for ("All"), and matching the search.
+static bool channel_listed(const SensorChannel* c) {
+    const bool picked = list_has(s_prefs.picked, c->id);
+    if (s_prefs.picked_only ? !picked : ((c->flags & CHF_DETAIL) && !s_prefs.detail && !picked)) return false;
+    return channel_hit(c);
+}
+
 static void draw_channels() {
-    u32 seq = 0;
-    const u32 n = sensors_channels(s_ch, CH_MAX, &seq);
+    const u32 n = s_ch_count = sensors_channels(s_ch, CH_MAX);
     if (theme_button("Reset min / max / avg")) sensors_reset_stats();
     theme_help("Min, max and average start over from the current values.");
     ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
@@ -510,6 +691,21 @@ static void draw_channels() {
     if (s_prefs.picked_only && !s_prefs.picked[0]) {
         ImGui::Spacing();
         ImGui::TextDisabled("Nothing picked yet: tick sensors in the first column of the \"All\" list.");
+        return;
+    }
+    u32 listed = 0, hidden = 0;
+    for (u32 i = 0; i < n; ++i) {
+        listed += channel_listed(&s_ch[i]);
+        hidden += !s_prefs.picked_only && (s_ch[i].flags & CHF_DETAIL) && !s_prefs.detail && channel_hit(&s_ch[i]);
+    }
+    if (hidden && filtering()) {
+        ImGui::SameLine(0.0f, ImGui::GetFontSize());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("(%u more per-core rows match)", hidden);
+    }
+    if (!listed) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("No sensor matches \"%s\"%s.", s_filter, s_prefs.picked_only ? " among the picked ones" : "");
         return;
     }
 
@@ -534,9 +730,8 @@ static void draw_channels() {
         bool header = false;
         for (u32 i = 0; i < n; ++i) {
             const SensorChannel* c = &s_ch[i];
-            if (c->group != g) continue;
+            if (c->group != g || !channel_listed(c)) continue;
             const bool picked = list_has(s_prefs.picked, c->id);
-            if (s_prefs.picked_only ? !picked : ((c->flags & CHF_DETAIL) && !s_prefs.detail && !picked)) continue;
             if (!header) {
                 header = true;
                 ImGui::TableNextRow();
@@ -599,10 +794,10 @@ static void start_log() {
     ui_results_dir(dir);
     SYSTEMTIME st;
     GetLocalTime(&st);
-    swprintf(path, MAX_PATH, L"%s\\sensors_%04u%02u%02u_%02u%02u%02u.%s", dir, st.wYear, st.wMonth, st.wDay, st.wHour,
-             st.wMinute, st.wSecond, s_prefs.format == SLOG_CSV ? L"csv" : L"toon.txt");
+    swprintf(path, MAX_PATH, L"%s\\sensors_%04u%02u%02u_%02u%02u%02u.csv", dir, st.wYear, st.wMonth, st.wDay, st.wHour,
+             st.wMinute, st.wSecond);
     char err[160];
-    if (!sensors_log_start(path, s_prefs.format, INTERVALS_MS[s_prefs.interval], s_prefs.picked, err, sizeof(err)))
+    if (!sensors_log_start(path, INTERVALS_MS[s_prefs.interval], s_prefs.picked, err, sizeof(err)))
         snprintf(s_last_log, sizeof(s_last_log), "!%s", err);
 }
 
@@ -621,16 +816,10 @@ static void draw_log_overlay() {
     sensors_log_status(&st);
     title("Sensor log");
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Writes the current value of each sensor at a fixed interval to the results folder. CSV opens in "
-                        "a spreadsheet; TOON is EzPcBench's text format. Logging stops when this window closes.");
+    ImGui::TextDisabled("Writes the current value of each sensor at a fixed interval to a CSV file in the results folder "
+                        "(opens in a spreadsheet). Logging stops when this window closes.");
     ImGui::PopTextWrapPos();
     ImGui::BeginDisabled(st.active);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Format");
-    ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
-    if (theme_tab("CSV", s_prefs.format == SLOG_CSV)) { s_prefs.format = SLOG_CSV; prefs_save(); }
-    ImGui::SameLine();
-    if (theme_tab("TOON", s_prefs.format == SLOG_TOON)) { s_prefs.format = SLOG_TOON; prefs_save(); }
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Interval");
     ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
@@ -723,6 +912,7 @@ void temps_ui_on_open() {
 
 void temps_ui_on_close() {
     if (SensorLogStatus st; sensors_log_status(&st), st.active) stop_log();
+    s_filter[0] = 0;
     adv_ui_sensors_close();
     sensors_stop();
 }
@@ -739,6 +929,10 @@ void temps_ui_draw() {
     for (u32 i = 0; i < ARRAY_COUNT(tabs); ++i) {
         if (i) ImGui::SameLine();
         if (theme_tab(tabs[i], s_prefs.tab == i)) { s_prefs.tab = i; prefs_save(); }
+    }
+    if (s_prefs.tab < 2) {
+        ImGui::SameLine(0.0f, ImGui::GetFontSize() * 2.0f);
+        draw_filter();
     }
     SensorLogStatus st;
     sensors_log_status(&st);
