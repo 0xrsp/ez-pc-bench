@@ -1,6 +1,7 @@
 // D3D12 backend for the GPU suite: device, root signature, pipelines and shared helpers.
 // Tests live in gpu_d3d12_compute.cpp and gpu_d3d12_raster.cpp. Contract: gpu_common.h.
 #include "gpu/gpu_d3d12_internal.h"
+#include "gpu/gpu_features.h"
 #include "core/results.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -562,6 +563,10 @@ void gpu_d3d12_run(void* state, GpuTestId test, const BenchParams* p, BenchLive*
         break;
     case GT_TRANSFER:
         d3d_transfer_test(d, p, live, out, cancel);
+        break;
+    case GT_RAYTRACING: case GT_MESH_SHADER: case GT_TESSELLATION: case GT_VRS: case GT_SAMPLER_FEEDBACK:
+    case GT_ASYNC_COMPUTE:
+        d3d_feature_test(d, test, p, live, out, cancel);
         break;
     default:
         d3d_raster_test(d, test, p, live, out, cancel);

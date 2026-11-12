@@ -125,6 +125,28 @@ function(ezb_glsl file name)
 endfunction()
 ezb_glsl(coopmat.comp coopmat_f16)
 ezb_glsl(coopmat.comp coopmat_i8 -DINT8)
+# Feature tests (gpu_features.h). SM 6.5 entries: ray query, task / mesh shaders, sampler feedback.
+function(ezb_shader_dxil file entry profile)   # D3D12-only shaders (no SPIR-V equivalent)
+    set(src ${SHADER_SRC}/${file})
+    set(dxil ${SHADER_OUT}/${entry}_dxil.h)
+    add_custom_command(OUTPUT ${dxil}
+        COMMAND ${DXC_DXIL} -nologo -Wno-ignored-attributes -T ${profile} -E ${entry} -O3 -Fh ${dxil} -Vn g_${entry}_dxil ${src}
+        DEPENDS ${src} ${SHADER_SRC}/common.hlsli VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${dxil} PARENT_SCOPE)
+endfunction()
+ezb_shader(rt.hlsl        cs_rt_terrain cs_6_0)
+ezb_shader(rt.hlsl        cs_rt_trace   cs_6_5)
+ezb_shader(mesh.hlsl      vs_mesh       vs_6_0)
+ezb_shader(mesh.hlsl      ps_mesh       ps_6_0)
+ezb_shader(mesh.hlsl      as_mesh       as_6_5)
+ezb_shader(mesh.hlsl      ms_mesh       ms_6_5)
+ezb_shader(tess.hlsl      vs_tess       vs_6_0)
+ezb_shader(tess.hlsl      hs_tess       hs_6_0)
+ezb_shader(tess.hlsl      ds_tess       ds_6_0)
+ezb_shader(tess.hlsl      ps_tess       ps_6_0)
+ezb_shader(vrs.hlsl       ps_vrs        ps_6_0)
+ezb_shader_dxil(sfb.hlsl  ps_sfb_plain    ps_6_5)
+ezb_shader_dxil(sfb.hlsl  ps_sfb_feedback ps_6_5)
 add_custom_target(gpu_shaders DEPENDS ${SHADER_HEADERS})
 
 # Core: benchmarks, runner, sysinfo, results (shared by GUI and CLI)
@@ -227,7 +249,10 @@ add_library(ezbench_core STATIC
     src/gpu/gpu_d3d12_ext.cpp
     src/gpu/gpu_d3d12_memory.cpp
     src/gpu/gpu_d3d12_pso.cpp
-    src/gpu/gpu_d3d12_texture.cpp)
+    src/gpu/gpu_d3d12_texture.cpp
+    src/gpu/gpu_features.cpp
+    src/gpu/gpu_d3d12_features.cpp
+    src/gpu/gpu_vk_features.cpp)
 target_include_directories(ezbench_core PUBLIC src PRIVATE ${SHADER_OUT})
 add_dependencies(ezbench_core gpu_shaders)
 target_link_libraries(ezbench_core PUBLIC ezb_flags PRIVATE ezb_warnings Vulkan::Vulkan
