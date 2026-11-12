@@ -52,7 +52,9 @@ struct Sources {
     u32 gpu_sensor[8];          // temperature sensor per GPU (UINT32_MAX = none)
     DiskSource disks[PHYSDISK_MAX];
     u32 disk_count;
-    BatteryReader bat;
+    BatteryPoller bat;          // own thread (see battery.h)
+    BatteryInfo bat_info[BATTERY_MAX];  // latest copy, taken in read_all
+    u32 bat_count;
     EmiReader emi;
 };
 
@@ -66,6 +68,7 @@ struct ZoneValues {
 };
 static ZoneValues s_zones;
 static SRWLOCK s_zone_lock = SRWLOCK_INIT;
+static std::atomic<bool> s_zones_read;     // first read done
 
 // One sample, read without the lock.
 struct Reading {
@@ -76,7 +79,11 @@ struct Reading {
     bool disks_paused;
     f32 disk_c[PHYSDISK_MAX], disk_warn[PHYSDISK_MAX];
     bool disk_ok[PHYSDISK_MAX];
+    f64 link_t;                 // last PCIe link read
+    f32 ms[5];                  // time spent per source: CPU, GPU, drives, battery, energy meters
 };
+static const char* const SOURCE_NAMES[5] = { "cpu", "gpu", "drives", "battery", "emi" };
+constexpr f64 LINK_EVERY_S = 10.0;  // PCIe link via SetupAPI (PnP service): slow under load, changes rarely
 
 // ---- temperature sensors (s_sensors) ------------------------------------------------------------------
 
@@ -190,6 +197,7 @@ static DWORD WINAPI zone_thread(void*) {
         AcquireSRWLockExclusive(&s_zone_lock);
         s_zones = v;
         ReleaseSRWLockExclusive(&s_zone_lock);
+        s_zones_read.store(true);
     } while (WaitForSingleObject(s_stop, 1000) == WAIT_TIMEOUT);
     if (src.query) PdhCloseQuery(src.query);
     return 0;
@@ -204,17 +212,35 @@ static void read_all(Sources* src, Reading* rd) {
     AcquireSRWLockShared(&s_zone_lock);
     rd->zones = s_zones;
     ReleaseSRWLockShared(&s_zone_lock);
+    f64 t = timer_now(), t0 = t;
+    auto lap = [&](u32 k) { const f64 now = timer_now(); rd->ms[k] = (f32)((now - t) * 1000.0); t = now; };
     rd->lps = cpu_reader_sample(&src->cpu, rd->util, rd->mhz);
+    lap(0);
     gpu_reader_collect(&src->gpu);
-    for (u32 i = 0; i < src->gpu.count; ++i) gpu_reader_read(&src->gpu, i, &rd->gpu[i], true);
+    const bool link = rd->link_t == 0.0 || t0 - rd->link_t >= LINK_EVERY_S;
+    if (link) rd->link_t = t0;
+    for (u32 i = 0; i < src->gpu.count; ++i) {
+        const GpuReading prev = rd->gpu[i];
+        gpu_reader_read(&src->gpu, i, &rd->gpu[i], link);
+        if (!link) {
+            rd->gpu[i].link_gen = prev.link_gen;
+            rd->gpu[i].link_width = prev.link_width;
+            rd->gpu[i].link_gen_max = prev.link_gen_max;
+            rd->gpu[i].link_width_max = prev.link_width_max;
+        }
+    }
+    lap(1);
     rd->disks_paused = disk_test_running();     // keep the last values: don't add commands to the drive under test
     for (u32 i = 0; i < src->disk_count && !rd->disks_paused; ++i) {
         rd->disk_c[i] = rd->disk_warn[i] = 0.0f;
         rd->disk_ok[i] = src->disks[i].h != INVALID_HANDLE_VALUE &&
                          physdisk_temperature(src->disks[i].h, &rd->disk_c[i], &rd->disk_warn[i]);
     }
-    battery_read(&src->bat);
+    lap(2);
+    src->bat_count = battery_poll_get(&src->bat, src->bat_info);
+    lap(3);
     emi_read(&src->emi);
+    lap(4);
 }
 
 // ---- channels (s_lock held) ---------------------------------------------------------------------------
@@ -327,9 +353,9 @@ static void gpu_channels() {
 
 static void power_channels(const Sources* src) {
     char id[40], name[96], label[24];
-    const u32 nb = src->bat.count;
+    const u32 nb = src->bat_count;
     for (u32 b = 0; b < nb; ++b) {
-        const BatteryStatus* s = &src->bat.info[b].status;
+        const BatteryStatus* s = &src->bat_info[b].status;
         char pre[8] = "bat", what[16] = "Battery";
         if (nb > 1) { snprintf(pre, sizeof(pre), "bat%u", b); snprintf(what, sizeof(what), "Battery %u", b); }
         struct { const char* key; const char* what; const char* brief; const char* unit; u8 dec; f32 v; } rows[] = {
@@ -438,8 +464,8 @@ static void publish_disks(const Sources* src, const Reading* rd) {
 static void publish_power(const Sources* src) {
     PowerLive* p = &s_power;
     p->read = true;
-    p->battery_count = src->bat.count;
-    memcpy(p->battery, src->bat.info, sizeof(p->battery));
+    p->battery_count = src->bat_count;
+    memcpy(p->battery, src->bat_info, sizeof(p->battery));
     p->rail_count = src->emi.channel_count < SENSOR_RAILS ? src->emi.channel_count : SENSOR_RAILS;
     for (u32 i = 0; i < p->rail_count; ++i) {
         memcpy(p->rail_name[i], src->emi.ch[i].name, sizeof(p->rail_name[i]));
@@ -497,6 +523,8 @@ struct LogState {
     u32 cols[CH_MAX], ncols;
     u32 rows;
     f64 t0, next_row, last_row;
+    f32 slowest_ms;             // slowest sample while logging, and where its time went
+    char slowest[128];
     char stamp[32];             // local time of the first row (ISO 8601)
     char error[160];
 };
@@ -558,8 +586,16 @@ static void log_header() {
 }
 
 // Sampling thread, after publishing.
-static void log_tick() {
+static void log_tick(const Reading* rd) {
     AcquireSRWLockExclusive(&s_log_lock);
+    f32 total = 0.0f;
+    for (u32 k = 0; k < 5; ++k) total += rd->ms[k];
+    if (s_log.active && total > s_log.slowest_ms) {
+        s_log.slowest_ms = total;
+        u32 n = 0;
+        for (u32 k = 0; k < 5; ++k)
+            n += snprintf(s_log.slowest + n, sizeof(s_log.slowest) - n, "%s%s %.0f ms", k ? ", " : "", SOURCE_NAMES[k], rd->ms[k]);
+    }
     const f64 now = timer_now();
     const f64 half = s_period_ms.load(std::memory_order_relaxed) / 2000.0;
     if (s_log.active && s_log.f && (!s_log.rows || now + half >= s_log.next_row)) {
@@ -704,6 +740,8 @@ void sensors_log_status(SensorLogStatus* out) {
     out->columns = s_log.ncols;
     out->interval_ms = s_log.interval_ms;
     out->seconds = s_log.rows ? s_log.last_row - s_log.t0 : 0.0;
+    out->slowest_ms = s_log.slowest_ms;
+    memcpy(out->slowest, s_log.slowest, sizeof(out->slowest));
     WideCharToMultiByte(CP_UTF8, 0, s_log.path, -1, out->path, sizeof(out->path), nullptr, nullptr);
     memcpy(out->error, s_log.error, sizeof(out->error));
     ReleaseSRWLockShared(&s_log_lock);
@@ -717,7 +755,7 @@ static DWORD WINAPI sensor_thread(void*) {
     memset(&src, 0, sizeof(src));
     cpu_reader_open(&src.cpu);
     gpu_reader_open(&src.gpu);
-    battery_open(&src.bat);
+    battery_poll_start(&src.bat, 1000);
     emi_open(&src.emi);
     AcquireSRWLockExclusive(&s_lock);
     memset(&s_cpu, 0, sizeof(s_cpu));
@@ -737,8 +775,11 @@ static DWORD WINAPI sensor_thread(void*) {
     AcquireSRWLockExclusive(&s_zone_lock);
     s_zones.count = 0;
     ReleaseSRWLockExclusive(&s_zone_lock);
+    s_zones_read.store(false);
     s_zone_thread = CreateThread(nullptr, 0, zone_thread, nullptr, 0, nullptr);
-    Sleep(50);      // the zone query answers in < 1 ms when idle: let the first sample include the zones
+    // Idle, the first zone read takes some tens of ms: wait for it (briefly) so the first sample has the zones
+    // and the channel order is the same every time.
+    for (u32 i = 0; i < 50 && s_zone_thread && !s_zones_read.load(); ++i) Sleep(10);
     const HANDLE events[2] = { s_stop, s_wake };
     for (;;) {
         const f64 t = timer_now();
@@ -746,7 +787,7 @@ static DWORD WINAPI sensor_thread(void*) {
         AcquireSRWLockExclusive(&s_lock);
         publish(&src, &rd);
         ReleaseSRWLockExclusive(&s_lock);
-        log_tick();
+        log_tick(&rd);
         const f64 spent_ms = (timer_now() - t) * 1000.0;
         const u32 period = s_period_ms.load(std::memory_order_relaxed);
         const DWORD wait = spent_ms >= period ? 10 : (DWORD)(period - spent_ms);
@@ -755,7 +796,7 @@ static DWORD WINAPI sensor_thread(void*) {
 
     cpu_reader_close(&src.cpu);
     gpu_reader_close(&src.gpu);
-    battery_close(&src.bat);
+    battery_poll_stop(&src.bat);
     emi_close(&src.emi);
     if (s_zone_thread) {
         WaitForSingleObject(s_zone_thread, INFINITE);

@@ -251,6 +251,7 @@ static int finish_sensor_log() {
     sensors_log_status(&done);
     if (done.error[0]) { fprintf(stderr, "Sensor log: %s\n", done.error); return 1; }
     printf("Wrote %s (%u rows x %u channels, %.0f s)\n", st.path, st.rows, st.columns, st.seconds);
+    printf("Slowest sample %.0f ms: %s\n", st.slowest_ms, st.slowest);
     return 0;
 }
 

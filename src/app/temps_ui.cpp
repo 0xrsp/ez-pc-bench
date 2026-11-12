@@ -743,7 +743,7 @@ void temps_ui_draw() {
         ImGui::TextColored(g_pal.primary, "%s%s%s", st.active ? "Logging" : "", st.active && overlay_visible() ? " \xC2\xB7 " : "",
                            overlay_visible() ? "Overlay on" : "");
     }
-    ImGui::TextDisabled("Live readings, updated every second. Min and max since this window opened.");
+    ImGui::TextDisabled("Live readings, updated every second. Min / max / avg since this window opened or the last reset.");
     ImGui::Separator();
     if (s_prefs.tab == 0) {
         ImGui::BeginChild("##overview", ImVec2(0, 0));

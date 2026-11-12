@@ -129,6 +129,8 @@ struct SensorLogStatus {
     f64 seconds;                // since the first row
     char path[520];             // UTF-8
     char error[160];            // last error ("" if none)
+    f32 slowest_ms;             // slowest sample so far (all sources) and its breakdown, for diagnosing gaps
+    char slowest[128];          // "cpu 12 ms, gpu 3 ms, drives 0 ms, battery 1 ms, emi 2 ms"
 };
 
 // `patterns` as for sensors_channel_matches. False (with err) if the file can't be created.
