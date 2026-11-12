@@ -22,14 +22,14 @@ static void wide_name(const wchar_t* w, u32 chars, char* out, u32 size) {
 // Readable names for the RAPL-style channel names Intel's and AMD's meters use ("RAPL_Package0_PKG",
 // "RAPL_Package0_Core3_CORE", "..._DRAM", "..._PP1" = graphics, "..._PSYS" = platform). `order` sorts the
 // table: package, domains, then cores by number, then anything else.
-struct RailName { const char* tag; const char* name; const char* id; u32 order; };
+struct RailName { const char* tag; const char* name; const char* id; u32 order; bool cpu; };
 static const RailName RAILS[] = {
-    { "_PKG",  "CPU package",      "cpu_pkg",  0 },
-    { "_PP0",  "CPU cores",        "cpu_pp0",  1 },
-    { "_PP1",  "Integrated graphics", "gfx",   2 },
-    { "_GFX",  "Integrated graphics", "gfx",   2 },
-    { "_DRAM", "Memory (DRAM)",    "dram",     3 },
-    { "_PSYS", "Platform (PSYS)",  "psys",     4 },
+    { "_PKG",  "CPU package",      "cpu_pkg",  0, true },
+    { "_PP0",  "CPU cores",        "cpu_pp0",  1, true },
+    { "_PP1",  "Integrated graphics", "gfx",   2, false },
+    { "_GFX",  "Integrated graphics", "gfx",   2, false },
+    { "_DRAM", "Memory (DRAM)",    "dram",     3, false },
+    { "_PSYS", "Platform (PSYS)",  "psys",     4, false },
 };
 
 static void add_channel(EmiReader* r, u8 dev, u16 idx, const char* model, const char* ch) {
@@ -47,6 +47,7 @@ static void add_channel(EmiReader* r, u8 dev, u16 idx, const char* model, const 
         snprintf(c->name, sizeof(c->name), "CPU core %u", n);
         snprintf(c->id, sizeof(c->id), "core%u", n);
         c->order = 100 + n;
+        c->cpu = true;
         return;
     }
     for (u32 i = 0; i < ARRAY_COUNT(RAILS); ++i) {
@@ -54,6 +55,7 @@ static void add_channel(EmiReader* r, u8 dev, u16 idx, const char* model, const 
         snprintf(c->name, sizeof(c->name), "%s", RAILS[i].name);
         snprintf(c->id, sizeof(c->id), "%s", RAILS[i].id);
         c->order = RAILS[i].order;
+        c->cpu = RAILS[i].cpu;
         return;
     }
     snprintf(c->name, sizeof(c->name), "%s", c->raw);

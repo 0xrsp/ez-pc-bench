@@ -13,6 +13,7 @@ struct EmiChannel {
     char raw[64];               // "<model> <channel>" as the meter reports it, e.g. "PPM RAPL_Package0_PKG"
     char id[32];                // short stable id for logs: "cpu_pkg", "core3", ...
     u32 order;                  // channels are sorted by this (package, domains, cores by number, others)
+    bool cpu;                   // a CPU rail (package, all cores, one core); not graphics / DRAM / platform
     u8 device;
     u16 index;                  // channel index within its device
     u64 energy_pwh, time_100ns; // last read

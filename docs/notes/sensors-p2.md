@@ -7,8 +7,8 @@ Stream notes for merging into PLAN.md / FUTURE.md. Built 2026-11-11 on a worktre
 | Item | State |
 |---|---|
 | P2 Battery: rate W, voltage, design vs full capacity (wear), cycle count | **Done.** `core/battery.*`, Sensors window (Overview → Power), channels `bat.*`, run monitor `env.bat_discharge_w` |
-| P2 Energy Metering Interface power rails | **Done.** `core/emi.*`; this laptop exposes CPU package + 8 per-core rails; "not available" handled with a reason |
-| P2 Sensor log CSV / TOON at an interval | **Done.** GUI (Log and overlay tab) and CLI `--log-sensors` |
+| P2 Energy Metering Interface power rails | **Done.** `core/emi.*`; this laptop exposes CPU package + 8 per-core rails; "not available" handled with a reason. CPU rails shown in the CPU section / group (trim, below) |
+| P2 Sensor log CSV at an interval | **Done.** GUI (Log and overlay tab) and CLI `--log-sensors`. The TOON log format: **Removed 2026-11-11 (trim)** |
 | P2 min / max / avg with reset | **Done.** Sensors tab, "Reset min / max / avg" |
 | P2 per-sensor graphs | **Done.** Every row has a 2-minute graph; the "Picked" view shows 10-minute graphs |
 | P2 pick sensors to show | **Done.** "Pick" column → "Picked" view and the log; "OSD" column → overlay. Persisted in `settings.ini [sensors]` |
@@ -36,15 +36,15 @@ Stream notes for merging into PLAN.md / FUTURE.md. Built 2026-11-11 on a worktre
     min / max / sum / count) + one-second history ring (600 points = 10 min) per channel.
     `sensors_channels`, `sensors_channel_history`, `sensors_reset_stats`, `sensors_channel_matches`.
   - `sensors_power()` → battery static info + status, EMI rails, EMI status text.
-  - Sensor log: `sensors_log_start(path, CSV|TOON, interval_ms, patterns)`, `_stop`, `_status`. The sampler
+  - Sensor log: `sensors_log_start(path, interval_ms, patterns)` (CSV only since the trim), `_stop`, `_status`. The sampler
     samples at the log interval when it is below 1 s (min 100 ms) and runs at HIGHEST priority while logging.
   - Room for PawnIO (or any other source): add a reader to `Sources` / `read_all` and `ch_put(...)` calls in
     `publish()`; the window, log and overlay pick new channels up without changes.
 - `app/temps_ui.cpp` — Sensors window with tabs **Overview** (previous content + Power section: battery line,
   name / chemistry / design / full / wear / cycles, EMI rails with per-core grid), **Sensors** (all channels:
   Pick, OSD, name, now, min, max, avg, graph; All / Picked view; per-core rows toggle; reset), **Log and
-  overlay** (format, interval, start / stop, row count, "Show in folder"; overlay on/off, corner).
-  Logging stops when the window closes (the TOON file gets finished); the overlay stays.
+  overlay** (interval, start / stop, row count, "Show in folder"; overlay on/off, corner).
+  Logging stops when the window closes; the overlay stays. (Layout after the trim: see below.)
 - `app/overlay.*` — layered `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW |
   WS_EX_NOACTIVATE` popup on its own thread (500 ms refresh, so its timer never wakes the GUI loop). GDI
   draws anti-aliased text into a DIB; gray level → coverage over a translucent dark panel, premultiplied,
@@ -59,6 +59,9 @@ Stream notes for merging into PLAN.md / FUTURE.md. Built 2026-11-11 on a worktre
 (e.g. `temp.tz01`), `gpuN.temp`, `diskN.temp` (N = physical disk number), `bat.rate_w` (+ charging,
 − discharging), `bat.voltage_v`, `bat.charge_pct`, `bat.remaining_wh`, `bat.temp` (only if reported;
 `batN.*` with several batteries), `emi.<id>` (`emi.cpu_pkg`, `emi.coreN` detail, ...).
+Groups: the CPU rails (`emi.cpu_pkg`, `emi.cpu_pp0`, `emi.coreN`) are in the **CPU** group, emitted right after
+`cpu.max_mhz` (so log columns and the overlay list them next to the CPU clocks); battery and the other rails
+(`emi.gfx`, `emi.dram`, `emi.psys`, unknown ones) stay in **Power**.
 "Detail" channels (per LP / per core) are left out of logs and the list unless picked / asked for.
 `ez-pc-bench-cli --list-sensors` prints them with current values.
 
@@ -71,8 +74,9 @@ Time,Seconds,CPU load [%],"CPU clock, busy cores [MHz]",...
 ```
 Empty cell = no value at that moment.
 
-TOON (`*.toon.txt`; rows stream to `<file>.rows.tmp`, the header with the row count is written on stop and
-the temp file deleted; if writing fails the rows stay in the temp file):
+TOON — **Removed 2026-11-11 (trim)**: the log is CSV only (format choice, `log_format` ini key, writer and
+`.rows.tmp` handling gone). What it was (`*.toon.txt`; rows streamed to `<file>.rows.tmp`, the header with the
+row count written on stop and the temp file deleted):
 ```
 app: ez-pc-bench
 format: 1
@@ -86,18 +90,21 @@ channels[9]{id,name,unit}:
 samples[7]{t,cpu.load,cpu.busy_mhz,...}:
   0,17.9,null,4376,...                  # t = seconds since the first row, null = no value
 ```
-Note: our own TOON reader caps tables at `TOON_MAX_FIELDS` = 16 columns; logs are wider, but nothing in the
-app reads them back (they are for spreadsheets / scripts). The results file's `env` table is now exactly 16
+Note: our own TOON reader caps tables at `TOON_MAX_FIELDS` = 16 columns (sensor logs were wider; moot since
+the TOON log was removed). The results file's `env` table is now exactly 16
 columns (see below) — the next env column needs `TOON_MAX_FIELDS` raised if the compare / baseline readers
 ever parse `env` (today they skip it).
 
 ## Flags
 
-- CLI `--log-sensors <file>`: `.csv` → CSV, anything else → TOON. Alone: logs for `--seconds N` (default 60,
+- CLI `--log-sensors <file>`: always CSV, written under the name as given (also `x.txt`; no `.csv` appended).
+  Alone: logs for `--seconds N` (default 60,
   Ctrl+C stops early, prints progress). With `--run` / `--preset`: logs for the length of the run.
   `--interval <ms>` (default 1000, min 100), `--sensors <patterns>` (comma list with `*`, default = every
   non-detail channel, `all` = everything). `--list-sensors` lists channel ids.
 - GUI `--overlay`: shows the overlay at start with the saved channels / corner (dev / testing aid).
+- GUI `--sensor-filter <text>`: presets the Sensors window search box (dev / screenshot aid; with
+  `--tool sensors`).
 
 ## Run monitor (shared files, additive)
 
@@ -139,3 +146,24 @@ ever parse `env` (today they skip it).
   edit to the battery column; the reader is ready (`core/emi.*`). Note `TOON_MAX_FIELDS` above.
 - Overlay position is per primary monitor only; no drag-to-move (it is click-through by design).
 - The log records instantaneous values per row (not interval averages).
+
+## Trim 2026-11-11
+
+- **Sensor log: CSV only.** Removed the CSV / TOON choice in the Log tab, the `[sensors] log_format` ini key
+  (deleted from the ini on the next save), `SensorLogFormat` / `SensorLogStatus.format`, the TOON writer and its
+  `.rows.tmp` temp file. `--log-sensors` writes CSV whatever the extension, keeping the name as given.
+  Checked: `--log-sensors x.csv --seconds 3` and `--log-sensors x.txt --seconds 3` both write the same CSV
+  (BOM, header, 4 rows x 24 channels).
+- **Search box** on the Overview and Sensors tabs (tab row, right of the tabs; Ctrl+F focuses, Esc or the ×
+  button clears; not saved, cleared when the window closes). Case-insensitive substring; several
+  space-separated words must all match. A channel matches on its name, id or group name ("CPU", "Graphics",
+  "Temperatures", "Power"), so `temp` lists every temperature and `cpu power` the CPU rails. Sensors tab: rows
+  filtered (the "Per-core rows" toggle still applies; "(N more per-core rows match)" when it hides matches),
+  "No sensor matches" when empty. Overview: CPU summary / LP cells / CPU rails, GPU rows, battery, other
+  rails and temperature rows are filtered through their channels; sections without a match are hidden; the
+  PawnIO section (adv_ui, not filtered row by row) shows when the search matches its topics.
+- **CPU power with the CPU.** `EmiChannel.cpu` (package, PP0, per-core rails) and `PowerLive.rail_cpu /
+  rail_id`. Overview: the CPU section is "CPU clock, load and power": package power on the load / clock line,
+  "Power per core" grid under the LP grid. "Power" keeps the battery and non-CPU rails (graphics, DRAM, PSYS,
+  unknown); "Power rails: <reason>" there when the platform has no meter. Sensors tab: CPU rails in the CPU
+  group (per-core rails stay detail rows).

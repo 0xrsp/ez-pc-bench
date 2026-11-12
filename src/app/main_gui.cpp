@@ -485,6 +485,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdline, int) {
                             tool_open(inst, t);
                     continue;
                 }
+                if (!wcscmp(argv[i], L"--sensor-filter") && i + 1 < argc) {   // dev: preset the Sensors window search
+                    temps_ui_set_filter(argv[++i]);
+                    continue;
+                }
                 if (wcscmp(argv[i], L"--compare") != 0) continue;
                 for (int k = i + 1; k < argc && wcsncmp(argv[k], L"--", 2) != 0; ++k) compare_ui_add_path(argv[k]);
                 tool_open(inst, TOOL_COMPARE);

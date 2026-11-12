@@ -68,7 +68,9 @@ struct PowerLive {
     u32 rail_count;                         // EMI channels
     char rail_name[SENSOR_RAILS][64];       // "CPU package", "CPU core 3", ...
     char rail_raw[SENSOR_RAILS][64];        // as the meter names it ("PPM RAPL_Package0_PKG")
+    char rail_id[SENSOR_RAILS][40];         // channel id ("emi.cpu_pkg")
     f32 rail_w[SENSOR_RAILS];               // NaN until the second read
+    bool rail_cpu[SENSOR_RAILS];            // CPU rail (package / cores): shown with the CPU, not under Power
     char emi_status[160];                   // why there are no rails ("" when there are)
     bool read;                              // sources opened (false until the first sample)
 };
@@ -79,6 +81,7 @@ void sensors_power(PowerLive* out);
 constexpr u32 CH_MAX = 192;
 constexpr u32 CH_HISTORY = 600;             // one point per second: 10 minutes
 
+// CPU includes the CPU's power rails (package, per-core); Power has the battery and the other rails.
 enum ChannelGroup : u8 { CHG_CPU, CHG_LP, CHG_GPU, CHG_TEMP, CHG_POWER, CHG_COUNT };
 extern const char* const g_channel_group_names[CHG_COUNT];
 
@@ -114,17 +117,11 @@ bool sensors_channel_matches(const SensorChannel* c, const char* patterns);
 // ---- log -----------------------------------------------------------------------------------------------
 // One row per interval with the current value of each chosen channel, written by the sampling thread
 // (which then samples at the log interval when that is below one second; minimum 100 ms).
-//   CSV:  UTF-8 with BOM; "Time,Seconds,<name> [<unit>],..." then one row per interval, empty = no value.
-//   TOON: app / kind: sensor-log / timestamp / interval_ms / cpu, channels[N]{id,name,unit}, then
-//         samples[M]{t,<channel ids>} (t = seconds since the first row, null = no value). Rows go to
-//         "<file>.rows.tmp" while logging; sensors_log_stop writes the file and deletes the temp file.
+// CSV, UTF-8 with BOM: "Time,Seconds,<name> [<unit>],..." then one row per interval, empty = no value.
 // Channels are fixed at the first row. Holds a sensors reference while active.
-
-enum SensorLogFormat : u8 { SLOG_CSV, SLOG_TOON };
 
 struct SensorLogStatus {
     bool active;
-    SensorLogFormat format;
     u32 rows, columns, interval_ms;
     f64 seconds;                // since the first row
     char path[520];             // UTF-8
@@ -134,7 +131,6 @@ struct SensorLogStatus {
 };
 
 // `patterns` as for sensors_channel_matches. False (with err) if the file can't be created.
-bool sensors_log_start(const wchar_t* path, SensorLogFormat format, u32 interval_ms, const char* patterns, char* err,
-                       u32 err_size);
+bool sensors_log_start(const wchar_t* path, u32 interval_ms, const char* patterns, char* err, u32 err_size);
 void sensors_log_stop();        // finishes the file; no-op if not logging
 void sensors_log_status(SensorLogStatus* out);
