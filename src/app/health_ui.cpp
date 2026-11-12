@@ -128,13 +128,14 @@ static void drive_chip(u32 i) {
     const bool clicked = ImGui::InvisibleButton("chip", size);
     const bool sel = i == s_ui.sel, hov = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec4 bg = sel ? g_pal.primary_container : hov ? g_pal.container_high : g_pal.card;
-    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(bg), fs * 0.5f);
-    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(sel ? g_pal.primary : g_pal.outline_variant), fs * 0.5f);
+    const ImVec4 bg = sel ? g_pal.secondary_container : hov ? g_pal.container_high : g_pal.card;
+    const f32 r = ImGui::GetStyle().FrameRounding;
+    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(bg), r);
+    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(sel ? g_pal.secondary : g_pal.outline), r);
     const ImVec4 col = h->disk.virtual_disk ? g_pal.outline : status_color(h->status);
     dl->AddCircleFilled(ImVec2(p.x + pad + dot, p.y + size.y * 0.5f), dot, ImGui::GetColorU32(col));
     const f32 tx = p.x + pad + dot * 2.0f + fs * 0.5f;
-    dl->AddText(ImVec2(tx, p.y + fs * 0.25f), ImGui::GetColorU32(sel ? g_pal.on_primary_container : g_pal.on_surface), label);
+    dl->AddText(ImVec2(tx, p.y + fs * 0.25f), ImGui::GetColorU32(sel ? g_pal.on_secondary_container : g_pal.on_surface), label);
     dl->AddText(ImVec2(tx, p.y + fs * 1.3f), ImGui::GetColorU32(col), sub);
     if (hov) {
         char tip[160];
@@ -152,7 +153,9 @@ static void status_box(const char* title, const char* value, ImVec4 col, f32 w) 
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const ImVec2 size(w, fs * 3.2f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.16f)), fs * 0.5f);
+    const f32 r = ImGui::GetStyle().FrameRounding;
+    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.08f)), r);
+    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), ImGui::GetColorU32(ImVec4(col.x, col.y, col.z, 0.6f)), r);
     dl->AddText(ImVec2(p.x + fs * 0.7f, p.y + fs * 0.35f), ImGui::GetColorU32(g_pal.on_surface_variant), title);
     ImGui::PushFont(g_fonts.medium, theme_font_size(1.3f));
     dl->AddText(ImVec2(p.x + fs * 0.7f, p.y + fs * 1.4f), ImGui::GetColorU32(col), value);
@@ -217,7 +220,8 @@ static void draw_header(DiskHealth* h) {
 
 static void draw_info(DiskHealth* h) {
     char v[160], a[64];
-    if (!ImGui::BeginTable("info", 4, ImGuiTableFlags_SizingStretchProp)) return;
+    theme_group_begin("Drive information");
+    if (!ImGui::BeginTable("info", 4, ImGuiTableFlags_SizingStretchProp)) { theme_group_end(); return; }
     ImGui::TableSetupColumn("l1", ImGuiTableColumnFlags_WidthStretch, 0.75f);
     ImGui::TableSetupColumn("v1", ImGuiTableColumnFlags_WidthStretch, 1.4f);
     ImGui::TableSetupColumn("l2", ImGuiTableColumnFlags_WidthStretch, 0.75f);
@@ -278,6 +282,7 @@ static void draw_info(DiskHealth* h) {
         ImGui::TextUnformatted(parts);
         ImGui::PopTextWrapPos();
     }
+    theme_group_end();
 }
 
 // ---- SMART table ------------------------------------------------------------------------------------
@@ -417,8 +422,11 @@ static void draw_selftest(DiskHealth* h) {
         ImGui::TextDisabled("Self-test log: no tests recorded.");
         return;
     }
-    ImGui::TextDisabled("Self-test log (newest first)");
-    if (!ImGui::BeginTable("tests", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) return;
+    theme_group_begin("Self-test log (newest first)");
+    if (!ImGui::BeginTable("tests", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        theme_group_end();
+        return;
+    }
     ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 0.8f);
     ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableSetupColumn("At power-on hour", ImGuiTableColumnFlags_WidthStretch, 0.8f);
@@ -439,6 +447,7 @@ static void draw_selftest(DiskHealth* h) {
         else ImGui::TextDisabled("-");
     }
     ImGui::EndTable();
+    theme_group_end();
 }
 
 static void draw_confirmations(DiskHealth* h) {
@@ -516,6 +525,7 @@ static void draw_nvme(DiskHealth* h) {
     const u8* id = h->nvme_id;
     auto le16 = [](const u8* p) { return (u32)(p[0] | (p[1] << 8)); };
     auto le32 = [](const u8* p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); };
+    theme_group_begin("Controller");
     if (ImGui::BeginTable("nvme", 4, ImGuiTableFlags_SizingStretchProp)) {
         kv("PCI vendor / subsystem", "%04X / %04X", le16(id), le16(id + 2));
         kv("IEEE OUI", "%02X%02X%02X", id[75], id[74], id[73]);
@@ -549,26 +559,26 @@ static void draw_nvme(DiskHealth* h) {
         if (h->feature_ok & (1u << 0x08)) kv("Interrupt coalescing", "%u x 100 us, %u entries", (h->feature[0x08] >> 8) & 0xFF, (h->feature[0x08] & 0xFF) + 1);
         ImGui::EndTable();
     }
+    theme_group_end();
 
     if (h->have_nvme_fw) {
-        ImGui::Spacing();
-        ImGui::TextDisabled("Firmware slots");
+        theme_group_begin("Firmware slots");
         const u32 slots = (id[260] >> 1) & 7;
         for (u32 s = 0; s < slots && s < 7; ++s) {
             char rev[9] = {};
             memcpy(rev, h->nvme_fw + 8 + 8 * s, 8);
             for (int k = 7; k >= 0 && (rev[k] == ' ' || rev[k] == 0); --k) rev[k] = 0;
-            ImGui::SameLine(0.0f, ImGui::GetFontSize());
+            if (s) ImGui::SameLine(0.0f, ImGui::GetFontSize() * 1.5f);
             const bool active = (h->nvme_fw[0] & 7) == s + 1;
             if (rev[0]) ImGui::TextColored(active ? g_pal.primary : g_pal.on_surface, "%u: %s%s", s + 1, rev, active ? " (active)" : "");
             else ImGui::TextDisabled("%u: empty", s + 1);
         }
+        theme_group_end();
     }
 
-    ImGui::Spacing();
-    ImGui::TextDisabled("Power states");
-    theme_help("From Identify Controller. Non-operational states are deep sleep; their exit latency is the delay before the "
-               "first I/O after idle (APST / Windows picks when to enter them).");
+    theme_group_begin("Power states", 0.0f,
+                      "From Identify Controller. Non-operational states are deep sleep; their exit latency is the delay "
+                      "before the first I/O after idle (APST / Windows picks when to enter them).");
     if (ImGui::BeginTable("ps", 5, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("State");
         ImGui::TableSetupColumn("Max power");
@@ -587,12 +597,13 @@ static void draw_nvme(DiskHealth* h) {
         }
         ImGui::EndTable();
     }
+    theme_group_end();
 
-    ImGui::Spacing();
+    theme_group_begin("Error information log");
     if (!h->error_count) {
-        ImGui::TextDisabled("Error information log: empty.");
+        ImGui::TextDisabled("Empty.");
     } else {
-        ImGui::TextDisabled("Error information log (%u entries)", h->error_count);
+        ImGui::TextDisabled("%u entries", h->error_count);
         if (ImGui::BeginTable("err", 6, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Error #");
             ImGui::TableSetupColumn("Queue");
@@ -614,7 +625,7 @@ static void draw_nvme(DiskHealth* h) {
             ImGui::EndTable();
         }
     }
-    ImGui::Spacing();
+    theme_group_end();
     if (ImGui::CollapsingHeader("Identify Controller (raw)")) hex_dump("idc", h->nvme_id, 4096);
     if (h->have_nvme_ns && ImGui::CollapsingHeader("Identify Namespace 1 (raw)")) hex_dump("idn", h->nvme_ns, 4096);
     if (h->have_nvme_health && ImGui::CollapsingHeader("SMART / Health log (raw)")) hex_dump("hlog", h->nvme_health, 512);
