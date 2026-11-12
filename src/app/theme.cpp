@@ -1,6 +1,7 @@
 #include "app/theme.h"
 #include <windows.h>
 #include <math.h>
+#include <string.h>
 #include <wchar.h>
 
 ThemeFonts g_fonts;
@@ -18,58 +19,93 @@ static ImVec4 mix(ImVec4 a, ImVec4 b, f32 t) {
     return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
 
-// Material 3 schemes from seed #0B57D0.
+// Palette "graphite / cyan / orchid". Dark is the main look: blue-black surfaces in three steps (page < card <
+// container = raised: frames, popups), a cyan primary for actions and data (buttons, checkboxes, sliders,
+// progress, graphs) and an orchid secondary for navigation and selection (tabs, toggles, selected list rows).
+// Separation comes from 1 px outlines, not tonal fills. Contrast (WCAG 2.x) is measured against the card color.
+//
+//  role                    dark      light     use                                    contrast d / l
+//  page                    #0B0E14   #F2F4F8   window background
+//  card                    #11161F   #FFFFFF   panels, cards
+//  container               #161C27   #EFF2F6   raised: frames, popups (dark)
+//  container_high          #1B2230   #E7EBF1   frame hover, headers
+//  container_highest       #232C3D   #DCE2EA   frame active, progress track
+//  on_surface              #E4E9F2   #121826   body text                              14.9 / 17.7
+//  on_surface_variant      #9BA6B9   #4A5466   secondary text, labels                 7.4 / 7.6
+//  outline                 #5D6A80   #7C8799   button / checkbox borders (3:1 needed) 3.3 / 3.6
+//  outline_variant         #2D3749   #CDD4DE   card, group, table lines (decorative)
+//  primary                 #3CCFEA   #00779C   filled buttons, checks, sliders, data  9.8 / 5.1
+//  on_primary              #002A33   #FFFFFF   text on primary                        8.2 / 5.1 *
+//  primary_container       #0C3440   #D3F1FA   tonal primary fill
+//  on_primary_container    #B4EDFA   #00303E   text on it                             10.4 / 11.9 *
+//  secondary               #D07BFF   #9C2BC4   selected tab / chip outline, accents   6.9 / 5.9
+//  on_secondary            #2B0740   #FFFFFF   text on secondary
+//  secondary_container     #2C1A3B   #F5E3FC   selected tab / chip / row fill
+//  on_secondary_container  #F0D6FF   #3B0B4F   text on it                             12.0 / 12.8 *
+//  ok                      #5BD68A   #17784A   pass, done, good                       9.9 / 5.5
+//  error                   #FF6E6E   #C42B2B   fail, errors                           6.7 / 5.6
+//  warn                    #FFB648   #9A5800   caution, notes, banner stripe          10.4 / 5.6
+//  warn_container          #33240C   #FFEBCC   warning banner
+//  on_warn_container       #FFE3B3   #3D2400   banner text                            12.1 / 12.4 *
+//  heat_lo .. heat_hi      #123D2B   #CBF2DA   matrix cells, green ..
+//                          #5C1C24   #FFD8D8   .. red
+//  (contrast against the card color; * = against its own fill). Group titles use primary.
+
 static Palette light_palette() {
     Palette p;
-    p.page = rgb(0xF3F5FA);
+    p.page = rgb(0xF2F4F8);
     p.card = rgb(0xFFFFFF);
-    p.container = rgb(0xECEEF4);
-    p.container_high = rgb(0xE6E8EE);
-    p.container_highest = rgb(0xE1E2E9);
-    p.on_surface = rgb(0x191C20);
-    p.on_surface_variant = rgb(0x44474F);
-    p.outline = rgb(0x74777F);
-    p.outline_variant = rgb(0xC4C6D0);
-    p.primary = rgb(0x0B57D0);
+    p.container = rgb(0xEFF2F6);
+    p.container_high = rgb(0xE7EBF1);
+    p.container_highest = rgb(0xDCE2EA);
+    p.on_surface = rgb(0x121826);
+    p.on_surface_variant = rgb(0x4A5466);
+    p.outline = rgb(0x7C8799);
+    p.outline_variant = rgb(0xCDD4DE);
+    p.primary = rgb(0x00779C);
     p.on_primary = rgb(0xFFFFFF);
-    p.primary_container = rgb(0xD8E2FF);
-    p.on_primary_container = rgb(0x001A41);
-    p.secondary_container = rgb(0xDCE2F9);
-    p.on_secondary_container = rgb(0x151B2C);
-    p.ok = rgb(0x1E6B35);
-    p.error = rgb(0xBA1A1A);
-    p.warn = rgb(0x8A5100);
-    p.warn_container = rgb(0xFFDDB5);
-    p.on_warn_container = rgb(0x2C1600);
-    p.heat_lo = rgb(0xC8F0D2);
-    p.heat_hi = rgb(0xFFDAD6);
+    p.primary_container = rgb(0xD3F1FA);
+    p.on_primary_container = rgb(0x00303E);
+    p.secondary = rgb(0x9C2BC4);
+    p.on_secondary = rgb(0xFFFFFF);
+    p.secondary_container = rgb(0xF5E3FC);
+    p.on_secondary_container = rgb(0x3B0B4F);
+    p.ok = rgb(0x17784A);
+    p.error = rgb(0xC42B2B);
+    p.warn = rgb(0x9A5800);
+    p.warn_container = rgb(0xFFEBCC);
+    p.on_warn_container = rgb(0x3D2400);
+    p.heat_lo = rgb(0xCBF2DA);
+    p.heat_hi = rgb(0xFFD8D8);
     return p;
 }
 
 static Palette dark_palette() {
     Palette p;
-    p.page = rgb(0x111318);
-    p.card = rgb(0x191C20);
-    p.container = rgb(0x1D2024);
-    p.container_high = rgb(0x282A2F);
-    p.container_highest = rgb(0x33353A);
-    p.on_surface = rgb(0xE2E2E9);
-    p.on_surface_variant = rgb(0xC4C6D0);
-    p.outline = rgb(0x8E9099);
-    p.outline_variant = rgb(0x44474E);
-    p.primary = rgb(0xAEC6FF);
-    p.on_primary = rgb(0x002E6B);
-    p.primary_container = rgb(0x0B4AAE);
-    p.on_primary_container = rgb(0xD8E2FF);
-    p.secondary_container = rgb(0x3C4758);
-    p.on_secondary_container = rgb(0xD8E2F9);
-    p.ok = rgb(0x7DDA8F);
-    p.error = rgb(0xFFB4AB);
-    p.warn = rgb(0xFFB95C);
-    p.warn_container = rgb(0x4F2D00);
-    p.on_warn_container = rgb(0xFFDDB5);
-    p.heat_lo = rgb(0x1B4D2A);
-    p.heat_hi = rgb(0x6B1D1A);
+    p.page = rgb(0x0B0E14);
+    p.card = rgb(0x11161F);
+    p.container = rgb(0x161C27);
+    p.container_high = rgb(0x1B2230);
+    p.container_highest = rgb(0x232C3D);
+    p.on_surface = rgb(0xE4E9F2);
+    p.on_surface_variant = rgb(0x9BA6B9);
+    p.outline = rgb(0x5D6A80);
+    p.outline_variant = rgb(0x2D3749);
+    p.primary = rgb(0x3CCFEA);
+    p.on_primary = rgb(0x002A33);
+    p.primary_container = rgb(0x0C3440);
+    p.on_primary_container = rgb(0xB4EDFA);
+    p.secondary = rgb(0xD07BFF);
+    p.on_secondary = rgb(0x2B0740);
+    p.secondary_container = rgb(0x2C1A3B);
+    p.on_secondary_container = rgb(0xF0D6FF);
+    p.ok = rgb(0x5BD68A);
+    p.error = rgb(0xFF6E6E);
+    p.warn = rgb(0xFFB648);
+    p.warn_container = rgb(0x33240C);
+    p.on_warn_container = rgb(0xFFE3B3);
+    p.heat_lo = rgb(0x123D2B);
+    p.heat_hi = rgb(0x5C1C24);
     return p;
 }
 
@@ -179,16 +215,18 @@ void theme_apply_style(f32 scale) {
     s.IndentSpacing = 20;
     s.ScrollbarSize = 8;
     s.GrabMinSize = 12;
+    // Small radii, 1 px outlines on frames (inputs, combos, buttons, checkboxes), cards and popups.
     s.WindowRounding = 0;
-    s.ChildRounding = 12;
-    s.FrameRounding = 6;
-    s.PopupRounding = 8;
-    s.ScrollbarRounding = 8;
-    s.GrabRounding = 6;
+    s.ChildRounding = 4;
+    s.FrameRounding = 3;
+    s.PopupRounding = 4;
+    s.ScrollbarRounding = 2;
+    s.GrabRounding = 2;
+    s.TabRounding = 3;
     s.WindowBorderSize = 0;
     s.ChildBorderSize = 1;
     s.PopupBorderSize = 1;
-    s.FrameBorderSize = 0;
+    s.FrameBorderSize = 1;
     s.SeparatorTextBorderSize = 1;
     s.DisabledAlpha = 0.38f;
     s.ScaleAllSizes(scale);
@@ -197,33 +235,33 @@ void theme_apply_style(f32 scale) {
 
     ImVec4* c = s.Colors;
     const ImVec4 none = { 0, 0, 0, 0 };
-    const ImVec4 hover = mix(p.container_high, p.on_surface, 0.06f);
+    const ImVec4 t = p.on_surface;     // state layers: on-surface at low alpha
     c[ImGuiCol_Text] = p.on_surface;
     c[ImGuiCol_TextDisabled] = p.on_surface_variant;
     c[ImGuiCol_WindowBg] = p.page;
     c[ImGuiCol_ChildBg] = none;
-    c[ImGuiCol_PopupBg] = p.card;
+    c[ImGuiCol_PopupBg] = s_dark ? p.container : p.card;     // raised one step above the cards
     c[ImGuiCol_TitleBg] = p.container_high;            // modal dialogs (save, library)
     c[ImGuiCol_TitleBgActive] = p.container_high;
     c[ImGuiCol_TitleBgCollapsed] = p.container_high;
-    c[ImGuiCol_Border] = p.outline_variant;
+    c[ImGuiCol_Border] = mix(p.outline_variant, p.outline, 0.4f);     // frames, popups; cards use outline_variant
     c[ImGuiCol_BorderShadow] = none;
-    c[ImGuiCol_FrameBg] = p.container_high;
-    c[ImGuiCol_FrameBgHovered] = p.container_highest;
+    c[ImGuiCol_FrameBg] = p.container;
+    c[ImGuiCol_FrameBgHovered] = p.container_high;
     c[ImGuiCol_FrameBgActive] = p.container_highest;
     c[ImGuiCol_ScrollbarBg] = none;
-    c[ImGuiCol_ScrollbarGrab] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.35f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.55f);
-    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.75f);
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.45f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(p.outline.x, p.outline.y, p.outline.z, 0.7f);
+    c[ImGuiCol_ScrollbarGrabActive] = p.outline;
     c[ImGuiCol_CheckMark] = p.primary;
     c[ImGuiCol_CheckboxSelectedBg] = p.primary;
     c[ImGuiCol_SliderGrab] = p.primary;
-    c[ImGuiCol_SliderGrabActive] = p.primary;
-    c[ImGuiCol_Button] = p.secondary_container;
-    c[ImGuiCol_ButtonHovered] = mix(p.secondary_container, p.on_secondary_container, 0.08f);
-    c[ImGuiCol_ButtonActive] = mix(p.secondary_container, p.on_secondary_container, 0.12f);
-    c[ImGuiCol_Header] = p.container;
-    c[ImGuiCol_HeaderHovered] = hover;
+    c[ImGuiCol_SliderGrabActive] = mix(p.primary, p.on_surface, 0.25f);
+    c[ImGuiCol_Button] = none;                         // outlined (frame border); combo arrows sit on the frame
+    c[ImGuiCol_ButtonHovered] = ImVec4(t.x, t.y, t.z, 0.08f);
+    c[ImGuiCol_ButtonActive] = ImVec4(t.x, t.y, t.z, 0.14f);
+    c[ImGuiCol_Header] = p.container_high;             // framed headers, selected list rows
+    c[ImGuiCol_HeaderHovered] = mix(p.container_high, p.on_surface, 0.06f);
     c[ImGuiCol_HeaderActive] = p.container_highest;
     c[ImGuiCol_Separator] = p.outline_variant;
     c[ImGuiCol_SeparatorHovered] = p.primary;
@@ -239,7 +277,7 @@ void theme_apply_style(f32 scale) {
     c[ImGuiCol_TableBorderStrong] = p.outline_variant;
     c[ImGuiCol_TableBorderLight] = p.outline_variant;
     c[ImGuiCol_TableRowBg] = none;
-    c[ImGuiCol_TableRowBgAlt] = none;
+    c[ImGuiCol_TableRowBgAlt] = ImVec4(t.x, t.y, t.z, 0.03f);     // tables with RowBg: faint zebra
     c[ImGuiCol_TextSelectedBg] = ImVec4(p.primary.x, p.primary.y, p.primary.z, 0.25f);
     c[ImGuiCol_NavCursor] = p.primary;
     c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.4f);
@@ -254,11 +292,12 @@ static u32 s_panel_depth;
 
 void theme_begin_panel(const char* id, ImVec2 size, bool scroll) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.card);
+    ImGui::PushStyleColor(ImGuiCol_Border, g_pal.outline_variant);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16 * s_scale, 14 * s_scale));
     ImGui::BeginChild(id, size, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(2);
     if (scroll) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::BeginChild("##scroll", ImVec2(0, 0), ImGuiChildFlags_None);
@@ -274,43 +313,41 @@ void theme_end_panel() {
     ImGui::EndChild();
 }
 
-static bool pill_button(const char* label, ImVec4 bg, ImVec4 fg) {
+// Rectangular button: `border` 1 px outline (alpha 0 = none), small radius from the style.
+static bool rect_button(const char* label, ImVec4 bg, ImVec4 fg, ImVec4 border, ImVec2 pad) {
+    const bool filled = bg.w > 0.0f;
     ImGui::PushStyleColor(ImGuiCol_Button, bg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, mix(bg, fg, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, mix(bg, fg, 0.12f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, filled ? mix(bg, fg, 0.10f) : ImVec4(fg.x, fg.y, fg.z, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, filled ? mix(bg, fg, 0.18f) : ImVec4(fg.x, fg.y, fg.z, 0.14f));
     ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);   // clamped to half the height
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18 * s_scale, 7 * s_scale));
+    ImGui::PushStyleColor(ImGuiCol_Border, border);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, pad);
     ImGui::PushFont(g_fonts.medium, 0.0f);
     const bool pressed = ImGui::Button(label);
     ImGui::PopFont();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(5);
     return pressed;
 }
 
-bool theme_button_primary(const char* label) { return pill_button(label, g_pal.primary, g_pal.on_primary); }
-bool theme_button(const char* label) { return pill_button(label, g_pal.secondary_container, g_pal.on_secondary_container); }
+static ImVec2 button_padding() { return ImVec2(16 * s_scale, 7 * s_scale); }
 
+bool theme_button_primary(const char* label) {
+    return rect_button(label, g_pal.primary, g_pal.on_primary, g_pal.primary, button_padding());
+}
+bool theme_button(const char* label) {
+    return rect_button(label, ImVec4(0, 0, 0, 0), g_pal.on_surface, g_pal.outline, button_padding());
+}
+
+// Segmented tab / toggle: outlined; selected = secondary container fill with a secondary outline.
 bool theme_tab(const char* label, bool selected) {
-    const ImVec4 bg = selected ? g_pal.secondary_container : ImVec4(0, 0, 0, 0);
-    const ImVec4 fg = selected ? g_pal.on_secondary_container : g_pal.on_surface_variant;
-    ImGui::PushStyleColor(ImGuiCol_Button, bg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, selected ? bg : ImVec4(fg.x, fg.y, fg.z, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, selected ? bg : ImVec4(fg.x, fg.y, fg.z, 0.12f));
-    ImGui::PushStyleColor(ImGuiCol_Text, fg);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16 * s_scale, 6 * s_scale));
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    const bool pressed = ImGui::Button(label);
-    ImGui::PopFont();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
-    return pressed;
+    return rect_button(label, selected ? g_pal.secondary_container : ImVec4(0, 0, 0, 0),
+                       selected ? g_pal.on_secondary_container : g_pal.on_surface_variant,
+                       selected ? g_pal.secondary : g_pal.outline_variant, ImVec2(14 * s_scale, 6 * s_scale));
 }
 
-// Material checkbox: outlined box when off, filled primary box with a contrasting tick when on, and with
-// a dash when `mixed` (some of a group selected; a click then checks it).
+// Checkbox: outlined box when off, filled primary box with a contrasting tick when on, and with a dash when
+// `mixed` (some of a group selected; a click then checks it).
 bool theme_checkbox(const char* label, bool* v, bool mixed) {
     const bool on = *v || mixed;
     const ImVec4 fill = on ? g_pal.primary : ImVec4(0, 0, 0, 0);
@@ -321,9 +358,9 @@ bool theme_checkbox(const char* label, bool* v, bool mixed) {
                                                      : ImVec4(g_pal.on_surface.x, g_pal.on_surface.y, g_pal.on_surface.z, 0.12f));
     ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, g_pal.primary);
     ImGui::PushStyleColor(ImGuiCol_CheckMark, g_pal.on_primary);
-    ImGui::PushStyleColor(ImGuiCol_Border, g_pal.on_surface_variant);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, on ? 0.0f : 2.0f * s_scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * s_scale);
+    ImGui::PushStyleColor(ImGuiCol_Border, on ? g_pal.primary : g_pal.on_surface_variant);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.5f * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f * s_scale);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * s_scale, 3.0f * s_scale));
     const bool changed = ImGui::Checkbox(label, v);
     if (mixed && !*v) {     // ImGui's own mixed mark is a square; Material uses a horizontal dash
@@ -339,24 +376,35 @@ bool theme_checkbox(const char* label, bool* v, bool mixed) {
 }
 
 void theme_progress(f32 fraction, f32 height, f32 width) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, height * 0.5f);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, s_dark ? g_pal.container_highest : g_pal.primary_container);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 1.0f * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_pal.container_highest);
     ImGui::ProgressBar(fraction, ImVec2(width, height), "");
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 }
 
 bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const char* button_label) {
     if (count == 0) return false;
-    const f32 pad = 12 * s_scale;
+    const f32 pad = 12 * s_scale, stripe = 3 * s_scale;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, g_pal.warn_container);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * s_scale, pad));
+    ImGui::PushStyleColor(ImGuiCol_Border, mix(g_pal.warn_container, g_pal.warn, 0.55f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 3 * s_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18 * s_scale + stripe, pad));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * s_scale, 6 * s_scale));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12 * s_scale, 3 * s_scale));    // button row height
     // Auto-sized to the content, so top and bottom padding are equal.
-    ImGui::BeginChild("##warnings", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
+    ImGui::BeginChild("##warnings", ImVec2(0, 0),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    {   // warning-colored stripe along the left edge
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        dl->PushClipRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y));     // the window clips off half its padding
+        dl->AddRectFilled(wp, ImVec2(wp.x + stripe, wp.y + ws.y), ImGui::GetColorU32(g_pal.warn), 3 * s_scale,
+                          ImDrawFlags_RoundLeft);
+        dl->PopClipRect();
+    }
     bool clicked = false;
     for (u32 i = 0; i < count; ++i) {
         const bool has_button = (i32)i == button_line;
@@ -374,18 +422,15 @@ bool theme_warnings(const char* const* lines, u32 count, i32 button_line, const 
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(g_pal.warn.x, g_pal.warn.y, g_pal.warn.z, 0.20f));
             ImGui::PushStyleColor(ImGuiCol_Text, g_pal.on_warn_container);
             ImGui::PushStyleColor(ImGuiCol_Border, g_pal.on_warn_container);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 100 * s_scale);
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f * s_scale);
             ImGui::PushFont(g_fonts.medium, 0.0f);
             clicked = ImGui::Button(button_label);
             ImGui::PopFont();
-            ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(5);
         }
     }
     ImGui::EndChild();
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6 * s_scale);     // breathing room below the card
     return clicked;
 }
@@ -468,8 +513,8 @@ static void draw_icon(ImDrawList* dl, ThemeIcon icon, ImVec2 c, f32 r, ImU32 col
 }
 
 f32 theme_icon_button_width(const char* label, f32 h) {
-    if (!label) return h;                                   // icon only: a circle
-    return h * 0.42f + h * 0.55f + h * 0.28f + ImGui::CalcTextSize(label).x + h * 0.5f;
+    if (!label) return h;                                   // icon only: a square
+    return h * 0.36f + h * 0.55f + h * 0.28f + ImGui::CalcTextSize(label).x + h * 0.42f;
 }
 
 bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h, const char* tooltip) {
@@ -477,14 +522,16 @@ bool theme_icon_button(const char* id, ThemeIcon icon, const char* label, f32 h,
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-    const ImVec4 base = g_pal.container_highest;
-    const ImVec4 tint = g_pal.on_surface;
-    const ImVec4 bg = held ? mix(base, tint, 0.12f) : hovered ? mix(base, tint, 0.08f) : base;
+    // Outlined like theme_button; the slot behind the icon's cut-outs is the surface under the button.
+    const ImVec4 surface = ImGui::GetStyleColorVec4(ImGuiCol_ChildBg).w > 0.0f ? ImGui::GetStyleColorVec4(ImGuiCol_ChildBg) : g_pal.page;
+    const ImVec4 bg = held ? mix(surface, g_pal.on_surface, 0.14f) : hovered ? mix(surface, g_pal.on_surface, 0.08f) : surface;
     const ImU32 bg32 = ImGui::GetColorU32(bg), fg = ImGui::GetColorU32(hovered ? g_pal.on_surface : g_pal.on_surface_variant);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg32, h * 0.5f);
+    const f32 r = ImGui::GetStyle().FrameRounding;
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg32, r);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), ImGui::GetColorU32(g_pal.outline), r);
     const f32 icon_r = h * 0.275f;
-    const f32 icon_cx = label ? p.x + h * 0.42f + icon_r : p.x + w * 0.5f;
+    const f32 icon_cx = label ? p.x + h * 0.36f + icon_r : p.x + w * 0.5f;
     draw_icon(dl, icon, ImVec2(icon_cx, p.y + h * 0.5f), icon_r, fg, bg32);
     if (label) {
         const ImVec2 ts = ImGui::CalcTextSize(label);
@@ -503,21 +550,69 @@ void theme_help(const char* text) {
     ImGui::EndTooltip();
 }
 
-void theme_group_begin(const char* title, f32 width) {
-    ImGui::PushStyleColor(ImGuiCol_Border, g_pal.outline_variant);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ImGui::GetFontSize() * 0.8f, ImGui::GetFontSize() * 0.6f));
-    ImGui::BeginChild(title, ImVec2(width, 0.0f),
-                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
+// Group box: an auto-height child without its own border; the frame is drawn on the parent's draw list after
+// the child ends (its height is known then), with a gap in the top line where the title sits. The parent's draw
+// list renders below the child, and the child has no background, so frame and title stay visible.
+struct GroupBox {
+    ImVec2 title_min, title_max;    // gap in the top line (screen space)
+};
+static GroupBox s_groups[8];
+static u32 s_group_depth;
+
+void theme_group_begin(const char* title, f32 width, const char* help) {
+    const f32 fs = ImGui::GetFontSize();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const char* title_end = strstr(title, "##");     // "Name##id": only "Name" is shown
+    if (!title_end) title_end = title + strlen(title);
     ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(title);
+    const f32 line_h = ImGui::GetTextLineHeight();
+    const f32 title_w = title_end > title ? ImGui::CalcTextSize(title, title_end).x : 0.0f;
+    const ImVec2 at(pos.x + fs * 0.75f, pos.y);
+    if (title_w > 0.0f)
+        ImGui::GetWindowDrawList()->AddText(at, ImGui::GetColorU32(g_pal.primary), title, title_end);
     ImGui::PopFont();
+    GroupBox g = { ImVec2(at.x - fs * 0.3f, pos.y), ImVec2(at.x + title_w + fs * 0.3f, pos.y + line_h) };
+    if (title_w <= 0.0f) g.title_max.x = g.title_min.x;
+    if (s_group_depth < ARRAY_COUNT(s_groups)) s_groups[s_group_depth] = g;
+    ++s_group_depth;
+    if (help && title_w > 0.0f && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+        ImGui::IsMouseHoveringRect(g.title_min, g.title_max)) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(fs * 26.0f);
+        ImGui::TextUnformatted(help);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+
+    // The frame's top line runs through the middle of the title; the content starts below the title. Without a
+    // title ("##id") the frame starts at the cursor.
+    const f32 head = title_w > 0.0f ? floorf(line_h * 0.5f) : 0.0f;
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + head));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(fs * 0.8f, fs * 0.6f));
+    ImGui::BeginChild(title[0] ? title : "##group", ImVec2(width, 0.0f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    if (head > 0.0f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + ceilf(line_h * 0.5f) - fs * 0.15f);
 }
 
 void theme_group_end() {
     ImGui::EndChild();
+    if (s_group_depth) --s_group_depth;
+    if (s_group_depth < ARRAY_COUNT(s_groups)) {
+        const GroupBox& g = s_groups[s_group_depth];
+        // Pixel centers for crisp 1 px lines; small rounded corners.
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        const f32 x0 = floorf(mn.x) + 0.5f, y0 = floorf(mn.y) + 0.5f, x1 = floorf(mx.x) - 0.5f, y1 = floorf(mx.y) - 0.5f;
+        const f32 r = 3.0f * s_scale;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const f32 gap0 = g.title_min.x < x0 + r ? x0 + r : g.title_min.x, gap1 = g.title_max.x > x1 - r ? x1 - r : g.title_max.x;
+        dl->PathLineTo(ImVec2(gap1, y0));
+        dl->PathArcToFast(ImVec2(x1 - r, y0 + r), r, 9, 12);
+        dl->PathArcToFast(ImVec2(x1 - r, y1 - r), r, 0, 3);
+        dl->PathArcToFast(ImVec2(x0 + r, y1 - r), r, 3, 6);
+        dl->PathArcToFast(ImVec2(x0 + r, y0 + r), r, 6, 9);
+        dl->PathLineTo(ImVec2(gap0, y0));
+        dl->PathStroke(ImGui::GetColorU32(g_pal.outline_variant), 1.0f);
+    }
     ImGui::Spacing();
 }

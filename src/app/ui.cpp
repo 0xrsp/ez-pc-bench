@@ -287,7 +287,7 @@ static bool system_header_row() {
 static void draw_sysinfo() {
     const SysInfo* s = &g_sys;
     if (!system_header_row()) return;
-    ImGui::Indent(ImGui::GetStyle().FramePadding.x);
+    theme_group_begin("##sysinfo");     // untitled box: the header above names it
     const CpuInfo* c = &s->cpu;
     sys_line("CPU", "%s  (%u cores / %u threads)%s%s%s%s", c->brand, c->cores, c->threads,
              g_cpux.codename[0] ? "  \xC2\xB7  " : "", g_cpux.codename, g_cpux.codename[0] && g_cpux.microarch[0] ? ", " : "",
@@ -323,8 +323,7 @@ static void draw_sysinfo() {
     sys_line("", "%s", win);
     sys_line("Power", "%s%s, plan \"%s\", mode \"%s\"", s->power.on_ac ? "AC" : "battery",
              s->power.has_battery ? "" : " (no battery)", s->power.scheme_name, power_mode_name(s->power.mode));
-    ImGui::Unindent(ImGui::GetStyle().FramePadding.x);
-    ImGui::Spacing();
+    theme_group_end();
 }
 
 // ---- toolbar --------------------------------------------------------------------

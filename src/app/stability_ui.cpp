@@ -86,18 +86,12 @@ static void save_report() {
     s_ui.message_bad = !ok;
 }
 
-static void section(const char* t) {
-    ImGui::Spacing();
-    ImGui::PushFont(g_fonts.medium, 0.0f);
-    ImGui::TextUnformatted(t);
-    ImGui::PopFont();
-}
-
 // Row label in a fixed column, vertically centered on the widget that follows.
 static void row_label(const char* label) {
+    const f32 x = ImGui::GetCursorPosX();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(ImGui::GetFontSize() * 6.5f);
+    ImGui::SameLine(x + ImGui::GetFontSize() * 6.5f);
 }
 
 static void limit_slider(const char* label, const char* id, f32* v, f32 lo, f32 hi, const char* help) {
@@ -113,7 +107,7 @@ static void limit_slider(const char* label, const char* id, f32* v, f32 lo, f32 
 static void draw_settings(bool running) {
     StabConfig* c = &s_ui.cfg;
     ImGui::BeginDisabled(running);
-    section("Tests");
+    theme_group_begin("Tests");
     if (ImGui::BeginTable("##tests_pick", 2, ImGuiTableFlags_SizingStretchSame)) {
         for (u32 t = 0; t < STAB_COUNT; ++t) {
             ImGui::TableNextColumn();
@@ -126,8 +120,9 @@ static void draw_settings(bool running) {
         }
         ImGui::EndTable();
     }
+    theme_group_end();
 
-    section("Run");
+    theme_group_begin("Run");
     if (ImGui::RadioButton("One after another", !c->together)) c->together = false;
     theme_help("Each ticked test runs for the chosen time, in the order listed.");
     ImGui::SameLine();
@@ -138,8 +133,9 @@ static void draw_settings(bool running) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::Combo("##duration", &s_ui.duration_idx, DURATION_NAMES, (int)ARRAY_COUNT(DURATION_NAMES));
     theme_help("Per test when they run one after another, in total when they run at once.");
+    theme_group_end();
 
-    section("Options");
+    theme_group_begin("Options");
     int k = c->cpu_kernel;
     row_label("CPU kernel");
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -196,8 +192,9 @@ static void draw_settings(bool running) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::Combo("##disksize", &si, SIZE_NAMES, (int)ARRAY_COUNT(SIZE_NAMES))) c->disk_bytes = SIZES_MIB[si] * MiB;
     theme_help("Disk verify: drive and size of the temporary test file (deleted afterwards).");
+    theme_group_end();
 
-    section("Safety");
+    theme_group_begin("Safety");
     limit_slider("CPU limit", "##cpulim", &c->max_cpu_c, 50.0f, 105.0f,
                  "Stop when the hottest ACPI thermal zone reaches this. Without a kernel driver that is the only CPU "
                  "temperature Windows exposes, and on many laptops it lags the CPU or doesn't follow it at all: watch "
@@ -212,6 +209,7 @@ static void draw_settings(bool running) {
         theme_help("Dev: each test corrupts one value on purpose so you can see that detection, attribution and the "
                    "report work. A run with this ticked always fails.");
     }
+    theme_group_end();
     ImGui::EndDisabled();
 }
 
@@ -311,10 +309,11 @@ static void draw_lp_grid() {
     for (u32 t = 0; t < STAB_COUNT; ++t)
         any |= (t == STAB_CPU || t == STAB_CACHE || t == STAB_CORES || t == STAB_MEM) && g_stab.cfg.run[t] && g_stab.tests[t].start_t > 0.0;
     if (!any || !g_topo.lp_count) return;
-    section("Errors by logical processor");
-    theme_help("CPU, cache, per-core and memory errors, by the logical processor that made or saw them. Hover a cell "
-               "for its physical core. Errors that keep landing on one core point at that core (Curve Optimizer / "
-               "undervolt); errors spread over all of them point at RAM, the memory controller or power delivery.");
+    theme_group_begin("Errors by logical processor", 0.0f,
+                      "CPU, cache, per-core and memory errors, by the logical processor that made or saw them. Hover a "
+                      "cell for its physical core. Errors that keep landing on one core point at that core (Curve "
+                      "Optimizer / undervolt); errors spread over all of them point at RAM, the memory controller or "
+                      "power delivery.");
     const f32 cell = ImGui::GetFontSize() * 2.6f, gap = 4.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const u32 n = g_topo.lp_count < STAB_MAX_LP ? g_topo.lp_count : STAB_MAX_LP;
@@ -333,7 +332,9 @@ static void draw_lp_grid() {
         ImGui::InvisibleButton("##lp", ImVec2(cell, cell * 0.8f));
         ImGui::PopID();
         const ImVec4 base = errors ? g_pal.error : g_pal.ok;
-        dl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell * 0.8f), ImGui::GetColorU32(ImVec4(base.x, base.y, base.z, 0.22f)), 4.0f);
+        const ImVec2 q(p.x + cell, p.y + cell * 0.8f);
+        dl->AddRectFilled(p, q, ImGui::GetColorU32(ImVec4(base.x, base.y, base.z, 0.12f)), 2.0f);
+        dl->AddRect(p, q, ImGui::GetColorU32(ImVec4(base.x, base.y, base.z, errors ? 0.9f : 0.45f)), 2.0f);
         char txt[16];
         snprintf(txt, sizeof(txt), "%u", errors ? errors : lp);     // the LP number, or its error count in red
         const ImVec2 ts = ImGui::CalcTextSize(txt);
@@ -344,6 +345,7 @@ static void draw_lp_grid() {
             else ImGui::SetTooltip("LP %u, core %u: %u errors", lp, g_topo.core[lp], errors);
         }
     }
+    theme_group_end();
 }
 
 // One sensor graph: name, current / max, line over the run's history (NaN gaps bridged).
@@ -386,9 +388,6 @@ static void graph(const char* name, StabSeries s, const char* fmt, f32 lo, f32 h
 }
 
 static void draw_graphs() {
-    section("Sensors");
-    theme_help("Sampled once a second while a test runs. CPU temperature is the hottest ACPI thermal zone (no kernel "
-               "driver); it often lags the CPU on laptops. Drive temperature is the hottest drive.");
     if (!ImGui::BeginTable("##graphs", 2, ImGuiTableFlags_SizingStretchSame)) return;
     ImGui::TableNextColumn(); graph("CPU clock", SH_CPU_MHZ, "%.0f MHz", NAN, NAN);
     ImGui::TableNextColumn(); graph("CPU load", SH_CPU_UTIL, "%.0f%%", 0.0f, 100.0f);
@@ -404,10 +403,10 @@ static void draw_graphs() {
 static void draw_errors() {
     const u32 n = stab_error_log(s_ui.log, STAB_MAX_LOG);
     if (!n) return;
-    section("First errors");
+    theme_group_begin("First errors");
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
     const f32 h = ImGui::GetTextLineHeightWithSpacing() * (n < 8 ? n + 1.5f : 9.5f);
-    if (!ImGui::BeginTable("##errors", 7, flags, ImVec2(0.0f, h))) return;
+    if (!ImGui::BeginTable("##errors", 7, flags, ImVec2(0.0f, h))) { theme_group_end(); return; }
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthStretch, 0.7f);
     ImGui::TableSetupColumn("Test", ImGuiTableColumnFlags_WidthStretch, 0.8f);
@@ -439,6 +438,7 @@ static void draw_errors() {
         ImGui::PopFont();
     }
     ImGui::EndTable();
+    theme_group_end();
 }
 
 void stability_ui_draw() {
@@ -516,6 +516,7 @@ void stability_ui_draw() {
             draw_verdict(running);
             stab_sensors(&s_ui.sens);
             ImGui::Spacing();
+            theme_group_begin("Test status");
             draw_tests();
             ImGui::Spacing();
             theme_push_numbers();
@@ -528,8 +529,13 @@ void stability_ui_draw() {
                              "logged during this run: corrected machine-check, cache, PCIe or memory errors. Any of them "
                              "under load is a sign of instability even when every test result was correct."
                            : "Not monitored: the System event log couldn't be subscribed.");
+            theme_group_end();
             draw_lp_grid();
+            theme_group_begin("Sensors", 0.0f,
+                              "Sampled once a second while a test runs. CPU temperature is the hottest ACPI thermal zone "
+                              "(no kernel driver); it often lags the CPU on laptops. Drive temperature is the hottest drive.");
             draw_graphs();
+            theme_group_end();
             draw_errors();
         }
         ImGui::EndChild();
